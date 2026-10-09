@@ -1,0 +1,998 @@
+// iPhone app state: owns the emulation thread (shared EmulationController), input (shared
+// InputManager for game controllers + the touch controls), the library and the session lifecycle
+// (temporary slot / projects, autosave, resume), preferences and the gates of the paid features.
+// Named AppModel like the macOS one so the shared app-layer files (SeekMarkers, TimelineActions,
+// Filmstrip, QuickMenuController) compile unchanged; it implements the members they use.
+// Differences from macOS (apps/macos/Sources/App/AppModel.swift): no document / save panels
+// (projects are named automatically in Documents/Projects), dialogs are SwiftUI alerts, the app is
+// persisted when it leaves the foreground, and the paid features are gated (FeatureGate).
+// SPDX-License-Identifier: GPL-2.0-or-later
+import Combine
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+extension UTType {
+    static let nesROM = UTType(importedAs: "io.github.replaynes.nes-rom")
+    static let nesrec = UTType(exportedAs: "io.github.replaynes.nesrec")
+}
+
+/// A dialog (SwiftUI alert) with up to three buttons.
+struct AppAlert: Identifiable {
+    struct Action {
+        var title: String
+        var role: ButtonRole?
+        var run: () -> Void = {}
+    }
+    let id = UUID()
+    var title: String
+    var message: String
+    var actions: [Action] = []
+}
+
+/// A text prompt (rename).
+struct AppPrompt: Identifiable {
+    let id = UUID()
+    var title: String
+    var text: String
+    var done: (String) -> Void
+}
+
+final class ExportJob: ObservableObject {
+    let url: URL
+    @Published var done: UInt64 = 0
+    @Published var total: UInt64 = 0
+    @Published var finished = false
+    @Published var result: ExportResult?
+    @Published var error: String?
+    private let lock = NSLock()
+    private var cancelled = false
+    init(url: URL) { self.url = url }
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+}
+
+/// The per-frame status for views showing counters (see AppModel.status).
+final class PlaybackClock: ObservableObject {
+    @Published var status = EmuStatus()
+}
+
+extension EmuStatus {
+    var coarse: EmuStatus {
+        var c = self
+        c.frame = 0
+        c.takeLength = takeLength > 0 ? 1 : 0
+        c.practiceFrame = 0
+        return c
+    }
+}
+
+final class AppModel: ObservableObject {
+    static let shared = AppModel()
+
+    let input = InputManager()
+    let emu: EmulationController
+    let library = LibraryModel()
+    let entitlements = Entitlements.shared
+    let audioSession = AudioSessionSetup()
+
+    var status = EmuStatus() {
+        willSet { if newValue.coarse != status.coarse { objectWillChange.send() } }
+        didSet {
+            if status.paused != oldValue.paused || status.hasSession != oldValue.hasSession { updateUIMode() }
+            else if status.coarse != oldValue.coarse { markers.sync() }
+        }
+    }
+    let markers = SeekMarkers()
+    let quickMenu = QuickMenuController()
+    let clock = PlaybackClock()
+
+    @Published var showLibrary = false
+    @Published var bookmarks: [BookmarkInfo] = []
+    @Published var takes: [TakeInfo] = []
+    @Published var controllers: [String] = []
+    @Published var inputConfig: InputCatalog.Config
+    @Published var stats = LatencyMeter.Snapshot()
+    @Published var notice: String?
+    @Published var showExport = false { didSet { markers.sync() } }
+    @Published var showUnlocks = false
+    @Published var exportJob: ExportJob?
+    @Published var capturingAction: String?
+    @Published var practiceSlots: [PracticeSlotInfo] = (0..<EngineSession.practiceSlotCount).map { PracticeSlotInfo(index: $0) }
+    @Published var alert: AppAlert?
+    @Published var prompt: AppPrompt?
+    /// Where the game view and the touch controls are (PlaySurfaceView), for the overlays.
+    @Published var playLayout: TouchLayout?
+    @Published private(set) var pendingResume: ResumeRecord?
+    @Published var selectedSlot = 0 { didSet { FilmstripModel.shared.selectedSlot = selectedSlot } }
+
+    // Preferences (same keys as macOS where the setting exists there).
+    @AppStorage("showLatency") var showLatency = false { didSet { objectWillChange.send() } }
+    @AppStorage("pauseAfterRewind") var pauseAfterRewind = false { didSet { pushPrefs(); objectWillChange.send() } }
+    @AppStorage("autosaveInterval") var autosaveInterval = 2.0 { didSet { pushPrefs(); objectWillChange.send() } }
+    @AppStorage("integerScale") var integerScale = true { didSet { objectWillChange.send() } }
+    @AppStorage("displayPAR87") var displayPAR87 = false { didSet { objectWillChange.send() } }
+    @AppStorage("hideOverscan") var hideOverscan = true { didSet { objectWillChange.send() } }
+    @AppStorage("volume") var volume = 0.8 { didSet { emu.audio.volume = Float(volume); objectWillChange.send() } }
+    @AppStorage("southConfirm") var southConfirm = false { didSet { input.setSouthConfirm(southConfirm); objectWillChange.send() } }
+    @AppStorage("dpadStepWhenPaused") var dpadStepWhenPaused = true { didSet { input.setPausedStepEnabled(dpadStepWhenPaused); objectWillChange.send() } }
+    @AppStorage("flashReduction") var flashReduction = FlashLevel.standard.rawValue { didSet { pushPrefs(); objectWillChange.send() } }
+    @AppStorage("showFlashIndicator") var showFlashIndicator = true { didSet { objectWillChange.send() } }
+    // iOS only.
+    @AppStorage("touchHaptics") var touchHaptics = true { didSet { objectWillChange.send() } }
+    @AppStorage("touchOpacity") var touchOpacity = 0.55 { didSet { objectWillChange.send() } }
+    @AppStorage("touchTurbo") var touchTurbo = false { didSet { objectWillChange.send() } }
+    @AppStorage("touchScale") var touchScale = 1.0 { didSet { objectWillChange.send() } }
+    /// Hide the touch controls while a game controller is connected.
+    @AppStorage("touchHideWithPad") var touchHideWithPad = true { didSet { objectWillChange.send() } }
+
+    var flashLevel: FlashLevel { FlashLevel(rawValue: flashReduction) ?? .standard }
+
+    var displayOptions: DisplayOptions {
+        DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan)
+    }
+
+    var touchOptions: TouchLayout.Options { TouchLayout.Options(showTurbo: touchTurbo, scale: CGFloat(touchScale)) }
+
+    var touchControlsVisible: Bool { !(touchHideWithPad && !controllers.isEmpty) }
+
+    // Session persistence (Application Support/ReplayNES/Session: temporary project, resume.json).
+    private(set) var sessionPaths = SessionPaths.standard
+    private var sessionLock: SessionLock?
+    private(set) var persistSessions = false
+    struct SessionIdentity { let projectPath: String; let isTemp: Bool; let romSHA256: String }
+    private(set) var current: SessionIdentity?
+    private var lastResume: ResumeRecord?
+    private var playSHA = ""
+    private var playStart = Date()
+    private var playMark = ProcessInfo.processInfo.systemUptime
+    private var playFlushTicks = 0
+    private var resumeTimer: Timer?
+    private var statsTimer: Timer?
+    private let resumeQueue = DispatchQueue(label: "replaynes.resume", qos: .utility)
+    private var noticeWork: DispatchWorkItem?
+    private var subs: Set<AnyCancellable> = []
+    /// Touch buttons routed to paused stepping (their release goes there too).
+    private var touchRouted: Set<TouchButton> = []
+    private var started = false
+    private var wasInBackground = false
+
+    private init() {
+        emu = EmulationController(input: input)
+        inputConfig = input.config
+        emu.onStatus = { [weak self] st in
+            guard let self else { return }
+            if self.status != st { self.status = st; self.clock.status = st }
+        }
+        emu.onStructure = { [weak self] st in
+            guard let self else { return }
+            if self.bookmarks != st.bookmarks { self.bookmarks = st.bookmarks }
+            if self.takes != st.takes { self.takes = st.takes }
+            if !st.practiceSlots.isEmpty, self.practiceSlots != st.practiceSlots { self.practiceSlots = st.practiceSlots }
+            self.markers.sync()
+        }
+        emu.onError = { [weak self] title, msg in self?.showError(title, msg) }
+        emu.onNotice = { [weak self] text in self?.flash(text) }
+        input.onConfigChanged = { [weak self] c in self?.inputConfig = c }
+        input.onControllersChanged = { [weak self] c in self?.controllers = c; self?.updateUIMode() }
+        input.onNav = { [weak self] n in self?.handleNav(n) }
+        input.onPausedResume = { [weak self] in
+            guard let self, self.status.hasSession, self.status.paused, !self.quickMenu.isOpen, !self.showLibrary else { return }
+            self.togglePause()
+        }
+        input.onSeekInput = { [weak self] i, down in self?.markers.seekInput(i, down: down) }
+        input.onMarkerHold = { [weak self] dir, down in self?.markers.markerHold(dir, down: down) }
+        input.onPausedShoulder = { [weak self] dir in self?.markers.pausedShoulder(dir) }
+        markers.model = self
+        input.onDisconnect = { [weak self] name in
+            guard let self else { return }
+            self.emu.perform { emu in emu.paused = true }
+            self.flash(String(localized: "Paused because \(name) was disconnected"))
+        }
+        input.onPausedStep = { [weak emu] dir, down in emu?.perform { e in e.pausedStep(dir, down: down) } }
+        quickMenu.model = self
+        ensureTouchBindings()
+        entitlements.$state.sink { [weak self] st in
+            DispatchQueue.main.async { self?.entitlementsChanged(st) }
+        }.store(in: &subs)
+    }
+
+    /// After "Default Buttons": the touch ids get their default bindings back.
+    func restoreTouchBindings() { ensureTouchBindings() }
+
+    /// Bindings of the touch ids (TouchBindings) in a configuration that has none yet.
+    private func ensureTouchBindings() {
+        let add = TouchBindings.missing(existing: input.config.bindings.map { ($0.input, $0.action) })
+        guard !add.isEmpty else { return }
+        for b in add { _ = rn_input_bind(input.handle, b.input, b.action) }
+        // Persist through the regular path (writes bindings.json, refreshes the derived state).
+        if let first = add.first { input.bind(first.input, to: first.action) }
+    }
+
+    func start() {
+        guard !started else { return }
+        started = true
+        audioSession.activate()
+        input.setPausedStepEnabled(dpadStepWhenPaused)
+        input.setSouthConfirm(southConfirm)
+        input.setPausedStepMode(true)
+        FilmstripModel.shared.$selectedSlot.removeDuplicates()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.markers.sync() } }
+            .store(in: &subs)
+        emu.audio.volume = Float(volume)
+        audioSession.onRestart = { [weak self] in self?.emu.audio.start() }
+        pushPrefs()
+        entitlements.refresh()
+        entitlementsChanged(entitlements.state)
+        emu.start()
+        input.startControllers()
+        setupSessionPersistence()
+        library.start()
+        loadPendingResume()
+        updateUIMode()
+        statsTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self, self.showLatency || PacingProbe.shared.active else { return }
+            self.stats = self.emu.latency.snapshot(audio: self.emu.audio)
+            PacingProbe.shared.observe(self.stats)
+        }
+    }
+
+    private func pushPrefs() {
+        let par = pauseAfterRewind, auto = autosaveInterval, flash = flashLevel
+        emu.perform { e in e.pauseAfterRewind = par; e.autosaveInterval = auto; e.setFlashLevel(flash) }
+    }
+
+    /// The renderer sees CRT only while the feature is unlocked (the stored choice is kept).
+    private func entitlementsChanged(_ st: EntitlementState) {
+        let crt = CRTSettingsModel.shared
+        crt.launchOverride = false
+        if !FeatureGate.allows(.crtDisplay, st) && crt.enabled {
+            UserDefaults.standard.set(true, forKey: "crtWantedWhenUnlocked")
+            crt.enabled = false
+        } else if FeatureGate.allows(.crtDisplay, st) && UserDefaults.standard.bool(forKey: "crtWantedWhenUnlocked") {
+            UserDefaults.standard.removeObject(forKey: "crtWantedWhenUnlocked")
+            crt.enabled = true
+        }
+        objectWillChange.send()
+    }
+
+    // MARK: messages
+
+    func flash(_ text: String) {
+        notice = text
+        noticeWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in self?.notice = nil }
+        noticeWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: w)
+    }
+
+    func showError(_ title: String, _ message: String) {
+        alert = AppAlert(title: title, message: message, actions: [AppAlert.Action(title: String(localized: "OK"), role: .cancel)])
+    }
+
+    /// A locked feature was asked for: say what unlocks it.
+    func showLocked(_ f: PaidFeature) {
+        alert = AppAlert(title: Unlocks.title(f), message: Unlocks.lockedMessage(f), actions: [
+            AppAlert.Action(title: L("Unlocks…")) { [weak self] in self?.showUnlocks = true },
+            AppAlert.Action(title: String(localized: "Cancel"), role: .cancel),
+        ])
+    }
+
+    // MARK: transport (main thread -> emulation thread)
+
+    func togglePause() { emu.perform { e in e.togglePause() } }
+    func setPaused(_ p: Bool) { emu.perform { e in e.paused = p } }
+    func stepFrame(_ dir: Int) {
+        emu.perform { e in
+            guard let s = e.session else { return }
+            e.stepFrame(dir, s)
+        }
+    }
+    func toggleSlow() { emu.perform { e in e.slow = e.slow.toggled } }
+    func toggleRecord() { emu.perform { e in e.toggleRecord() } }
+    func setRewindHeld(_ h: Bool) { emu.perform { e in e.uiRewindHeld = h } }
+    func setFastForwardHeld(_ h: Bool) { emu.perform { e in e.uiFastForwardHeld = h } }
+    func scrub(to f: UInt64) { emu.perform { e in e.paused = true; e.scrubTarget = f } }
+    func seek(to f: UInt64) { emu.perform { e in e.seekCommand(f) } }
+    func softReset() { emu.perform { e in e.requestEvent(UInt8(RN_EV_SOFT_RESET)) } }
+    func powerCycle() { emu.perform { e in e.requestEvent(UInt8(RN_EV_POWER_CYCLE)) } }
+    func rerecordHere() { emu.perform { e in e.rerecordHere() } }
+    func undoTake() { emu.perform { e in e.undoTake() } }
+    func addBookmark() { emu.perform { e in e.addBookmark(name: nil) } }
+    func practiceSetA(_ slot: Int) { emu.perform { e in e.practiceSetA(slot) } }
+    func practiceSetB(_ slot: Int) { emu.perform { e in e.practiceSetB(slot) } }
+    func practiceStart(_ slot: Int) { emu.perform { e in e.startPractice(slot) } }
+    func practiceStop() { emu.perform { e in e.stopPractice() } }
+    func practiceRename(_ slot: Int, _ name: String) { emu.perform { e in e.practiceRename(slot, name) } }
+    func practiceClear(_ slot: Int) { emu.perform { e in e.practiceClear(slot) } }
+
+    private func blockedInPractice() -> Bool {
+        if status.practicing { flash(EmulationController.practiceBlockedText); return true }
+        return false
+    }
+
+    func gotoBookmark(_ id: UInt64) {
+        if blockedInPractice() { return }
+        emu.perform { e in
+            guard let s = e.session else { return }
+            do {
+                try s.gotoBookmark(id)
+                e.paused = true
+                e.markStructureDirty()
+                e.publishVideo()
+            } catch { e.reportError(String(localized: "Couldn’t jump to the bookmark"), error) }
+        }
+    }
+    func removeBookmark(_ id: UInt64) {
+        emu.perform { e in
+            do { try e.session?.removeBookmark(id); e.markStructureDirty() } catch { e.reportError(String(localized: "Couldn’t delete the bookmark"), error) }
+        }
+    }
+    func renameBookmark(_ id: UInt64, _ name: String) {
+        emu.perform { e in
+            do { try e.session?.renameBookmark(id, name: name); e.markStructureDirty() } catch { e.reportError(String(localized: "Couldn’t rename"), error) }
+        }
+    }
+    func activateTake(_ id: UInt64) {
+        if blockedInPractice() { return }
+        emu.perform { e in
+            guard let s = e.session else { return }
+            do {
+                try s.activateTake(id)
+                e.paused = true
+                e.markStructureDirty()
+                e.publishVideo()
+                e.notice(String(localized: "Switched to take #\(id)"))
+            } catch { e.reportError(String(localized: "Couldn’t switch takes"), error) }
+        }
+    }
+
+    // MARK: touch controls (main thread, from TouchControlsView)
+
+    func touchButtons(pressed: [TouchButton], released: [TouchButton]) {
+        let st = status
+        let pausedInPlay = st.hasSession && st.paused && !quickMenu.isOpen && !showLibrary
+        for b in pressed {
+            if b == .menu { quickMenu.open(); continue }
+            // Paused: L / R step one frame, the D-pad ← / → too (setting), never game input.
+            if pausedInPlay {
+                if b == .l || b == .r { stepFrame(b == .l ? -1 : 1); touchRouted.insert(b); continue }
+                if dpadStepWhenPaused && (b == .left || b == .right) {
+                    let dir = b == .left ? -1 : 1
+                    emu.perform { e in e.pausedStep(dir, down: true) }
+                    touchRouted.insert(b)
+                    continue
+                }
+            }
+            if let id = b.inputID { rn_input_set_pressed(input.handle, id, 1) }
+        }
+        for b in released {
+            if touchRouted.remove(b) != nil {
+                if b == .left || b == .right {
+                    let dir = b == .left ? -1 : 1
+                    emu.perform { e in e.pausedStep(dir, down: false) }
+                }
+                continue
+            }
+            if let id = b.inputID { rn_input_set_pressed(input.handle, id, 0) }
+        }
+    }
+
+    /// Everything the touch controls held is released (menu opened, app in the background).
+    func releaseTouch() {
+        rn_input_release_prefix(input.handle, "touch:")
+        for b in touchRouted where b == .left || b == .right {
+            let dir = b == .left ? -1 : 1
+            emu.perform { e in e.pausedStep(dir, down: false) }
+        }
+        touchRouted.removeAll()
+    }
+
+    // MARK: navigation (controllers)
+
+    func handleNav(_ n: NavInput) {
+        if quickMenu.isOpen { quickMenu.handle(n); return }
+        let libraryOn = !status.hasSession || showLibrary
+        switch n {
+        case .menu:
+            quickMenu.open()
+        case .escape, .back:
+            if libraryOn && status.hasSession { hideLibraryScreen() }
+        default:
+            if libraryOn { LibraryFocus.shared.handle(n, model: self) }
+        }
+    }
+
+    func updateUIMode() {
+        let libraryOn = !status.hasSession || showLibrary
+        input.setNavMode(quickMenu.isOpen || libraryOn)
+        if quickMenu.isOpen || libraryOn { releaseTouch() }
+        markers.sync()
+    }
+
+    func showLibraryScreen() {
+        if quickMenu.isOpen { quickMenu.close(resume: false) }
+        if status.hasSession { setPaused(true); captureThumbnail() }
+        showLibrary = true
+        library.refresh()
+        updateUIMode()
+    }
+
+    func hideLibraryScreen() {
+        guard showLibrary else { return }
+        showLibrary = false
+        updateUIMode()
+    }
+
+    // MARK: library
+
+    /// "Play" on a game card: free = the temporary slot; recording unlocked = a new project in
+    /// Projects/ (FeatureGate.sessionTarget).
+    func playFromLibrary(_ rom: LibraryROM, autoplay: Bool = false) {
+        leaveCurrentSession { [weak self] in
+            guard let self else { return }
+            switch FeatureGate.sessionTarget(forLibraryPlay: self.entitlements.state) {
+            case .newProject:
+                guard self.library.ensureFolders() else {
+                    self.showError(String(localized: "The library folder isn’t available"), self.library.folderError ?? "")
+                    return
+                }
+                let dir = LibraryScanner.newProjectURL(projectsDir: self.library.paths.projects, romName: rom.name, date: Date())
+                self.createSession(rom: rom.url, projectDir: dir, autoplay: autoplay)
+            case .temporary:
+                self.createSession(rom: rom.url, projectDir: nil, autoplay: autoplay)
+            }
+        }
+    }
+
+    /// Test hooks: forget the temporary session and the resume record (no prompts).
+    func discardTemporarySession() {
+        if current?.isTemp == true { releaseSession() }
+        removeTempProject()
+        writeResume(nil)
+    }
+
+    /// "Continue" on a project of a game.
+    func continueProject(_ url: URL) {
+        leaveCurrentSession { [weak self] in self?.openProject(url) }
+    }
+
+    /// The Continue card: the last session where it was, else the newest project.
+    func continueLast() {
+        guard !status.hasSession else { hideLibraryScreen(); return }
+        if let r = pendingResume {
+            openProject(URL(fileURLWithPath: r.projectPath), resume: r)
+        } else if let p = library.projectsBySHA.values.flatMap({ $0 }).max(by: { $0.modified < $1.modified }) {
+            continueProject(p.url)
+        }
+    }
+
+    /// Before another game replaces the session: a project is saved (full save, no prompt); the
+    /// temporary session is replaced (free) or offered for keeping (recording unlocked).
+    private func leaveCurrentSession(then next: @escaping () -> Void) {
+        if let c = current, !c.isTemp {
+            captureThumbnail()
+            _ = emu.sync(timeout: 60) { e in e.flushForResume(fullSave: true) }
+            releaseSession()
+            next()
+            return
+        }
+        settleTempSlot(then: next)
+    }
+
+    /// Makes room for a new temporary session (see leaveCurrentSession).
+    private func settleTempSlot(then next: @escaping () -> Void) {
+        guard persistSessions else { next(); return }
+        let isCurrent = current?.isTemp == true
+        if isCurrent { captureThumbnail(); _ = emu.sync(timeout: 60) { e in e.flushForResume(fullSave: true) } }
+        let exists = sessionPaths.tempProjectExists
+        let hasContent: Bool = {
+            if isCurrent { return takes.contains { $0.length > 0 } || !bookmarks.isEmpty || practiceSlots.contains { $0.hasA } }
+            return ((try? ResumeStore.read(sessionPaths.resumeFile)) ?? nil)?.hasContent ?? exists
+        }()
+        let discard = { [weak self] in
+            guard let self else { return }
+            if isCurrent { self.releaseSession() }
+            self.removeTempProject()
+            next()
+        }
+        guard exists || isCurrent else { next(); return }
+        switch FeatureGate.previousSession(hasContent: hasContent, entitlements.state) {
+        case .nothingToAsk, .replace:
+            if hasContent { flash(L("The previous temporary session was replaced (unlock Recording to keep sessions)")) }
+            discard()
+        case .askKeep:
+            let manifest = (try? Engine.manifestJSON(projectDir: sessionPaths.tempProject)) ?? [:]
+            let romName = (manifest["rom"] as? [String: Any])?["name"] as? String ?? "?"
+            alert = AppAlert(title: String(localized: "An unsaved previous session remains"),
+                             message: L("Keep the previous session (ROM: %@) as a project in the Projects folder? If you don’t keep it, it is discarded.", romName),
+                             actions: [
+                                AppAlert.Action(title: L("Keep as Project")) { [weak self] in
+                                    guard let self else { return }
+                                    if isCurrent { self.releaseSession() }
+                                    if self.keepTempAsProject(romName: romName) { next() }
+                                },
+                                AppAlert.Action(title: String(localized: "Don’t Save"), role: .destructive) { discard() },
+                                AppAlert.Action(title: String(localized: "Cancel"), role: .cancel),
+                             ])
+        }
+    }
+
+    /// Moves the (closed) temporary project to Projects/<ROM> <date>.nesrec. False on failure.
+    private func keepTempAsProject(romName: String) -> Bool {
+        let name = URL(fileURLWithPath: romName).deletingPathExtension().lastPathComponent
+        let dest = LibraryScanner.newProjectURL(projectsDir: library.paths.projects, romName: name, date: Date())
+        do { try SessionResume.moveTempProject(sessionPaths, to: dest) } catch {
+            showError(String(localized: "Couldn’t save"), "\(dest.lastPathComponent)\n\(error.localizedDescription)")
+            return false
+        }
+        if lastResume?.isTemp == true { writeResume(nil) }
+        library.refresh()
+        flash(L("Kept as a project"))
+        return true
+    }
+
+    /// projectDir nil = the temporary project (or memory when persistence is unavailable).
+    func createSession(rom: URL, projectDir requestedDir: URL?, autoplay: Bool = false) {
+        var projectDir = requestedDir
+        if projectDir == nil && persistSessions { projectDir = sessionPaths.tempProject }
+        let dirExisted = projectDir.map { FileManager.default.fileExists(atPath: $0.path) } ?? true
+        let isTemp = requestedDir == nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let s = try EngineSession.create(rom: rom, projectDir: projectDir)
+                DispatchQueue.main.async {
+                    self.install(s, recovered: false)
+                    if autoplay { self.setPaused(false) }
+                    if projectDir != nil && !isTemp { self.library.refresh() }
+                }
+            } catch let e as RNError {
+                if let projectDir, !dirExisted { try? FileManager.default.removeItem(at: projectDir) }
+                DispatchQueue.main.async {
+                    let hint = e.status == RN_ERR_ROM_INVALID ? "\n" + String(localized: "This ROM can’t be loaded (unsupported mapper or invalid file).") : ""
+                    self.showError(String(localized: "Couldn’t create the project"), e.message + hint)
+                }
+            } catch {
+                DispatchQueue.main.async { self.showError(String(localized: "Couldn’t create the project"), "\(error)") }
+            }
+        }
+    }
+
+    func openProject(_ url: URL, romOverride: URL? = nil, dropCorrupt: Bool = false, dropCorruptPractice: Bool = false,
+                     resume: ResumeRecord? = nil) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let s = try EngineSession.open(projectDir: url, romOverride: romOverride, dropCorruptStates: dropCorrupt,
+                                               dropCorruptPractice: dropCorruptPractice)
+                DispatchQueue.main.async { self.install(s, recovered: s.recovered, resume: resume) }
+            } catch let e as RNError {
+                DispatchQueue.main.async {
+                    self.handleOpenError(e, url: url, romOverride: romOverride, dropCorrupt: dropCorrupt,
+                                         dropCorruptPractice: dropCorruptPractice, resume: resume)
+                }
+            } catch {
+                DispatchQueue.main.async { self.showError(String(localized: "Couldn’t open the project"), "\(error)") }
+            }
+        }
+    }
+
+    /// iOS moves the app's container when it is reinstalled, so a project's ROM path goes stale:
+    /// the ROM with the project's SHA-256 is looked up in the library first.
+    private func handleOpenError(_ e: RNError, url: URL, romOverride: URL?, dropCorrupt: Bool, dropCorruptPractice: Bool,
+                                 resume: ResumeRecord?) {
+        let manifest = (try? Engine.manifestJSON(projectDir: url)) ?? [:]
+        let rom = manifest["rom"] as? [String: Any] ?? [:]
+        let romName = rom["name"] as? String ?? "?"
+        let romSHA = rom["sha256"] as? String ?? ""
+        switch e.status {
+        case RN_ERR_ROM_NOT_FOUND where romOverride == nil:
+            if let match = library.rom(sha256: romSHA) {
+                openProject(url, romOverride: match.url, dropCorrupt: dropCorrupt, dropCorruptPractice: dropCorruptPractice, resume: resume)
+                return
+            }
+            showError(String(localized: "ROM not found"),
+                      L("Put the ROM “%@” into the ROM folder (Files › On My iPhone › ReplayNES › ROM) and try again.\nSHA-256: %@", romName, romSHA))
+        case RN_ERR_CORE_MISMATCH:
+            showError(String(localized: "This project was recorded with a different emulation core"),
+                      L("Open it with the version of ReplayNES it was recorded with. See docs/COMPATIBILITY.md for details."))
+        case RN_ERR_CORRUPT where !dropCorrupt || !dropCorruptPractice:
+            let practice = e.message.lowercased().contains("practice")
+            alert = AppAlert(title: practice ? String(localized: "The practice section (A/B) data is damaged") : String(localized: "The project files are damaged"),
+                             message: e.message, actions: [
+                                AppAlert.Action(title: practice ? String(localized: "Discard Damaged Sections and Open") : String(localized: "Discard Damaged Checkpoints and Open"),
+                                                role: .destructive) { [weak self] in
+                                    self?.openProject(url, romOverride: romOverride, dropCorrupt: dropCorrupt || !practice,
+                                                      dropCorruptPractice: dropCorruptPractice || practice, resume: resume)
+                                },
+                                AppAlert.Action(title: String(localized: "Cancel"), role: .cancel),
+                             ])
+        case RN_ERR_UNSUPPORTED_FORMAT:
+            showError(String(localized: "This project was made with a newer version of ReplayNES"), String(localized: "Please update the app.") + "\n\(e.message)")
+        default:
+            showError(String(localized: "Couldn’t open the project"), "\(e.statusName): \(e.message)")
+        }
+    }
+
+    private func install(_ s: EngineSession, recovered: Bool, resume: ResumeRecord? = nil) {
+        if current != nil { captureThumbnail() }
+        showLibrary = false
+        let dir = s.projectDir
+        let isTemp = persistSessions && sessionPaths.isTempProject(dir)
+        var record = ResumeRecord(projectPath: dir, isTemp: isTemp, romPath: s.romPath, romSHA256: s.romSHA256,
+                                  frame: s.frame, atTakeEnd: s.frame >= s.takeLength,
+                                  mode: s.mode == RN_MODE_REPLAY ? .replay : .record,
+                                  hasContent: SessionResume.hasRecordedContent(s))
+        if let resume {
+            record.frame = SessionResume.targetFrame(resume, takeLength: s.takeLength) ?? record.frame
+            record.atTakeEnd = record.frame == s.takeLength
+            record.mode = resume.mode ?? record.mode
+            record.practiceSlot = resume.practiceSlot
+        }
+        current = SessionIdentity(projectPath: dir, isTemp: isTemp, romSHA256: record.romSHA256)
+        pendingResume = nil
+        beginPlay(record.romSHA256)
+        emu.perform { e in
+            e.tempSession = isTemp
+            e.install(s)
+            if let resume { e.applyResume(resume) }
+        }
+        writeResume(dir.isEmpty ? nil : record)
+        if resume != nil {
+            flash(String(localized: "Resumed where you left off"))
+        } else if recovered {
+            showError(String(localized: "Unsaved work was restored"),
+                      L("ReplayNES didn’t close normally last time, so the recording up to the last autosave was restored."))
+        }
+        updateUIMode()
+    }
+
+    /// Game › Save: a project saves; the temporary session becomes a project (recording unlocked).
+    func save() {
+        guard status.hasSession, let c = current else { return }
+        guard entitlements.allows(.save) else { showLocked(.recording); return }
+        if c.isTemp {
+            let romName = URL(fileURLWithPath: status.romPath).lastPathComponent
+            let practicing = status.practicing
+            let failure = emu.sync(timeout: 60) { e -> String? in
+                guard let s = e.session else { return String(localized: "No session") }
+                do { try s.save() } catch { return (error as? LocalizedError)?.errorDescription ?? "\(error)" }
+                e.install(nil)
+                return nil
+            } ?? String(localized: "Saving didn’t respond")
+            if let failure { showError(String(localized: "Couldn’t save (your work is still in the temporary location)"), failure); return }
+            current = nil
+            let name = URL(fileURLWithPath: romName).deletingPathExtension().lastPathComponent
+            let dest = LibraryScanner.newProjectURL(projectsDir: library.paths.projects, romName: name, date: Date())
+            var target = dest
+            do { try SessionResume.moveTempProject(sessionPaths, to: dest) } catch {
+                target = sessionPaths.tempProject
+                showError(String(localized: "Couldn’t save (your work is still in the temporary location)"), error.localizedDescription)
+            }
+            openProject(target, resume: ResumeRecord(projectPath: target.path, isTemp: target == sessionPaths.tempProject,
+                                                     practiceSlot: practicing ? -1 : nil))
+            library.refresh()
+            flash(String(localized: "Saved"))
+            return
+        }
+        let ok = emu.sync(timeout: 60) { e -> Bool in
+            guard let s = e.session else { return false }
+            do { try s.save(); e.markStructureDirty(); return true } catch {
+                e.reportError(String(localized: "Couldn’t save (your work is still kept in memory)"), error)
+                return false
+            }
+        } ?? false
+        if ok { flash(String(localized: "Saved")) }
+    }
+
+    /// Game › Close: back to the library. Everything is persisted; the session stays offered by the
+    /// Continue card (a temporary one until another game replaces it).
+    func closeProject() {
+        guard let c = current else { return }
+        captureThumbnail()
+        _ = emu.sync(timeout: 60) { e in e.flushForResume(fullSave: true) }
+        updateResumeRecord()
+        let record = lastResume
+        releaseSession()
+        _ = c
+        pendingResume = record
+        showLibrary = false
+        updateUIMode()
+    }
+
+    private func releaseSession() {
+        flushPlay()
+        playSHA = ""
+        _ = emu.sync(timeout: 30) { e in e.install(nil) }
+        current = nil
+    }
+
+    // MARK: Restart Recording / Start Over (as ProjectReset.swift on macOS)
+
+    func resetProjectPrompt() {
+        guard status.hasSession, let c = current else { return }
+        let saved = !status.projectPath.isEmpty && !c.isTemp
+        var info = String(localized: "The recording starts over from power-on: every take, bookmark and the take history are deleted. The ROM and the project location stay the same.")
+        info += "\n\n" + (saved ? L("A backup copy of the project is kept in the Backups folder first.")
+                                : String(localized: "This session isn’t saved as a project, so no backup is made."))
+        alert = AppAlert(title: String(localized: "Reset this project?"), message: info, actions: [
+            AppAlert.Action(title: String(localized: "Reset"), role: .destructive) { [weak self] in
+                self?.performProjectReset(keepPracticeSlots: true, backup: saved)
+            },
+            AppAlert.Action(title: String(localized: "Cancel"), role: .cancel),
+        ])
+    }
+
+    func performProjectReset(keepPracticeSlots: Bool, backup: Bool) {
+        let backups = library.paths.root.appendingPathComponent("Backups", isDirectory: true)
+        let err: String?? = emu.sync(timeout: 120) { e -> String? in
+            guard let s = e.session else { return nil }
+            if s.mode == RN_MODE_PRACTICE { try? s.setMode(RN_MODE_RECORD) }
+            if e.fastForwardActive { e.endFastForward(s) }
+            if backup, !s.projectDir.isEmpty {
+                do {
+                    if s.hasUnsavedChanges { try s.autosave() }
+                    try ProjectBackup.makeBackup(of: URL(fileURLWithPath: s.projectDir)) { copy in
+                        try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+                        let dest = backups.appendingPathComponent(copy.lastPathComponent, isDirectory: true)
+                        try FileManager.default.moveItem(at: copy, to: dest)
+                        return dest
+                    }
+                } catch {
+                    return String(localized: "Couldn’t make a backup copy, so the project was not reset.") + "\n\n"
+                        + ((error as? LocalizedError)?.errorDescription ?? "\(error)")
+                }
+            }
+            do { try s.reset(keepPracticeSlots: keepPracticeSlots) } catch {
+                e.paused = true
+                e.markStructureDirty()
+                e.publishVideo()
+                return (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+            e.install(s)
+            return nil
+        }
+        switch err {
+        case .some(nil):
+            if let c = current, !c.projectPath.isEmpty {
+                writeResume(ResumeRecord(projectPath: c.projectPath, isTemp: c.isTemp, romPath: status.romPath, romSHA256: c.romSHA256,
+                                         frame: 0, atTakeEnd: true, mode: .record, hasContent: keepPracticeSlots && practiceSlots.contains { $0.hasA }))
+            }
+            flash(String(localized: "Project reset"))
+        case .some(.some(let msg)):
+            showError(String(localized: "Couldn’t reset the project"), msg)
+        case .none:
+            showError(String(localized: "Couldn’t reset the project"), String(localized: "Saving didn’t respond"))
+        }
+    }
+
+    // MARK: play history
+
+    private func beginPlay(_ sha: String) {
+        if !playSHA.isEmpty && playSHA == sha { flushPlay(); return }
+        flushPlay()
+        playSHA = sha
+        playStart = Date()
+        playMark = ProcessInfo.processInfo.systemUptime
+        library.recordPlay(sha, start: playStart, seconds: 0)
+    }
+
+    private func flushPlay() {
+        guard !playSHA.isEmpty else { return }
+        let t = ProcessInfo.processInfo.systemUptime
+        library.recordPlay(playSHA, start: playStart, seconds: t - playMark)
+        playMark = t
+    }
+
+    // MARK: session persistence / resume
+
+    private func setupSessionPersistence() {
+        ThumbnailStore.dir = sessionPaths.root.appendingPathComponent("Thumbnails", isDirectory: true)
+        do { try sessionPaths.ensure() } catch {
+            NSLog("ReplayNES: session folder unavailable (\(error)); sessions are not persisted")
+            return
+        }
+        sessionLock = SessionLock(url: sessionPaths.lockFile)
+        persistSessions = true
+        library.setCatalogFile(sessionPaths.root.deletingLastPathComponent().appendingPathComponent(RNF_LIBRARY_PREFS_FILE))
+        resumeTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.updateResumeRecord()
+            self.playFlushTicks += 1
+            if self.playFlushTicks >= 60 { self.playFlushTicks = 0; self.flushPlay() }
+        }
+    }
+
+    /// The last session is offered by the library's Continue card (nothing reopens by itself).
+    private func loadPendingResume() {
+        pendingResume = nil
+        guard persistSessions else { return }
+        rebaseResumeRecord()
+        switch SessionResume.decide(paths: sessionPaths, explicitOpen: false, legacyProjectPath: "") {
+        case .none:
+            return
+        case .projectMissing:
+            writeResume(nil)
+        case .resume(let r):
+            pendingResume = r
+        }
+    }
+
+    /// The app container's path changes when iOS reinstalls the app: a resume record that points
+    /// into the old container is moved to the same place in the current one.
+    private func rebaseResumeRecord() {
+        guard let rec = (try? ResumeStore.read(sessionPaths.resumeFile)) ?? nil,
+              !FileManager.default.fileExists(atPath: rec.projectPath) else { return }
+        let home = NSHomeDirectory()
+        for anchor in ["/Documents/", "/Library/"] {
+            guard let range = rec.projectPath.range(of: anchor) else { continue }
+            let moved = home + anchor + rec.projectPath[range.upperBound...]
+            if FileManager.default.fileExists(atPath: moved) {
+                var fixed = rec
+                fixed.projectPath = moved
+                try? ResumeStore.write(fixed, to: sessionPaths.resumeFile)
+                return
+            }
+        }
+    }
+
+    /// The app leaves the foreground: pause, persist (temporary: full save; project: journal) and
+    /// write the resume record right away (iOS may end the process without notice from here on).
+    func enterBackground() {
+        wasInBackground = true
+        releaseTouch()
+        guard current != nil else { return }
+        setPaused(true)
+        captureThumbnail()
+        let isTemp = current?.isTemp == true
+        _ = emu.sync(timeout: 10) { e in e.paused = true; return e.flushForResume(fullSave: isTemp) }
+        updateResumeRecord()
+        flushPlay()
+        resumeQueue.sync {}
+    }
+
+    /// Back from the background (not the launch's first activation: the audio session was set up
+    /// by start(), and reconfiguring it while the engine starts stalls the audio server).
+    func enterForeground() {
+        guard wasInBackground else { return }
+        wasInBackground = false
+        audioSession.reactivate()
+        library.refresh()
+    }
+
+    private func updateResumeRecord() {
+        guard persistSessions, let c = current, status.hasSession, !c.projectPath.isEmpty,
+              status.projectPath == c.projectPath else { return }
+        let content = takes.contains { $0.length > 0 } || !bookmarks.isEmpty || practiceSlots.contains { $0.hasA }
+        let r = ResumeRecord(projectPath: c.projectPath, isTemp: c.isTemp, romPath: status.romPath, romSHA256: c.romSHA256,
+                             frame: status.frame, atTakeEnd: status.frame >= status.takeLength,
+                             mode: status.practicing ? nil : (status.recording ? .record : .replay),
+                             practiceSlot: status.practicing ? status.practiceSlot : nil, hasContent: content)
+        if let last = lastResume, last.sameState(as: r) { return }
+        writeResume(r)
+    }
+
+    private func writeResume(_ r: ResumeRecord?) {
+        if r == nil { pendingResume = nil }
+        guard persistSessions else { return }
+        lastResume = r
+        let url = sessionPaths.resumeFile
+        resumeQueue.async {
+            if let r {
+                do { try ResumeStore.write(r, to: url) } catch { NSLog("ReplayNES: cannot write \(url.path): \(error)") }
+            } else {
+                ResumeStore.clear(url)
+            }
+        }
+    }
+
+    private func removeTempProject() {
+        do {
+            if sessionPaths.tempProjectExists { try FileManager.default.removeItem(at: sessionPaths.tempProject) }
+        } catch {
+            showError(String(localized: "Couldn’t delete the temporary data"), error.localizedDescription)
+        }
+        if lastResume?.isTemp == true || pendingResume?.isTemp == true { writeResume(nil) }
+    }
+
+    func captureThumbnail() {
+        guard persistSessions, let c = current, status.hasSession else { return }
+        var px: [UInt32]?
+        _ = emu.frames.readIfNewer(than: .max) { p, _ in
+            px = Array(UnsafeBufferPointer(start: p, count: Int(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT)))
+        }
+        guard let px else { return }
+        ThumbnailStore.save(pixels: px, project: c.projectPath, romSHA: c.romSHA256, on: resumeQueue) { [weak self] in
+            self?.objectWillChange.send()
+        }
+    }
+
+    /// Thumbnail of the resume record's session (Continue card).
+    func continueThumbnail() -> CGImage? {
+        guard let r = pendingResume else { return nil }
+        return ThumbnailStore.image(project: r.projectPath) ?? ThumbnailStore.image(romSHA: r.romSHA256)
+    }
+
+    // MARK: ROM import (document picker, Files "Open in", AirDrop)
+
+    /// Copies ROMs into ROM/ (security-scoped URLs from the picker). Returns the copies.
+    @discardableResult
+    func importROMs(_ urls: [URL]) -> [URL] {
+        guard library.ensureFolders() else {
+            showError(String(localized: "The library folder isn’t available"), library.folderError ?? "")
+            return []
+        }
+        var out: [URL] = []
+        var failures: [String] = []
+        for u in urls {
+            let scoped = u.startAccessingSecurityScopedResource()
+            defer { if scoped { u.stopAccessingSecurityScopedResource() } }
+            do { out.append(try ROMImport.copy(u, into: library.paths.roms)) } catch {
+                failures.append("\(u.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        library.refresh()
+        if !failures.isEmpty { showError(L("Some files couldn’t be imported"), failures.joined(separator: "\n")) }
+        else if !out.isEmpty { flash(L("Imported %lld ROM(s)", Int64(out.count))) }
+        return out
+    }
+
+    /// A file opened from another app (Files › Share › ReplayNES, or a tap on a .nes / .nesrec).
+    func open(url: URL) {
+        let ext = url.pathExtension.lowercased()
+        if ext == "nesrec" {
+            continueProject(url)
+            return
+        }
+        guard ext == "nes" else { return }
+        let inLibrary = url.standardizedFileURL.path.hasPrefix(library.paths.roms.standardizedFileURL.path)
+        let rom = inLibrary ? url : importROMs([url]).first
+        guard let rom else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            let entry = self.library.roms.first { $0.url.standardizedFileURL == rom.standardizedFileURL }
+                ?? LibraryROM(url: rom, name: rom.deletingPathExtension().lastPathComponent, relativePath: rom.lastPathComponent,
+                              size: 0, modified: Date(), sha256: nil, game: nil)
+            self.playFromLibrary(entry)
+        }
+    }
+
+    // MARK: export (MP4)
+
+    func requestExport() {
+        guard entitlements.allows(.exportMP4) else { showLocked(.mp4Export); return }
+        guard status.hasSession, status.takeLength > 0 else { return }
+        showExport = true
+    }
+
+    func startExport(_ settings: ExportSettings, to url: URL) {
+        let job = ExportJob(url: url)
+        exportJob = job
+        emu.perform { e in
+            guard let s = e.session else { return }
+            let renderer: OpaquePointer
+            do {
+                renderer = try s.makeRenderer(start: settings.startFrame, end: settings.endFrame)
+            } catch {
+                DispatchQueue.main.async { job.error = (error as? LocalizedError)?.errorDescription ?? "\(error)"; job.finished = true }
+                return
+            }
+            DispatchQueue.global(qos: .utility).async {
+                let exporter = MP4Exporter(renderer: renderer, settings: settings, url: url)
+                var lastUI = 0.0
+                do {
+                    let r = try exporter.run(progress: { d, t in
+                        let now = CACurrentMediaTime()
+                        if now - lastUI > 0.1 || d == t {
+                            lastUI = now
+                            DispatchQueue.main.async { job.done = d; job.total = t }
+                        }
+                    }, isCancelled: { job.isCancelled })
+                    DispatchQueue.main.async { job.result = r; job.finished = true }
+                } catch {
+                    let msg = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                    DispatchQueue.main.async { job.error = msg; job.finished = true }
+                }
+            }
+        }
+    }
+}
