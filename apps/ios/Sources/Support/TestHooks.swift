@@ -2,6 +2,7 @@
 //   -autoplayTestROM YES      write the engine's test ROM into ROM/ and play it (temporary session)
 //   -autoplayROM <name.nes>   play that file of ROM/
 //   -pauseAfter <s>           pause after s seconds (the seek bar)
+//   -continueLast YES         press the library's Continue card at 1 s (resume check)
 //   -openMenu <page>          open the Quick Menu at a page (top, retry, practice, display, ...) after 2 s
 //   -debugUnlockAll NO        free mode (the prototype switch off)
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
@@ -31,6 +32,7 @@ enum TestHooks {
                 m.playFromLibrary(entry, autoplay: true)
             }
         }
+        if d.bool(forKey: "continueLast") { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { m.continueLast() } }
         let pause = d.double(forKey: "pauseAfter")
         if pause > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + pause) { m.setPaused(true) } }
         if let page = d.string(forKey: "openMenu"), let p = QMPage(rawValue: page) {
