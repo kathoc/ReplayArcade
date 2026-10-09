@@ -7,6 +7,8 @@
 //   -debugUnlockAll NO        free mode (the prototype switch off)
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
 //   -holdTouch <button>       press an on-screen button at 1 s (e.g. r = pause) to check touch input
+//   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")
+//   -logTouchEvents YES       log every UITouch the on-screen gamepad receives
 //   -orientation landscape    rotate the window (screenshots of the landscape layout)
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation

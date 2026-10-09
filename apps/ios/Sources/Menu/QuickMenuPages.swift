@@ -90,7 +90,7 @@ enum QuickMenuPages {
         case .sound: return QMContent(items: sound(m))
         case .system: return QMContent(items: system(m, menu))
         case .updates: return QMContent(items: unlocks(m))
-        case .about: return QMContent(items: about())
+        case .about: return QMContent(items: about(m))
         case .game: return QMContent(items: game(m, menu))
         case .reset: return QMContent(items: reset(m, menu))
         }
@@ -301,7 +301,7 @@ enum QuickMenuPages {
         [
             link("controller", "gamecontroller", String(localized: "Controller"),
                  String(localized: "See and change the buttons on a picture of your controller"), .controller),
-            link("bindings", "hand.tap", L("Touch Controls"), L("Size, opacity, turbo buttons and vibration of the on-screen controls"), .bindings),
+            link("bindings", "hand.tap", L("Touch Controls"), L("D-pad size and follow, opacity, turbo buttons and vibration of the on-screen controls"), .bindings),
             confirmButton(m),
             toggle("dpadPaused", "dpad", String(localized: "D-pad While Paused"),
                    String(localized: "← / → step one frame while paused"), m.dpadStepWhenPaused) { m.dpadStepWhenPaused = $0 },
@@ -317,8 +317,18 @@ enum QuickMenuPages {
         [
             slider("touchOpacity", "circle.lefthalf.filled", L("Opacity"), L("How visible the on-screen controls are"),
                    m.touchOpacity, 0.15...1, step: 0.05, text: "\(Int((m.touchOpacity * 100).rounded()))%") { m.touchOpacity = $0 },
-            slider("touchScale", "arrow.up.left.and.arrow.down.right", L("Size"), L("Size of the on-screen controls"),
-                   m.touchScale, 0.8...1.3, step: 0.05, text: "\(Int((m.touchScale * 100).rounded()))%") { m.touchScale = $0 },
+            // NESTERM 操作: 十字キーの大きさ (130...210 px), 追従 ↕ / ↔ (0...2x), and the 4/8-way switch.
+            slider("touchDpadSize", "dpad", L("D-pad Size"), L("Size of the on-screen D-pad"),
+                   m.touchDpadSize, Double(TouchLayout.dpadRange.lowerBound)...Double(TouchLayout.dpadRange.upperBound), step: 2,
+                   text: "\(Int(m.touchDpadSize.rounded())) pt") { m.touchDpadSize = $0 },
+            slider("touchFollowY", "arrow.up.and.down", L("D-pad Follow ↕\u{FE0E}"), L("How fast the D-pad follows your thumb up and down"),
+                   m.touchFollowY, 0...2, step: 0.05, text: String(format: "%.2fx", m.touchFollowY)) { m.touchFollowY = $0 },
+            slider("touchFollowX", "arrow.left.and.right", L("D-pad Follow ↔\u{FE0E}"), L("How fast the D-pad follows your thumb left and right"),
+                   m.touchFollowX, 0...2, step: 0.05, text: String(format: "%.2fx", m.touchFollowX)) { m.touchFollowX = $0 },
+            choice("touchWays", "arrow.up.and.down.and.arrow.left.and.right", L("D-pad Directions"),
+                   L("4-way ignores diagonals (remembered per game)"), ["8", "4"], m.touchWays == 4 ? 1 : 0) {
+                if ($0 == 1) != (m.touchWays == 4) { m.toggleTouchWays() }
+            },
             toggle("touchTurbo", "bolt.circle", L("Turbo Buttons"), L("Show Turbo A / Turbo B buttons"), m.touchTurbo) { m.touchTurbo = $0 },
             toggle("touchHaptics", "iphone.radiowaves.left.and.right", L("Vibration"), L("A short vibration when a button is pressed"), m.touchHaptics) { m.touchHaptics = $0 },
             toggle("touchHideWithPad", "gamecontroller", L("Hide With Controller"), L("Hide the on-screen controls while a controller is connected"),
@@ -476,7 +486,7 @@ enum QuickMenuPages {
         return items
     }
 
-    private static func about() -> [QMItem] {
+    private static func about(_ m: AppModel) -> [QMItem] {
         let info = Bundle.main.infoDictionary ?? [:]
         let version = "\(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
         let site = "https://github.com/kathoc/ReplayNES"
@@ -491,7 +501,23 @@ enum QuickMenuPages {
                    detail: String(localized: "Third-party software in ReplayNES"),
                    confirm: { if let u = URL(string: site + "/blob/main/THIRD_PARTY_NOTICES.md") { UIApplication.shared.open(u) } },
                    verb: String(localized: "Open")),
+            // The on-screen controller is ported from Brickboy via NESTERM (Apache-2.0): its notice and
+            // licence text ship in the app (NOTICE, LICENSE; apps/ios/ThirdParty/brickboy).
+            QMItem(id: "brickboy", icon: "hand.tap", title: L("Touch Controller"),
+                   detail: "Brickboy (NESTERM) © 2026 Katsuya Hokamura · Apache-2.0", value: .text("Apache-2.0"),
+                   confirm: { showBundledText(m, title: L("Touch Controller"), file: "NOTICE", then: "LICENSE") },
+                   verb: String(localized: "Open")),
         ]
+    }
+
+    /// A bundled text file in an alert (scrollable), optionally with a button for a second one.
+    private static func showBundledText(_ m: AppModel, title: String, file: String, then next: String? = nil) {
+        let text = Bundle.main.url(forResource: file, withExtension: nil).flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+        var actions = [AppAlert.Action(title: String(localized: "OK"), role: .cancel)]
+        if let next {
+            actions.insert(AppAlert.Action(title: L("License Text")) { DispatchQueue.main.async { showBundledText(m, title: "Apache License 2.0", file: next) } }, at: 0)
+        }
+        m.alert = AppAlert(title: title, message: text, actions: actions)
     }
 
     // MARK: Game

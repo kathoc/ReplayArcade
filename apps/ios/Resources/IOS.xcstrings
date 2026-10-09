@@ -1,6 +1,16 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "4-way ignores diagonals (remembered per game)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "4方向では斜めを無視します（ゲームごとに記憶）"
+          }
+        }
+      }
+    },
     "A backup copy of the project is kept in the Backups folder first.": {
       "localizations": {
         "ja": {
@@ -77,6 +87,56 @@
           "stringUnit": {
             "state": "translated",
             "value": "続きから"
+          }
+        }
+      }
+    },
+    "D-pad Directions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーの方向数"
+          }
+        }
+      }
+    },
+    "D-pad Follow ↔︎": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追従 ↔︎"
+          }
+        }
+      }
+    },
+    "D-pad Follow ↕︎": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追従 ↕︎"
+          }
+        }
+      }
+    },
+    "D-pad Size": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キー"
+          }
+        }
+      }
+    },
+    "D-pad size and follow, opacity, turbo buttons and vibration of the on-screen controls": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面のコントローラーの十字キー（大きさ・追従）、不透明度、連射ボタン、振動"
           }
         }
       }
@@ -181,6 +241,26 @@
         }
       }
     },
+    "How fast the D-pad follows your thumb left and right": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーが親指の左右のずれに追従する速さ"
+          }
+        }
+      }
+    },
+    "How fast the D-pad follows your thumb up and down": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーが親指の上下のずれに追従する速さ"
+          }
+        }
+      }
+    },
     "How visible the on-screen controls are": {
       "localizations": {
         "ja": {
@@ -267,6 +347,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "プロジェクトとして残しました"
+          }
+        }
+      }
+    },
+    "License Text": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ライセンス全文"
           }
         }
       }
@@ -501,22 +591,12 @@
         }
       }
     },
-    "Size of the on-screen controls": {
+    "Size of the on-screen D-pad": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "画面上のボタンの大きさ"
-          }
-        }
-      }
-    },
-    "Size, opacity, turbo buttons and vibration of the on-screen controls": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "画面上のボタンの大きさ、不透明度、連射ボタン、振動"
+            "value": "画面の十字キーの大きさ"
           }
         }
       }
@@ -617,6 +697,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "現在のテイク全体（%@）を書き出します。"
+          }
+        }
+      }
+    },
+    "Touch Controller": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タッチコントローラー"
           }
         }
       }

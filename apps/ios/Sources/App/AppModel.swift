@@ -124,9 +124,14 @@ final class AppModel: ObservableObject {
     @AppStorage("showFlashIndicator") var showFlashIndicator = true { didSet { objectWillChange.send() } }
     // iOS only.
     @AppStorage("touchHaptics") var touchHaptics = true { didSet { objectWillChange.send() } }
-    @AppStorage("touchOpacity") var touchOpacity = 0.55 { didSet { objectWillChange.send() } }
+    /// NESTERM's controller is drawn opaque (its colours already sit on --bb-bg); kept adjustable.
+    @AppStorage("touchOpacity") var touchOpacity = 1.0 { didSet { objectWillChange.send() } }
     @AppStorage("touchTurbo") var touchTurbo = false { didSet { objectWillChange.send() } }
-    @AppStorage("touchScale") var touchScale = 1.0 { didSet { objectWillChange.send() } }
+    /// controller.mjs (NESTERM settings, 操作): 十字キーの大きさ --bb-dpad (130...210 px, CSS 144px),
+    /// 追従 ↔ / ↕ setHomeGain (0...2, defaults recentre-x 0.3, recentre-y 1).
+    @AppStorage("touchDpadSize") var touchDpadSize = Double(TouchLayout.dpadDefault) { didSet { objectWillChange.send() } }
+    @AppStorage("touchFollowX") var touchFollowX = 0.3 { didSet { objectWillChange.send() } }
+    @AppStorage("touchFollowY") var touchFollowY = 1.0 { didSet { objectWillChange.send() } }
     /// Hide the touch controls while a game controller is connected.
     @AppStorage("touchHideWithPad") var touchHideWithPad = true { didSet { objectWillChange.send() } }
 
@@ -136,7 +141,25 @@ final class AppModel: ObservableObject {
         DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan)
     }
 
-    var touchOptions: TouchLayout.Options { TouchLayout.Options(showTurbo: touchTurbo, scale: CGFloat(touchScale)) }
+    var touchOptions: TouchLayout.Options {
+        TouchLayout.Options(showTurbo: touchTurbo, dpadSize: min(max(CGFloat(touchDpadSize), TouchLayout.dpadRange.lowerBound), TouchLayout.dpadRange.upperBound),
+                            ways: touchWays)
+    }
+
+    /// controller.mjs syncWays / setGame: 8-way or 4-way, remembered per ROM ("ways:<crc32>" there,
+    /// the ROM's SHA-256 here) and globally without a game; a game never set starts with 8-way.
+    var touchWays: Int { UserDefaults.standard.integer(forKey: touchWaysKey) == 4 ? 4 : 8 }
+
+    private var touchWaysKey: String {
+        if let sha = current?.romSHA256, !sha.isEmpty { return "touchWays:" + sha }
+        return "touchWays"
+    }
+
+    /// The ways switch (#ways-switch) / the Touch Controls setting.
+    func toggleTouchWays() {
+        UserDefaults.standard.set(touchWays == 4 ? 8 : 4, forKey: touchWaysKey)
+        objectWillChange.send()
+    }
 
     var touchControlsVisible: Bool { !(touchHideWithPad && !controllers.isEmpty) }
 
@@ -354,6 +377,7 @@ final class AppModel: ObservableObject {
     // MARK: touch controls (main thread, from TouchControlsView)
 
     func touchButtons(pressed: [TouchButton], released: [TouchButton]) {
+        if Self.logTouch { NSLog("ReplayNES touch: %@", (pressed.map { $0.rawValue + "+" } + released.map { $0.rawValue + "-" }).joined(separator: " ")) }
         let st = status
         let pausedInPlay = st.hasSession && st.paused && !quickMenu.isOpen && !showLibrary
         for b in pressed {
@@ -381,6 +405,9 @@ final class AppModel: ObservableObject {
             if let id = b.inputID { rn_input_set_pressed(input.handle, id, 0) }
         }
     }
+
+    /// TestHooks -logTouch: every touch press / release edge in the system log.
+    private static let logTouch = UserDefaults.standard.bool(forKey: "logTouch")
 
     /// Everything the touch controls held is released (menu opened, app in the background).
     func releaseTouch() {

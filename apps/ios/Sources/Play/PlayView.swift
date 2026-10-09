@@ -15,7 +15,8 @@ struct PlayView: View {
             ZStack(alignment: .topLeading) {
                 PlaySurface(model: model, displayOptions: model.displayOptions, touchOptions: model.touchOptions,
                             controlsVisible: model.touchControlsVisible && !model.quickMenu.isOpen,
-                            opacity: model.touchOpacity, haptics: model.touchHaptics)
+                            opacity: model.touchOpacity, haptics: model.touchHaptics,
+                            followX: model.touchFollowX, followY: model.touchFollowY)
                 if let l = model.playLayout { overlays(l) }
             }
         }

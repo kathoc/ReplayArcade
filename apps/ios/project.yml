@@ -77,6 +77,11 @@ targets:
       - path: Sources
       - path: Resources/Assets.xcassets
       - path: Resources/IOS.xcstrings
+      # Apache-2.0 notice of the ported Brickboy touch controller (About › Touch Controller).
+      - path: ThirdParty/brickboy/LICENSE
+        buildPhase: resources
+      - path: NOTICE
+        buildPhase: resources
     dependencies:
       - target: Engine
       - sdk: GameController.framework
@@ -143,7 +148,7 @@ targets:
             LSItemContentTypes: [io.github.replaynes.nesrec]
 
   # Logic tests (no host app): the shared core layer, the iOS-only pure logic (feature gating,
-  # touch layout / routing) and the macOS core tests that do not need AppKit, on the simulator.
+  # the ported NESTERM touch gamepad and its layout) and the macOS core tests that do not need AppKit, on the simulator.
   ReplayNESTests:
     type: bundle.unit-test
     platform: iOS
@@ -153,8 +158,8 @@ targets:
         excludes:
           - ControllerLayoutTests.swift   # AppKit
       - path: Sources/Entitlements
-      - path: Sources/Play/TouchLayout.swift
-      - path: Sources/Play/TouchRouter.swift
+      - path: Sources/Play/Brickboy/TouchGamepad.swift
+      - path: Sources/Play/Brickboy/TouchLayout.swift
       - path: Sources/Support/L10n.swift
       - path: Sources/Library/ROMImport.swift
       - path: Tests
@@ -170,7 +175,32 @@ targets:
         TEST_HOST: ""
         BUNDLE_LOADER: ""
 
+  # End-to-end touch gestures on the running app (simulator): synthesised multi-touch paths on
+  # the ported NESTERM controller (scheme ReplayNESTouchUI; not part of the ReplayNES scheme's tests).
+  ReplayNESUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: ReplayNES
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.replaynes.ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: ReplayNES
+        SWIFT_OBJC_BRIDGING_HEADER: UITests/EventSynthesis.h
+        OTHER_LDFLAGS: []
+        HEADER_SEARCH_PATHS: []
+
 schemes:
+  ReplayNESTouchUI:
+    build:
+      targets:
+        ReplayNES: all
+        ReplayNESUITests: [test]
+    test:
+      targets: [ReplayNESUITests]
   ReplayNES:
     build:
       targets:

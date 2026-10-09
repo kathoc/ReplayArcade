@@ -71,11 +71,14 @@ Ways to get ROMs there:
 - **Library:** Continue card (the last session, where you left it), game cards with titles from
   the game database, sort (title, recently played, publisher, year, genre) and show (all, favourites, recent) menus, search,
   long-press a card for favourites and its kept recordings.
-- **Playing:** portrait = picture on top, controls below; landscape = picture centred, controls
-  beside it. D-pad (8-way, a thumb that slides off keeps steering), B / A (press both with one
-  thumb between them), SELECT / START, L2 rewind (hold), R2 fast-forward through what was
-  recorded (hold), L slow motion, R pause, ☰ Quick Menu. Turbo A / B buttons, size, opacity,
-  vibration: Quick Menu › Settings › Controls › Touch Controls.
+- **Playing:** the on-screen controller is NESTERM's (Brickboy's) touch gamepad, ported line by
+  line (docs/TOUCH_PORT.md): portrait = picture on top, controls below; landscape = picture
+  centred, controls beside it. Adaptive D-pad (it follows your thumb; 8-way or 4-way per game:
+  the 8-WAY pill), A / B as one pad (between them = both; holding one and rolling the thumb onto
+  the other taps it; a second finger while one is held presses the other), SELECT / START
+  (between them = both). Extra pills: L2 rewind (hold), L slow motion, MENU, R pause, R2
+  fast-forward through what was recorded (hold), optional turbo B / A. D-pad size and follow,
+  opacity, turbo pills, vibration: Quick Menu › Settings › Controls › Touch Controls.
 - **Paused:** the seek bar - drag to scrub (replays, never records), step one frame (also L / R
   and D-pad ← / →), set A / B of a section at the playhead, practice it, ▶ resumes.
 - **Game controllers** (MFi, Xbox, PlayStation, Switch Pro / Joy-Con): same bindings and rules as
@@ -247,10 +250,13 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
 - **ライブラリ：**「続きから」カード（前回の場面から再開）、ゲーム DB のタイトル付きカード、
   並べ替え（タイトル、最近遊んだ順、発売元、発売年、ジャンル）と表示（すべて、お気に入り、最近）、検索、カード長押しで
   お気に入り・残した記録。
-- **プレイ：** 縦持ちは上に画面・下に操作ボタン、横持ちは中央に画面・左右にボタン。十字キー
-  （8 方向。指がはみ出しても方向入力を続けます）、B / A（間を押すと両方）、SELECT / START、
-  L2 長押しで巻き戻し、R2 長押しで記録済みの範囲を早送り、L スロー、R 一時停止、☰ クイックメニュー。
-  連射ボタン・大きさ・不透明度・振動：クイックメニュー › 設定 › 操作 › タッチ操作。
+- **プレイ：** 画面のコントローラーは NESTERM（Brickboy）のタッチ操作をそのまま移植したものです
+  （docs/TOUCH_PORT.md）。縦持ちは上に画面・下に操作ボタン、横持ちは中央に画面・左右にボタン。
+  親指に追従する十字キー（ゲームごとに 8 方向 / 4 方向：8-WAY ボタン）、A / B は一体のパッド
+  （間を押すと両方、片方を押したまま親指を転がすともう片方をタップ、押している間の 2 本目の指は
+  もう片方）、SELECT / START（間で両方）。追加ボタン：L2 巻き戻し（長押し）、L スロー、MENU、
+  R 一時停止、R2 録画済み区間の早送り（長押し）、連射 B / A（任意）。十字キーの大きさと追従・
+  不透明度・連射ボタン・振動：クイックメニュー › 設定 › 操作 › タッチ操作。
 - **一時停止中：** シークバー。ドラッグで移動（再生のみで記録しません）、1 フレーム送り／戻し
   （L / R、十字キー ← / → でも）、再生位置に区間の A / B を設定、その区間を練習、▶ で再開。
 - **ゲームコントローラ**（MFi、Xbox、PlayStation、Switch Pro / Joy-Con）：Mac と同じ割り当てと
