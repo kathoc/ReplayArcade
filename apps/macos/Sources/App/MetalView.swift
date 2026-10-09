@@ -501,6 +501,7 @@ final class CRTFrameStore {
     }
 }
 
+#if os(macOS)  // iOS: apps/ios/Sources/Play/GameView.swift
 /// The game viewport: a layer-backed view whose CAMetalLayer is driven by the emulation thread's
 /// display link.
 final class GameLayerView: NSView {
@@ -632,3 +633,4 @@ struct MetalGameView: NSViewRepresentable {
         nsView.stopRendering()
     }
 }
+#endif

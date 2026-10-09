@@ -106,7 +106,7 @@ final class CRTRenderer {
         if let l = libraries[device.registryID] { return l }
         let opts = MTLCompileOptions()
         // IEEE float32 like WebGL highp: no reassociation / approximate transcendental functions.
-        if #available(macOS 15.0, *) { opts.mathMode = .safe } else { opts.fastMathEnabled = false }
+        if #available(macOS 15.0, iOS 18.0, *) { opts.mathMode = .safe } else { opts.fastMathEnabled = false }
         let l = try device.makeLibrary(source: CRTShaders.source, options: opts)
         libraries[device.registryID] = l
         return l

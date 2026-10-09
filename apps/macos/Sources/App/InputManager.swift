@@ -13,7 +13,11 @@
 // focused the pad is the seek bar's (onSeekInput) and nothing reaches the game.
 // Same rules as the Linux / Windows frontend (apps/desktop/src/input_router.cpp).
 // SPDX-License-Identifier: GPL-2.0-or-later
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import GameController
 
 /// Main-thread state for the controller diagram in Settings: connected controllers and, while a
@@ -606,6 +610,8 @@ final class InputManager {
 
     // MARK: keyboard
 
+#if os(macOS)  // iOS: touch controls (apps/ios) and game controllers only
+
     private static let modifierMasks: [UInt16: UInt] = [
         56: 0x02, 60: 0x04,          // left / right shift
         59: 0x01, 62: 0x2000,        // left / right control
@@ -697,6 +703,8 @@ final class InputManager {
         default: return nil
         }
     }
+
+#endif
 
     // MARK: game controllers
 
