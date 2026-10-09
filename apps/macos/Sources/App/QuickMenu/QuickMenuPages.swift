@@ -52,6 +52,8 @@ struct QMContent {
     /// Page-level contextual actions (no item focused / for the whole page).
     var x: QMAction?
     var y: QMAction?
+    /// The Options (⧉ / View) button: a page setting (Practice: the countdown).
+    var options: QMAction?
 }
 
 enum QuickMenuPages {
@@ -61,10 +63,16 @@ enum QuickMenuPages {
         case .retry: return QMContent(items: retry(m, menu))
         case .takes: return takes(m, menu)
         case .bookmarks: return bookmarks(m, menu)
-        case .practice: return QMContent(items: practice(m, menu))
+        case .practice:
+            // The countdown after returning to A (3, 2, 1): toggled on this page (Options / ⧉).
+            return QMContent(items: practice(m, menu),
+                             options: QMAction(label: m.practiceCountdown ? String(localized: "Countdown: On") : String(localized: "Countdown: Off")) {
+                                 m.practiceCountdown.toggle()
+                             })
         case .share: return QMContent(items: share(m, menu))
         case .stream: return QMContent(items: stream())
         case .display: return QMContent(items: display(m))
+        case .displayShape: return QMContent(items: displayShape(m))
         case .crtDetail:
             return QMContent(items: crtDetail(), y: QMAction(label: String(localized: "Defaults")) { CRTSettingsModel.shared.resetToNestermDefaults() })
         case .controls: return QMContent(items: controls(m))
@@ -170,7 +178,7 @@ enum QuickMenuPages {
                               confirm: { m.gotoBookmark(b.id); menu.close(resume: false) },
                               x: QMAction(label: String(localized: "Delete")) { m.removeBookmark(b.id) },
                               y: QMAction(label: String(localized: "Rename")) {
-                                  if let n = promptName(String(localized: "Bookmark Name"), b.name) { m.renameBookmark(b.id, n) }
+                                  promptName(m, String(localized: "Bookmark Name"), b.name) { m.renameBookmark(b.id, $0) }
                               },
                               verb: String(localized: "Jump")))
         }
@@ -201,7 +209,7 @@ enum QuickMenuPages {
                               accent: color, badge: active ? String(localized: "Practicing") : nil,
                               x: QMAction(label: String(localized: "Clear")) { m.practiceClear(n) },
                               y: QMAction(label: String(localized: "Rename")) {
-                                  if let name = promptName(String(localized: "Section Name"), slot.name) { m.practiceRename(n, name) }
+                                  promptName(m, String(localized: "Section Name"), slot.name) { m.practiceRename(n, $0) }
                               })
             if active && !slot.hasB {
                 item.detail = String(localized: "Make the current position the end (B) of this section")
@@ -267,12 +275,21 @@ enum QuickMenuPages {
                    String(localized: "Integer: sharp pixels · FILL: fill the window"),
                    [String(localized: "Integer"), "FILL"], m.integerScale ? 0 : 1) { m.integerScale = $0 == 0 },
             toggle("crt", "tv", String(localized: "CRT"), String(localized: "Look like a CRT TV (display only)"), crt.enabled) { crt.enabled = $0 },
-            toggle("par", "rectangle.arrowtriangle.2.outward", "8:7", String(localized: "Pixel aspect ratio of a CRT TV"), m.displayPAR87) { m.displayPAR87 = $0 },
             choice("flash", "bolt.trianglebadge.exclamationmark", String(localized: "Reduce Flashing"),
                    String(localized: "Tone down full-screen flashes (photosensitivity)"),
                    levels.map(\.label), levels.firstIndex(of: m.flashLevel) ?? 2) { m.flashReduction = levels[$0].rawValue },
-            toggle("overscan", "crop", String(localized: "Hide Edges"), String(localized: "Hide 8 pixels at each edge (overscan)"), m.hideOverscan) { m.hideOverscan = $0 },
+            toggle("vtr", "backward.fill", String(localized: "VTR Effect"),
+                   String(localized: "Videotape-style noise while rewinding (display only)"), m.vtrEffect) { m.vtrEffect = $0 },
+            link("shape", "aspectratio", String(localized: "Picture Shape"), String(localized: "8:7 pixels, hide the edges"), .displayShape),
             link("crtDetail", "slider.horizontal.3", String(localized: "CRT Details"), String(localized: "Scanlines, afterglow and signal of the CRT"), .crtDetail),
+        ]
+    }
+
+    /// Settings › Display › Picture Shape (moved here so Display keeps six rows with VTR Effect).
+    private static func displayShape(_ m: AppModel) -> [QMItem] {
+        [
+            toggle("par", "rectangle.arrowtriangle.2.outward", "8:7", String(localized: "Pixel aspect ratio of a CRT TV"), m.displayPAR87) { m.displayPAR87 = $0 },
+            toggle("overscan", "crop", String(localized: "Hide Edges"), String(localized: "Hide 8 pixels at each edge (overscan)"), m.hideOverscan) { m.hideOverscan = $0 },
         ]
     }
 
@@ -608,17 +625,11 @@ enum QuickMenuPages {
         FilmstripModel.shared.cache.image(before: frame + 1, within: 600)
     }
 
-    /// Small modal text prompt (rename).
-    static func promptName(_ title: String, _ current: String) -> String? {
-        let a = NSAlert()
-        a.messageText = title
-        let field = NSTextField(string: current)
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        a.accessoryView = field
-        a.addButton(withTitle: String(localized: "Rename"))
-        a.addButton(withTitle: String(localized: "Cancel"))
-        a.window.initialFirstResponder = field
-        guard a.runModal() == .alertFirstButtonReturn else { return nil }
-        return field.stringValue
+    /// Rename: an in-window dialog with a text field (the keyboard types; Return / the controller's
+    /// confirm renames, Esc / cancel keeps the name).
+    static func promptName(_ m: AppModel, _ title: String, _ current: String, apply: @escaping (String) -> Void) {
+        m.dialogs.present(AppDialog(kind: .question, title: title,
+                                    buttons: [String(localized: "Rename"), String(localized: "Cancel")], cancelIndex: 1,
+                                    text: current, onResult: { a in if a.button == 0 { apply(a.text) } }))
     }
 }

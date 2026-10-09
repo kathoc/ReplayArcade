@@ -285,8 +285,9 @@ void UI::resumeFromSeekBar() {
   if (hasSession() && !menuOpen_ && d_.emu->paused() && !interactive()) d_.emu->togglePause();
 }
 
-void UI::notice(const std::string& text) {
+void UI::notice(const std::string& text, double seconds) {
   notice_ = text;
+  noticeSeconds_ = std::max(4.0, seconds);
   noticeTime_ = -1;  // stamped on the next build (time of that frame)
 }
 
@@ -394,6 +395,7 @@ void UI::build(double now) {
   // Hold buttons (rewind / fast-forward) set these again while they are held.
   d_.emu->setRewindHeld(false);
   d_.emu->setFastForwardHeld(false);
+  d_.emu->setModalHold(hasSession() && interactive());
   if (hasSession() && !hadSession_) {
     // A game was started from the library: to the game.
     menuOpen_ = false;
@@ -438,6 +440,7 @@ void UI::buildOverlays(double now) {
   if (session && !menuOpen_) {
     buildBadges();
     if (d_.emu->status().practicing && !d_.emu->status().paused) buildPracticePill();
+    if (d_.emu->status().countdown > 0) buildCountdown();
   }
   buildNotice(now);
   buildMenuPill(now);
@@ -445,7 +448,7 @@ void UI::buildOverlays(double now) {
 }
 
 void UI::buildNotice(double now) {
-  if (notice_.empty() || now - noticeTime_ >= 4.0) return;
+  if (notice_.empty() || now - noticeTime_ >= noticeSeconds_) return;
   ImGuiIO& io = ImGui::GetIO();
   const UiMetrics& m = metrics_;
   float fs = m.label(), wrap = io.DisplaySize.x * 0.7f;
@@ -455,7 +458,7 @@ void UI::buildNotice(double now) {
   ImVec2 pad(S(20), S(12));
   ImVec2 p0((io.DisplaySize.x - ts.x) * 0.5f - pad.x, bottom - ts.y - pad.y * 2);
   ImDrawList* dl = ImGui::GetForegroundDrawList();
-  float a = float(std::min({1.0, (4.0 - (now - noticeTime_)) / 0.3, (now - noticeTime_) / kAnim}));
+  float a = float(std::min({1.0, (noticeSeconds_ - (now - noticeTime_)) / 0.3, (now - noticeTime_) / kAnim}));
   dl->AddRectFilled(p0, ImVec2(p0.x + ts.x + pad.x * 2, p0.y + ts.y + pad.y * 2), alpha(IM_COL32(28, 28, 32, 240), a), m.tileRadius());
   dl->AddText(ImGui::GetFont(), fs, ImVec2(p0.x + pad.x, p0.y + pad.y), alpha(kText, a), notice_.c_str(), nullptr, wrap);
 }
@@ -589,10 +592,11 @@ rnf_controller_family UI::promptFamily() const {
   return RNF_FAMILY_STEAM_DECK;
 }
 
-void UI::prompt(std::initializer_list<const char*> elements, const std::string& text) {
+void UI::prompt(std::initializer_list<const char*> elements, const std::string& text, std::function<void()> onClick) {
   Prompt p;
   for (const char* e : elements) p.elements.push_back(e);
   p.text = text;
+  p.onClick = std::move(onClick);
   prompts_.push_back(std::move(p));
 }
 
@@ -679,10 +683,19 @@ void UI::buildHintBar(const LRect& bar) {
   float cy = bar.y + bar.h / 2;
   for (size_t i = 0; i < prompts_.size(); ++i) {
     const Prompt& p = prompts_[i];
+    float x0 = x;
     for (const std::string& e : p.elements) x += glyph(dl, ImVec2(x, cy - gh / 2), e, f, gh) + S(4);
     x += S(4);
     ImVec2 ts = measure(fs, p.text.c_str());
-    dl->AddText(ImGui::GetFont(), fs, ImVec2(x, cy - ts.y / 2), kTextDim, p.text.c_str());
+    bool hov = false;
+    if (p.onClick) {
+      ImGui::SetCursorScreenPos(ImVec2(x0 - S(6), cy - gh / 2 - S(4)));
+      ImGui::PushID(int(i));
+      if (ImGui::InvisibleButton("##hint", ImVec2(x + ts.x - x0 + S(12), gh + S(8)))) p.onClick();
+      hov = ImGui::IsItemHovered();
+      ImGui::PopID();
+    }
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(x, cy - ts.y / 2), hov ? kText : kTextDim, p.text.c_str());
     x += ts.x + S(20);
   }
   if (!description_.empty()) {

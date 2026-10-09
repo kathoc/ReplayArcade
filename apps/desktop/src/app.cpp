@@ -128,6 +128,8 @@ void App::applySettings() {
   emu_->pauseAfterRewind = settings_.pauseAfterRewind;
   emu_->autosaveInterval = settings_.autosaveInterval;
   emu_->setFlashLevel(rn_flash_level(settings_.flash));
+  emu_->setVtrEffect(settings_.vtrEffect);
+  emu_->setPracticeCountdown(settings_.practiceCountdown);
   audio_.setVolume(settings_.volume);
   DisplayPostProcess pp = renderer_->postProcess();
   pp.crt = opt_.crt >= 0 ? opt_.crt == 1 : settings_.crt;
@@ -146,6 +148,7 @@ void App::updateNavigation() {
   bool inter = ui_->interactive();
   input_->setUIMode(inter);
   input_->setSeekFocus(inter ? 0 : ui_->seekFocus());
+  input_->setCountdown(!inter && emu_->status().countdown > 0);
   ImGuiIO& io = ImGui::GetIO();
   if (inter) io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
   else io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
@@ -312,6 +315,7 @@ int App::run(const AppOptions& opt) {
   input_->onMenuButton = [this] { ui_->toggleMenu(); };
   input_->onPausedStep = [this](int dir, bool down) { emu_->pausedStep(dir, down); };
   input_->onPausedResume = [this] { ui_->resumeFromSeekBar(); };
+  input_->onCountdownCancel = [this] { emu_->abortCountdown(); };
   input_->onSeekInput = [this](InputRouter::SeekInput in, bool down) { ui_->seekInput(int(in), down); };
   input_->onMarkerHold = [this](int dir, bool down) { ui_->markerHold(dir, down); };
   input_->onPausedShoulder = [this](int dir) { ui_->pausedShoulder(dir); };

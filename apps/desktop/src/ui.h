@@ -165,7 +165,8 @@ class UI : public DialogHost {
   // DialogHost
   void showDialog(Dialog d) override;
   void showChooser(ChooserRequest r) override;
-  void notice(const std::string& text) override;
+  using DialogHost::notice;
+  void notice(const std::string& text, double seconds) override;
 
   /// Script hooks (--script, tests): the visible dialog's button / the chooser's name.
   bool answerDialog(int button);
@@ -196,8 +197,9 @@ class UI : public DialogHost {
   struct Prompt {
     std::vector<std::string> elements;
     std::string text;
+    std::function<void()> onClick;  // set: the hint is also a button (mouse / touch)
   };
-  void prompt(std::initializer_list<const char*> elements, const std::string& text);
+  void prompt(std::initializer_list<const char*> elements, const std::string& text, std::function<void()> onClick = {});
   void buildHintBar(const LRect& bar);
   void inlinePrompts(const char* backText);
   rnf_controller_family promptFamily() const;
@@ -260,6 +262,8 @@ class UI : public DialogHost {
   void updateMarkers(double now);  // sync with the selected slot, D-pad repeat, L / R hold
   void applyMarkers(const rnf_markers_result& r);
   void buildPracticePill();
+  void buildCountdown();
+  void toggleCountdown();
   void buildBadges();
   bool thumbImage(ThumbRef& img, ImTextureID* tex, ImVec2* uv0, ImVec2* uv1);
 
@@ -311,6 +315,7 @@ class UI : public DialogHost {
   // Notices.
   std::string notice_;
   double noticeTime_ = 0;
+  double noticeSeconds_ = 4.0;
   // Library.
   int libFocus_ = -1;  // -1: the Continue card, -3: the filter / sort / search row, else a game card index (all pages)
   int libBar_ = 0;     // focused item of that row

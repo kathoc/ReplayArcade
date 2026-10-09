@@ -116,7 +116,13 @@ struct FakeHost : DialogHost {
     choices.pop_front();
     if (r.onChosen) r.onChosen(c);
   }
-  void notice(const std::string& t) override { notices.push_back(t); }
+  using DialogHost::notice;
+  void notice(const std::string& t, double) override { notices.push_back(t); }
+  bool sawNotice(const std::string& t) const {
+    for (const std::string& n : notices)
+      if (n == t) return true;
+    return false;
+  }
   bool sawTitle(const std::string& t) const {
     for (const Dialog& d : dialogs)
       if (d.title == t) return true;
@@ -942,6 +948,7 @@ TEST_CASE("emulation: practice A/B on the timeline, loop, stop restores the take
   CHECK(emu.structure().hasContent());
   CHECK_EQ(emu.structure().slots[2].length, uint64_t(60));
   uint64_t takeFrame = emu.status().frame;
+  emu.setPracticeCountdown(false);  // the countdown: "emulation: practice return ..." below
   emu.startPractice(2);
   CHECK(emu.status().practicing);
   CHECK_FALSE(emu.paused());
@@ -963,6 +970,66 @@ TEST_CASE("emulation: practice A/B on the timeline, loop, stop restores the take
   CHECK_FALSE(emu.status().practicing);
   CHECK_EQ(emu.status().frame, takeFrame);
   CHECK_EQ(emu.status().takeLength, uint64_t(300));
+  emu.closeSession();
+  rn_input_free(in);
+}
+
+TEST_CASE("emulation: practice return - countdown at A, L2 + R2 back to A with the VTR effect, cancel aborts") {
+  std::string d = tmpDir("practice-return");
+  std::string rom = testRom(d);
+  rn_input* in = rn_input_new();
+  NullAudio audio;
+  EmulationController emu(in, &audio);
+  rn_session* s = nullptr;
+  REQUIRE(rn_session_new(rom.c_str(), (d + "/p.nesrec").c_str(), nullptr, &s) == RN_OK);
+  emu.install(s);
+  tickN(emu, 300);
+  emu.setPaused(true);
+  emu.seek(60);
+  emu.timelineMarkA(1);
+  emu.seek(200);
+  emu.timelineMarkB(1);
+  // Start: the countdown on A's picture first; nothing is emulated meanwhile.
+  emu.startPractice(1);
+  REQUIRE(emu.status().practicing);
+  tickN(emu, 10);
+  CHECK_EQ(emu.status().countdown, 3);
+  CHECK_EQ(emu.status().practiceFrame, uint64_t(0));
+  // Cancel tapped during the countdown: practice ends, the take is as it was.
+  emu.abortCountdown();
+  CHECK_FALSE(emu.status().practicing);
+  CHECK_EQ(emu.status().frame, uint64_t(200));
+  // Without the countdown: plays at once; L2 + R2 mid-section returns to A through the VTR sweep.
+  emu.setPracticeCountdown(false);
+  emu.startPractice(1);
+  tickN(emu, 40);
+  CHECK_EQ(emu.status().practiceFrame, uint64_t(40));
+  emu.setRewindHeld(true);
+  emu.setFastForwardHeld(true);
+  emu.tick();
+  CHECK(emu.status().practiceLooping);
+  CHECK(emu.signal().codes == nullptr);  // the effect's picture (RGB) during the sweep
+  uint64_t frameAtChord = emu.status().practiceFrame;
+  for (int i = 0; i < 20; ++i) emu.tick();
+  CHECK_EQ(emu.status().practiceFrame, frameAtChord);  // L2 still held: no rewind of the run meanwhile
+  emu.setRewindHeld(false);
+  emu.setFastForwardHeld(false);
+  for (int i = 0; i < 300 && emu.status().practiceLoops == 0; ++i) {
+    emu.tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  CHECK_EQ(emu.status().practiceLoops, 1);
+  CHECK(emu.status().practiceFrame <= uint64_t(2));  // back at A, playing again
+  // The VTR effect off: the sweep shows the plain pictures.
+  emu.setVtrEffect(false);
+  emu.setRewindHeld(true);
+  emu.setFastForwardHeld(true);
+  emu.tick();
+  emu.tick();
+  CHECK(emu.status().practiceLooping);
+  emu.setRewindHeld(false);
+  emu.setFastForwardHeld(false);
+  emu.stopPractice();
   emu.closeSession();
   rn_input_free(in);
 }
@@ -1274,7 +1341,7 @@ TEST_CASE("session: a missing ROM offers Locate ROM; cancelling keeps the resume
   w.app->continueLast();
   CHECK(w.emu->session() == nullptr);
   CHECK(w.host.sawTitle(TR("ROM not found")));
-  CHECK(w.host.sawTitle(TR("Couldn’t resume where you left off")));
+  CHECK(w.host.sawNotice(TR("Couldn’t resume where you left off (nothing was deleted). Try again from the library.")));
   CHECK(fs::exists(w.paths.tempProject()));  // kept for the next launch
 }
 
