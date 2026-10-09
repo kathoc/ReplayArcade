@@ -100,6 +100,10 @@ final class AppModel: ObservableObject {
     @Published var capturingAction: String?
     @Published var practiceSlots: [PracticeSlotInfo] = (0..<EngineSession.practiceSlotCount).map { PracticeSlotInfo(index: $0) }
     @Published var alert: AppAlert?
+    /// The shared QuickMenuController asks whether a dialog owns the input (the Mac's in-window
+    /// dialogs); on iPhone the dialogs are the SwiftUI alerts above.
+    struct DialogState { let isActive: Bool }
+    var dialogs: DialogState { DialogState(isActive: alert != nil) }
     @Published var prompt: AppPrompt?
     /// Where the game view and the touch controls are (PlaySurfaceView), for the overlays.
     @Published var playLayout: TouchLayout?

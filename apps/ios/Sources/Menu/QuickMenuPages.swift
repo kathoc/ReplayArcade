@@ -51,6 +51,8 @@ struct QMContent {
     var caption: String?
     var x: QMAction?
     var y: QMAction?
+    /// The Options button (shared QuickMenuController; no iPhone page sets one yet).
+    var options: QMAction?
 }
 
 extension QMPage {
@@ -74,6 +76,10 @@ enum QuickMenuPages {
         case .practice: return QMContent(items: practice(m, menu))
         case .share, .stream: return QMContent(items: share(m, menu))
         case .display: return QMContent(items: display(m))
+        case .displayShape:
+            // The Mac moved 8:7 / Hide Edges onto this page; on iPhone they stay on Display, so
+            // this page is not linked (the shared switch must cover it).
+            return QMContent(items: display(m).filter { $0.id == "par" || $0.id == "overscan" })
         case .crtDetail:
             return QMContent(items: crtDetail(m), y: QMAction(label: String(localized: "Defaults")) { CRTSettingsModel.shared.resetToNestermDefaults() })
         case .controls: return QMContent(items: controls(m))
