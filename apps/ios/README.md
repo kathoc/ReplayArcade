@@ -62,8 +62,13 @@ Ways to get ROMs there:
   **ReplayNES**. Files dropped at the top level are moved into `ROM/` automatically.
 - **Files app** on the iPhone: copy / move into On My iPhone › ReplayNES › ROM (also from iCloud
   Drive, AirDrop, a USB stick).
-- In the app: **+** in the library (document picker), or "Open in ReplayNES" / share from another
-  app (the ROM is copied into `ROM/` and starts).
+- In the app: **+** in the library (document picker, several files at once), or "Open in
+  ReplayNES" / share from another app. Imports run in the background: each file is checked (`.nes`
+  with an iNES header), skipped if the same ROM (SHA-256) is already in the library, and copied
+  under a free name (`Name 2.nes`); a toast says how many were added / already there / skipped.
+  An import never starts a game (also not for one file) and never touches the running session.
+  Note: iOS hands an app only the first file of a multi-item **Share › ReplayNES**; for many
+  files use **+** or copy them into `ROM/` with the Files app.
 - No ROM at hand: **Add Test ROM** in the empty library writes the engine's generated test ROM.
 
 ## Using it
@@ -162,6 +167,11 @@ xcodebuild -project apps/ios/ReplayNES.xcodeproj -scheme ReplayNES \
 xcrun simctl launch booted io.github.replaynes.dev -autoplayTestROM YES -pacingProbe 8
 ```
 
+Import checks (scheme `ReplayNESTouchUI`, `ROMImportUITests`): `testMultiFileImportBatch` needs
+nothing; `testShareFromFilesApp` shares On My iPhone › ShareROMs from the Files app - put `.nes`
+files into the simulator's `…/data/Containers/Shared/AppGroup/<group.com.apple.FileProvider.LocalStorage>/File Provider Storage/ShareROMs`
+first (`TEST_RUNNER_SHARE_WHILE_PLAYING=1` / `TEST_RUNNER_SHARE_COLD=1` for the other states).
+
 Launch arguments for checks (`Sources/Support/TestHooks.swift`): `-autoplayTestROM YES`,
 `-openMenu <page>`, `-pauseAfter <s>`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
 `-orientationLock 0|1|2`,
@@ -244,8 +254,13 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
   ドラッグ。いちばん上に置かれたファイルは自動で `ROM/` に移動します。
 - iPhone の **ファイル App：** このiPhone内 › ReplayNES › ROM へコピー／移動（iCloud Drive、
   AirDrop、USB メモリからも）。
-- アプリ内：ライブラリの **＋**（ファイル選択）、または他の App から「ReplayNES で開く」／共有
-  （`ROM/` にコピーして起動）。
+- アプリ内：ライブラリの **＋**（ファイル選択、複数可）、または他の App から「ReplayNES で開く」／
+  共有。読み込みはバックグラウンドで行い、各ファイルを確認（`.nes` かつ iNES ヘッダ）、同じ ROM
+  （SHA-256）がすでにあれば追加せず、空いている名前（`名前 2.nes`）でコピーします。結果は
+  「N 本のROMを追加しました」のトーストで表示（追加済み・スキップ件数つき）。読み込みでゲームが
+  起動することはなく（1 ファイルでも）、実行中のセッションにも触れません。
+  注意：iOS は複数ファイルの **共有 › ReplayNES** で最初の 1 ファイルしかアプリに渡しません。
+  まとめて入れるときは **＋** か、ファイル App で `ROM/` へコピーしてください。
 - ROM が手元にない場合：空のライブラリの **テストROMを追加** で、エンジンが生成するテスト ROM を作れます。
 
 ### 使い方

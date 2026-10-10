@@ -48,6 +48,7 @@ struct PlayView: View {
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
                     .foregroundStyle(.white)
+                    .accessibilityIdentifier("notice")
                     .transition(.opacity)
             }
             if st.practicing { PracticePill() }

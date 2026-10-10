@@ -188,6 +188,15 @@ final class AppModel: ObservableObject {
     /// Touch buttons routed to paused stepping (their release goes there too).
     private var touchRouted: Set<TouchButton> = []
     private var started = false
+    private var afterStart: [() -> Void] = []
+    /// ROM imports (document picker, Open in / Share from other apps), off the main thread.
+    private(set) lazy var importQueue: ROMImportQueue = {
+        let paths = library.paths
+        let q = ROMImportQueue(romDir: { paths.roms }, inbox: { paths.root.appendingPathComponent("Inbox", isDirectory: true) })
+        q.onStart = { [weak self] n in self?.importStarted(n) }
+        q.onFinish = { [weak self] r, b in self?.importFinished(r, b) }
+        return q
+    }()
     private var wasInBackground = false
 
     private init() {
@@ -269,6 +278,9 @@ final class AppModel: ObservableObject {
             self.stats = self.emu.latency.snapshot(audio: self.emu.audio)
             PacingProbe.shared.observe(self.stats)
         }
+        let pending = afterStart
+        afterStart = []
+        pending.forEach { $0() }
     }
 
     private func pushPrefs() {
@@ -292,12 +304,12 @@ final class AppModel: ObservableObject {
 
     // MARK: messages
 
-    func flash(_ text: String) {
+    func flash(_ text: String, duration: Double = 3.5) {
         notice = text
         noticeWork?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.notice = nil }
         noticeWork = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: w)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: w)
     }
 
     func showError(_ title: String, _ message: String) {
@@ -958,46 +970,44 @@ final class AppModel: ObservableObject {
 
     // MARK: ROM import (document picker, Files "Open in", AirDrop)
 
-    /// Copies ROMs into ROM/ (security-scoped URLs from the picker). Returns the copies.
-    @discardableResult
-    func importROMs(_ urls: [URL]) -> [URL] {
-        guard library.ensureFolders() else {
-            showError(String(localized: "The library folder isn’t available"), library.folderError ?? "")
-            return []
-        }
-        var out: [URL] = []
-        var failures: [String] = []
-        for u in urls {
-            let scoped = u.startAccessingSecurityScopedResource()
-            defer { if scoped { u.stopAccessingSecurityScopedResource() } }
-            do { out.append(try ROMImport.copy(u, into: library.paths.roms)) } catch {
-                failures.append("\(u.lastPathComponent): \(error.localizedDescription)")
-            }
-        }
-        library.refresh()
-        if !failures.isEmpty { showError(L("Some files couldn’t be imported"), failures.joined(separator: "\n")) }
-        else if !out.isEmpty { flash(L("Imported %lld ROM(s)", Int64(out.count))) }
-        return out
+    /// Copies ROMs into ROM/ from the in-app picker (security-scoped URLs), off the main thread.
+    func importROMs(_ urls: [URL]) {
+        importQueue.enqueue(urls, fromOtherApp: false)
     }
 
-    /// A file opened from another app (Files › Share › ReplayNES, or a tap on a .nes / .nesrec).
-    func open(url: URL) {
-        let ext = url.pathExtension.lowercased()
-        if ext == "nesrec" {
-            continueProject(url)
+    /// Files opened from another app (Files › Share › ReplayNES, a tap on a .nes / .nesrec,
+    /// AirDrop): every URL context the scene delegate gets, at once (SceneDelegate).
+    /// ROMs are imported off the main thread (ROMImportQueue): one library refresh and one toast at
+    /// the end; no game is started (see importFinished). A single .nesrec opens that project.
+    func open(urls: [URL]) {
+        let projects = urls.filter { $0.pathExtension.lowercased() == "nesrec" }
+        let others = urls.filter { $0.pathExtension.lowercased() != "nesrec" }
+        if projects.count == 1 && others.isEmpty {
+            let url = projects[0]
+            whenStarted { [weak self] in self?.continueProject(url) }
             return
         }
-        guard ext == "nes" else { return }
-        let inLibrary = url.standardizedFileURL.path.hasPrefix(library.paths.roms.standardizedFileURL.path)
-        let rom = inLibrary ? url : importROMs([url]).first
-        guard let rom else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self else { return }
-            let entry = self.library.roms.first { $0.url.standardizedFileURL == rom.standardizedFileURL }
-                ?? LibraryROM(url: rom, name: rom.deletingPathExtension().lastPathComponent, relativePath: rom.lastPathComponent,
-                              size: 0, modified: Date(), sha256: nil, game: nil)
-            self.playFromLibrary(entry)
-        }
+        // Projects are only opened one at a time (a .nesrec among ROMs is skipped and counted).
+        importQueue.enqueue(others + projects, fromOtherApp: true)
+    }
+
+    private func importStarted(_ count: Int) {
+        if count >= 10 { flash(L("Importing %lld files…", Int64(count)), duration: 60) }
+    }
+
+    private func importFinished(_ r: ROMImportResult, _ batch: ROMImportQueue.Batch) {
+        NSLog("ReplayNES import: \(batch.urls.count) file(s): \(r.added.count) added, \(r.existing.count) existing, \(r.invalid.count) invalid, \(r.failed.count) failed")
+        for (name, why) in r.failed { NSLog("ReplayNES import: \(name): \(why)") }
+        library.refresh()
+        flash(r.summary, duration: 5)
+        // No game is started by an import (also not for one file): iOS hands over only the first
+        // file of a multi-item Share › ReplayNES, so one URL doesn't mean the user picked one game,
+        // and starting a game would replace the screen (and the session) they came back to.
+    }
+
+    /// Runs `f` now when start() has run, else at its end (a cold launch by "Open in").
+    private func whenStarted(_ f: @escaping () -> Void) {
+        if started { f() } else { afterStart.append(f) }
     }
 
     // MARK: export (MP4)

@@ -1,6 +1,6 @@
 // iPhone screen orientation setting (Settings › Display › Picture Shape › Orientation): Auto
 // follows the device, Portrait / Landscape lock the interface. The app delegate answers
-// supportedInterfaceOrientations from it (so a locked app also launches in its orientation), and
+// supportedInterfaceOrientations from it (AppDelegate.swift) (so a locked app also launches in its orientation), and
 // a change rotates at once with UIWindowScene.requestGeometryUpdate.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import UIKit
@@ -33,12 +33,5 @@ enum OrientationLock: Int, CaseIterable {
                 scene.requestGeometryUpdate(.iOS(interfaceOrientations: lock.mask)) { NSLog("ReplayNES: orientation: \($0)") }
             }
         }
-    }
-}
-
-/// UIApplicationDelegate for what SwiftUI's App has no API for: the supported orientations.
-final class AppDelegate: NSObject, UIApplicationDelegate {
-    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        UIDevice.current.userInterfaceIdiom == .phone ? OrientationLock.current.mask : .all
     }
 }

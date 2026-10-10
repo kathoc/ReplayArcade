@@ -11,13 +11,29 @@
 //   -logTouchEvents YES       log every UITouch the on-screen gamepad receives
 //   -orientation landscape    rotate the window (screenshots of the landscape layout)
 //   -rotateCycle <s>          rotate portrait → landscape right → portrait → landscape left ... every s seconds
+//   -resetLibraryForTests YES empty Documents/ROM and Documents/Projects and forget the temporary session
+//   -importTestBatch YES      at 1 s, open 7 files at once like a multi-item Share › ReplayNES: 5 distinct
+//                             test ROMs (one name twice, from two folders), a duplicate, a non-ROM
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation
 import UIKit
 
 enum TestHooks {
+    /// Before the app model starts.
+    static func prepare() {
+        guard UserDefaults.standard.bool(forKey: "resetLibraryForTests") else { return }
+        let docs = LibraryPaths.documents
+        for dir in [docs.roms, docs.projects] { try? FileManager.default.removeItem(at: dir) }
+    }
+
     static func run(_ m: AppModel) {
         let d = UserDefaults.standard
+        if d.bool(forKey: "resetLibraryForTests") { m.discardTemporarySession() }
+        if d.bool(forKey: "importTestBatch") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                do { m.open(urls: try importTestBatch()) } catch { NSLog("ReplayNES: importTestBatch: \(error)") }
+            }
+        }
         var rom: URL?
         if d.bool(forKey: "autoplayTestROM") {
             m.library.ensureFolders()
@@ -52,6 +68,41 @@ enum TestHooks {
         }
         let cycle = d.double(forKey: "rotateCycle")
         if cycle > 0 { rotateCycle(every: cycle, step: 0) }
+    }
+
+    /// Files outside the library as another app would hand them over.
+    static func importTestBatch() throws -> [URL] {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ImportBatch-\(UUID().uuidString)", isDirectory: true)
+        let other = dir.appendingPathComponent("Other", isDirectory: true)
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        let base = dir.appendingPathComponent("base.tmp")
+        try Engine.writeTestROM(to: base)
+        let rom = try Data(contentsOf: base)
+        try fm.removeItem(at: base)
+        var urls: [URL] = []
+        let names = ["Alpha", "Bravo", "Charlie", "Delta"]
+        for (i, name) in names.enumerated() {
+            var d = rom
+            d[16 + 0x2000 + i] &+= UInt8(1 + i)
+            let u = dir.appendingPathComponent("\(name).nes")
+            try d.write(to: u)
+            urls.append(u)
+        }
+        // Same name as Alpha, other contents (-> "Alpha 2.nes").
+        var e = rom
+        e[16 + 0x2000 + 9] &+= 7
+        let sameName = other.appendingPathComponent("Alpha.nes")
+        try e.write(to: sameName)
+        urls.append(sameName)
+        // A duplicate of Bravo under another name, and a file that is no ROM.
+        let dup = other.appendingPathComponent("Bravo (copy).nes")
+        try fm.copyItem(at: urls[1], to: dup)
+        urls.append(dup)
+        let junk = dir.appendingPathComponent("readme.nes")
+        try Data("not a ROM".utf8).write(to: junk)
+        urls.append(junk)
+        return urls
     }
 
     private static func rotate(to o: UIInterfaceOrientationMask) {

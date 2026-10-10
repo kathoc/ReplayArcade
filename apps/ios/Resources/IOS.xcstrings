@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%lld already in the library": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 本は追加済み"
+          }
+        }
+      }
+    },
+    "%lld skipped (not an NES ROM or unreadable)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件をスキップ（NESのROMではないか読み込めません）"
+          }
+        }
+      }
+    },
     "4-way ignores diagonals (remembered per game)": {
       "localizations": {
         "ja": {
@@ -57,6 +77,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "お気に入りに追加"
+          }
+        }
+      }
+    },
+    "Added %lld ROM(s)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 本のROMを追加しました"
           }
         }
       }
@@ -321,6 +351,16 @@
         }
       }
     },
+    "Importing %lld files…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 個のファイルを読み込んでいます…"
+          }
+        }
+      }
+    },
     "Integer: sharp pixels · FILL: as large as the screen allows": {
       "localizations": {
         "ja": {
@@ -417,6 +457,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "MP4書き出し"
+          }
+        }
+      }
+    },
+    "No ROMs added": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMは追加されませんでした"
           }
         }
       }

@@ -33,6 +33,9 @@ struct LibraryView: View {
                                 ForEach(Array(games.enumerated()), id: \.element.id) { i, rom in
                                     GameCard(rom: rom, favorite: library.isFavorite(rom), projects: library.projects(for: rom).count,
                                              focused: focus.index == i && !model.controllers.isEmpty)
+                                        .accessibilityElement(children: .combine)
+                                        .accessibilityIdentifier("gameCard.\(rom.relativePath)")
+                                        .accessibilityAddTraits(.isButton)
                                         .onTapGesture { model.playFromLibrary(rom) }
                                         .contextMenu { cardMenu(rom) }
                                 }
@@ -59,6 +62,7 @@ struct LibraryView: View {
                     sortMenu
                     Button { importing = true } label: { Image(systemName: "plus") }
                         .accessibilityLabel(L("Import ROMs"))
+                        .accessibilityIdentifier("importROMs")
                     Menu {
                         Button { model.quickMenu.open(at: .display) } label: { Label(String(localized: "Settings"), systemImage: "gearshape") }
                         Button { model.showUnlocks = true } label: { Label(L("Unlocks"), systemImage: "lock.open") }

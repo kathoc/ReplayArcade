@@ -11,6 +11,7 @@ struct ReplayNESApp: App {
 
     init() {
         UILanguage.applyAtLaunch()
+        TestHooks.prepare()
     }
 
     var body: some Scene {
@@ -21,7 +22,7 @@ struct ReplayNESApp: App {
                     model.start()
                     TestHooks.run(model)
                 }
-                .onOpenURL { model.open(url: $0) }
+                // Opened files come in through SceneDelegate (all URLs of a multi-item open).
         }
         .onChange(of: phase) { _, p in
             switch p {
@@ -43,6 +44,7 @@ struct RootView: View {
                 PlayView()
             } else {
                 LibraryView()
+                    .overlay(alignment: .bottom) { LibraryNotice() }
             }
         }
         .alert(model.alert?.title ?? "", isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } }),
@@ -57,6 +59,29 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.showUnlocks) { UnlocksView().environmentObject(model) }
         .sheet(isPresented: $model.showExport) { ExportView().environmentObject(model) }
+    }
+}
+
+/// Notices over the library (the play screen shows its own over the picture): import results.
+private struct LibraryNotice: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack {
+            if let n = model.notice {
+                Text(n).font(.system(size: 14, weight: .medium)).multilineTextAlignment(.center)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.15)))
+                    .foregroundStyle(.white)
+                    .accessibilityIdentifier("notice")
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 32)
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.2), value: model.notice)
     }
 }
 
