@@ -236,7 +236,8 @@ If you moved the ROM file, specify it again when opening (it is confirmed to be 
 
 Quick Menu › Share › Export MP4, or Share › Export MP4… in the menu bar.
 
-- Format: H.264 or HEVC with AAC (48 kHz)
+- Format: H.264 or HEVC with AAC (48 kHz, 128 kbit/s mono)
+- Bit rate: Light / Standard (YouTube) / High quality. Standard is YouTube's recommended upload rate for 60 fps SDR, chosen by the output height (1080p 12 Mbit/s, 1440p 24, 720p 7.5, 480p 4; between them interpolated by height², at least 1.5 Mbit/s; HEVC uses 70% of that); Light is half of it and High twice. The encoder is asked for a constant rate, and every choice in the export sheet shows its rate and the file size predicted for exactly this range, size and codec (within about 3%; a very noisy picture can need more than a hardware encoder's lowest rate, and flat pixel art is padded up to the rate by the software encoder).
 - Size: integer multiples of 256×240, 1280×960, 1920×1440, and so on
 - You can choose overscan cropping and the pixel aspect ratio 1:1 / 8:7.
 - With "Apply Flash Reduction", you can get a video with intense flashing toned down (see "Flash Reduction" above).
@@ -255,6 +256,27 @@ The game screen is output via [Syphon](https://syphon.github.io) and can be brou
 - Output runs on a separate thread from emulation, and nothing is drawn when there is no receiver. A delay of a few frames may appear on the OBS side.
 - While paused, the last picture keeps being shown.
 - The controller works even when ReplayNES is not in front, so you can keep playing while operating OBS.
+
+### Test Cartridge (no game needed)
+
+ReplayNES comes with its own test program for the NES, the **ReplayNES Test Cartridge** (written for this project: code, graphics and font are our own; CC0 public domain). Write it with `replaynes-cli make-test-rom --cartridge "ReplayNES Test Cartridge.nes"` into your ROM folder. It also runs on other emulators and on real hardware (NROM-128). On the title screen, choose with Up/Down and open with A; in a test, Select goes to the next test and Start back to the menu.
+
+- **Palette chart**: all 64 colours ($00–$3F) at once (the palette is rewritten between the rows), with the colour emphasis bits (A) and greyscale (B). Handy for checking the CRT picture and palette settings.
+- **Color bars**: bars, a grey ramp and 1-pixel stripe / checker patterns for sharpness, with emphasis and greyscale.
+- **Sprites**: 8 bouncing sprites, sprite-0 hit (move sprite 0 with the D-pad), the 8-sprites-per-line limit with the overflow flag, and flicker.
+- **Scrolling**: horizontal, vertical, diagonal and D-pad scrolling over a 512×240 world, and a split screen whose status bar stays put.
+- **Controllers**: both pads, all 8 buttons, live, with the raw bytes (Select+Start together to leave).
+- **Rapid-fire meter**: see below.
+- **Sound test**: pulse 1/2 (4 duties), triangle, noise (2 modes, 16 rates) and a scale.
+
+#### Rapid-fire meter (連射測定)
+
+A 10-second test for A and B (it starts with the first press), in the spirit of the classic 16-presses-per-second challenge, plus a turbo checker.
+
+- **Presses** and **presses/s** (presses in the 10 s ÷ 10), and **edges**: every change of the button, press or release. 10 s are 600 frame samples, so at most 599 edges and 300 presses fit; any 60 samples hold at most 59 edges and 30 presses (**Best 1s P/E**).
+- Mean and deviation of the press-to-press and release-to-release intervals, mean **hold** (press → release) and **gap** (release → press) with the **duty**, the last hold / gap, the fastest interval, a histogram of the press intervals, and the best 10 s record (kept until power-off). Intervals longer than 0.5 s count as pauses and stay out of the means.
+- **Turbo check** (Left/Right): hold a turbo button to see its period (press to press), presses per second, hold / gap, duty, the range of the last 8 periods and a frame-by-frame trace — this shows exactly what ReplayNES's Turbo Speed and Turbo Press Length settings produce.
+- Resolution: the cartridge reads the pads 4 times per frame (so on real hardware it catches taps shorter than a frame), but an emulator, ReplayNES included, changes the input once per frame: 1/60 s steps, at most 30 presses per second.
 
 ## About Core Compatibility (Important)
 
@@ -278,7 +300,7 @@ What it reads and writes is limited to the ROMs and projects you specify, the Li
 ## Known Limitations
 
 - Only NTSC (Japan / North America) timing is supported. PAL and the Famicom Disk System (FDS) have not been verified.
-- Determinism tests (whether the same input gives the same result) are done with the bundled homemade test ROMs. Many of the mappers used by commercial games have not been verified individually. If you notice a problem, please let us know.
+- Determinism tests (whether the same input gives the same result) are done with the bundled homemade test ROMs (including the Test Cartridge). Many of the mappers used by commercial games have not been verified individually. If you notice a problem, please let us know.
 - Autosave runs between emulation frames. On a slow disk it may rarely be delayed by one frame.
 - Audio absorbs the drift between the timer and the audio clock by dropping samples. A faint pop of noise may rarely occur. No sound is produced during slow motion and fast-forward. The exported audio is mono.
 - Pixel-perfect integer scaling happens only at a 1:1 pixel aspect ratio. At 8:7, the horizontal scaling width is not uniform.
@@ -306,7 +328,7 @@ cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release && ninja -C build && cte
 
 Windows: the app (`ReplayNES.exe`, target `replaynes-win`; SDL3 comes from the submodule `third_party/SDL`), engine, frontend core and tests build with MSVC / clang-cl (`cmake -S . -B build && cmake --build build --config Release`), or are cross-compiled on a Mac with llvm-mingw (`scripts/build-windows.sh`, which also makes `dist/ReplayNES-<version>-windows-{x64,arm64}.zip`) and run in a Windows VM; see [docs/WINDOWS.md](docs/WINDOWS.md). The Linux and Windows apps share their UI and frame loop (`apps/desktop`).
 
-With the command-line tool `replaynes-cli`, you can verify determinism (`determinism`), verify projects (`verify`), generate test ROMs (`make-test-rom`), and more.
+With the command-line tool `replaynes-cli`, you can verify determinism (`determinism`), verify projects (`verify`), generate the test ROMs (`make-test-rom`; `--cartridge` writes the [Test Cartridge](#test-cartridge-no-game-needed), whose 6502 source and assembler are in `tools/testcart`), and more.
 
 For the design, see [docs/ARCHITECTURE_DECISION.md](docs/ARCHITECTURE_DECISION.md); for the file format, [docs/FILE_FORMAT.md](docs/FILE_FORMAT.md); and for porting to other OSes, [docs/PORTING.md](docs/PORTING.md).
 
