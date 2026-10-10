@@ -28,7 +28,7 @@ Or from the release bundle (`io.github.replaynes.ReplayNES-<version>-x86_64.flat
 (remote `replaynes-origin`), so it updates the same way:
 
 ```sh
-flatpak install --user io.github.replaynes.ReplayNES-0.5.2-x86_64.flatpak   # fetches the runtime from Flathub
+flatpak install --user io.github.replaynes.ReplayNES-0.5.3-x86_64.flatpak   # fetches the runtime from Flathub
 flatpak remotes --user                                                      # replaynes-origin  https://kathoc.github.io/ReplayNES/flatpak/
 ```
 
@@ -418,8 +418,9 @@ The exporter (`apps/linux/src/export/`, the Linux port of the macOS `MP4Exporter
 active take on a fresh core (`rn_renderer`, the same frames and renderer hash as the macOS export)
 and encodes H.264 High (closed GOP of 30 frames, no B-frames, BT.709 limited range, bit rate
 `rnf_export_video_bitrate` = YouTube's recommended SDR 48-60 fps rate, e.g. 12 Mbit/s at 1080p, x0.5 / x1 / x2 for
-Light / Standard / High; constant rate: libx264 `nal-hrd=cbr` with a 0.25 s VBV buffer, VAAPI CBR, so the size
-follows `rnf_export_predict_size` within 0.5% in the measurements) + AAC
+Light / Standard / High, used as the average rate: libx264 ABR and VAAPI VBR with a VBV cap of 1.5x the
+target and a 2 s buffer, no filler data, so simple pictures give smaller files; the Export dialog shows
+`rnf_export_predict_size` as an estimate ("≈ ... (estimate)"), never enforced) + AAC
 128 kbit/s 48 kHz mono into MP4 with FFmpeg from the runtime. Timestamps are exact: track timescale
 39375000, frame f at `(f - start) * 655171`, so ffprobe reports `avg_frame_rate=39375000/655171`.
 Encoder (automatic): hardware first - `h264_vaapi` (the Deck's AMD GPU; the Flatpak has
