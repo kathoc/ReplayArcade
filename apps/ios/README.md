@@ -81,7 +81,7 @@ Ways to get ROMs there:
   centred between the control columns (never under them). Adaptive D-pad (it follows your thumb; 8-way or 4-way per game:
   the 8-WAY pill), A / B as one pad (between them = both; holding one and rolling the thumb onto
   the other taps it; a second finger while one is held presses the other), SELECT / START
-  (between them = both), AA / BB above A / B (turbo A / B). Extra pills: ⏪ L2 rewind (hold),
+  (between them = both), AA / BB up-left of A / B (turbo A / B). Extra pills: ⏪ L2 rewind (hold),
   ◀︎| / |▶︎ one frame back / forward (pauses first while playing), L slow motion, MENU, R pause,
   ⏩ R2 fast-forward through what was recorded (hold). D-pad size and follow, opacity, AA / BB,
   vibration: Quick Menu › Settings › Controls › Touch Controls; screen orientation (Auto /
@@ -274,7 +274,7 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
   （間を押すと両方、片方を押したまま親指を転がすともう片方をタップ、押している間の 2 本目の指は
   もう片方）、SELECT / START（間で両方）。追加ボタン：L2 巻き戻し（長押し）、L スロー、MENU、
   R 一時停止、R2 録画済み区間の早送り（長押し）、◀︎| / |▶︎ 1コマ戻る／進む（再生中は一時停止してから）、
-  A / B の上に AA / BB（連射 A / B）。十字キーの大きさと追従・不透明度・AA / BB・振動：
+  A / B の左斜め上に AA / BB（連射 A / B）。十字キーの大きさと追従・不透明度・AA / BB・振動：
   クイックメニュー › 設定 › 操作 › タッチ操作。画面の向き（自動／縦／横）：設定 › 画面 › 画面の形。
 - **一時停止中：** シークバー。ドラッグで移動（再生のみで記録しません）、1 フレーム送り／戻し
   （L / R、十字キー ← / → でも）、再生位置に区間の A / B を設定、その区間を練習、▶ で再開。
