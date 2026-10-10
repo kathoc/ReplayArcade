@@ -120,7 +120,8 @@ final class ROMImportUITests: XCTestCase {
             app.launch()
             XCTAssertTrue(app.buttons["importROMs"].waitForExistence(timeout: 15))
         }
-        let expected = Int(env["SHARE_ROM_COUNT"] ?? "") ?? 7
+        // + the test ROM that was playing.
+        let expected = (Int(env["SHARE_ROM_COUNT"] ?? "") ?? 7) + (env["SHARE_WHILE_PLAYING"] == "1" ? 1 : 0)
         XCTAssertTrue(waitFor(10) { gameCards(app) == expected }, "\(expected) game cards, found \(gameCards(app))")
         XCTAssertTrue(app.buttons["importROMs"].isHittable, "the library still answers")
         let shot = XCTAttachment(screenshot: app.screenshot())
