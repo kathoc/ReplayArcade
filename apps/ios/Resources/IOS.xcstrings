@@ -61,12 +61,12 @@
         }
       }
     },
-    "Add Test ROM": {
+    "Add Test Cartridge": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "テストROMを追加"
+            "value": "テストカートリッジを追加"
           }
         }
       }

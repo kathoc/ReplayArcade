@@ -69,7 +69,7 @@ Ways to get ROMs there:
   An import never starts a game (also not for one file) and never touches the running session.
   Note: iOS hands an app only the first file of a multi-item **Share › ReplayNES**; for many
   files use **+** or copy them into `ROM/` with the Files app.
-- No ROM at hand: **Add Test ROM** in the empty library writes the engine's generated test ROM.
+- No ROM at hand: **Add Test Cartridge** in the empty library writes the ReplayNES Test Cartridge (a small CC0 test program built into the engine; `tools/testcart`).
 
 ## Using it
 
@@ -261,7 +261,7 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
   起動することはなく（1 ファイルでも）、実行中のセッションにも触れません。
   注意：iOS は複数ファイルの **共有 › ReplayNES** で最初の 1 ファイルしかアプリに渡しません。
   まとめて入れるときは **＋** か、ファイル App で `ROM/` へコピーしてください。
-- ROM が手元にない場合：空のライブラリの **テストROMを追加** で、エンジンが生成するテスト ROM を作れます。
+- ROM が手元にない場合：空のライブラリの **テストカートリッジを追加** で、エンジンに内蔵された ReplayNES テストカートリッジ（CC0 の小さなテストプログラム、`tools/testcart`）を追加できます。
 
 ### 使い方
 

@@ -138,8 +138,9 @@ struct LibraryView: View {
             HStack {
                 Button { importing = true } label: { Label(L("Import ROMs"), systemImage: "square.and.arrow.down") }
                     .buttonStyle(.borderedProminent)
-                Button { addTestROM() } label: { Label(L("Add Test ROM"), systemImage: "hammer") }
+                Button { addTestCartridge() } label: { Label(L("Add Test Cartridge"), systemImage: "hammer") }
                     .buttonStyle(.bordered)
+                    .accessibilityIdentifier("addTestCartridge")
             }
         }
         .padding(16)
@@ -147,11 +148,11 @@ struct LibraryView: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06)))
     }
 
-    /// The engine's own generated test ROM (no game; for trying the app without ROMs).
-    private func addTestROM() {
+    /// The ReplayNES Test Cartridge (tools/testcart, CC0; for trying the app without ROMs).
+    private func addTestCartridge() {
         guard library.ensureFolders() else { return }
-        let url = library.paths.roms.appendingPathComponent("ReplayNES Test.nes")
-        do { try Engine.writeTestROM(to: url) } catch { model.showError(L("Add Test ROM"), error.localizedDescription); return }
+        let url = library.paths.roms.appendingPathComponent("ReplayNES Test Cartridge.nes")
+        do { try Engine.writeTestCartridge(to: url) } catch { model.showError(L("Add Test Cartridge"), error.localizedDescription); return }
         library.refresh()
     }
 }
