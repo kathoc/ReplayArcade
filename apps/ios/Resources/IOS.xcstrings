@@ -681,12 +681,12 @@
         }
       }
     },
-    "Show AA / BB (Turbo A / Turbo B) above A / B": {
+    "Show AA / BB (Turbo A / Turbo B) up-left of A / B": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "A / B の上に AA / BB（連射A / 連射B）を表示します"
+            "value": "A / B の左斜め上に AA / BB（連射A / 連射B）を表示します"
           }
         }
       }

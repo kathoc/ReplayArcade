@@ -38,6 +38,11 @@ final class TouchLayoutTests: XCTestCase {
         devices.map { ($0.0, TouchLayout.make(size: $0.1, safe: $0.2, options: o)) }
     }
 
+    static func layout(_ name: String, _ o: TouchLayout.Options) -> TouchLayout {
+        let d = devices.first { $0.0 == name }!
+        return TouchLayout.make(size: d.1, safe: d.2, options: o)
+    }
+
     private static func disc(_ c: CGPoint, _ d: CGFloat) -> CGRect { CGRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d) }
 
     /// Browser measurements of NESTERM's controller (getBoundingClientRect, 390 x 844). Blink rounds
@@ -95,7 +100,11 @@ final class TouchLayoutTests: XCTestCase {
     func testSafeAreasMoveTheControlsIn() {
         let l = phoneLandscape.pad
         XCTAssertEqual(l.dpad.minX, 62 + 16)
-        XCTAssertEqual(l.face.maxX, 874 - 62, accuracy: 0.01)
+        // AA / BB up-left: the face moved right into its 16 px padding, A's disc ends at the safe area.
+        XCTAssertEqual(l.face.maxX, 874 - 62 + 16, accuracy: 0.01)
+        XCTAssertEqual(l.a.x + phoneLandscape.faceButton / 2, 874 - 62, accuracy: 0.01)
+        let css = TouchLayout.make(size: CGSize(width: 874, height: 402), safe: TouchInsets(top: 0, left: 62, bottom: 21, right: 62), options: Self.css)
+        XCTAssertEqual(css.pad.face.maxX, 874 - 62, accuracy: 0.01)
         XCTAssertEqual(l.select.maxY, 402 - 8 - 21, accuracy: 0.01)
         XCTAssertEqual(l.frame.minX, 62)
         XCTAssertEqual(l.frame.maxX, phoneLandscape.gameArea.minX + EDGE_MARGIN, accuracy: 0.01, "the pad's frame ends at the picture")
@@ -149,18 +158,37 @@ final class TouchLayoutTests: XCTestCase {
         }
     }
 
-    /// AA / BB: above A / B (same columns, the A/B tilt), the same .gp-round look but smaller, and
-    /// hit zones that never reach the A / B discs (the ported roll logic keeps its buttons).
-    func testAABBZonesAboveAB() {
+    /// AA / BB: up-left of A / B (BB from B, AA from A, the same offset perpendicular to the A/B
+    /// axis: a row parallel to A / B, like a Pro Controller's Y / X over B / A), the same .gp-round
+    /// look but smaller, and hit zones that never reach the A / B discs (the ported roll logic keeps
+    /// its buttons).
+    func testAABBZonesUpLeftOfAB() {
         for (name, l) in Self.layouts() {
             let g = l.pad
             let aa = l.extra(.turboA)!, bb = l.extra(.turboB)!
             XCTAssertEqual(aa.style, .round)
-            XCTAssertEqual(aa.frame.midX, g.a.x, accuracy: 0.01, name)
-            XCTAssertEqual(bb.frame.midX, g.b.x, accuracy: 0.01, name)
-            XCTAssertLessThan(aa.frame.maxY, g.a.y - l.faceButton / 2, name)
-            XCTAssertLessThan(bb.frame.maxY, g.b.y - l.faceButton / 2, name)
-            XCTAssertEqual(aa.frame.midY - bb.frame.midY, g.a.y - g.b.y, accuracy: 0.01, "the A/B tilt (\(name))")
+            let da = CGVector(dx: aa.frame.midX - g.a.x, dy: aa.frame.midY - g.a.y)
+            let db = CGVector(dx: bb.frame.midX - g.b.x, dy: bb.frame.midY - g.b.y)
+            XCTAssertEqual(da.dx, db.dx, accuracy: 0.01, name)
+            XCTAssertEqual(da.dy, db.dy, accuracy: 0.01, name)
+            XCTAssertLessThan(da.dx, -15, "left of A (\(name))")
+            XCTAssertLessThan(da.dy, -(l.faceButton / 2), "above A (\(name))")
+            let step = TouchLayout.turboMetrics(btn: l.faceButton).step
+            XCTAssertEqual(hypot(da.dx, da.dy), step, accuracy: 0.01, name)
+            let u = TouchLayout.turboDirection(btn: l.faceButton)
+            if abs(da.dx - u.dx * step) < 0.01 {
+                // Perpendicular to B → A.
+                XCTAssertEqual(da.dx * (g.a.x - g.b.x) + da.dy * (g.a.y - g.b.y), 0, accuracy: 0.5, "the A/B tilt (\(name))")
+            } else {
+                // Turned toward straight up only as far as the D-pad (portrait) / picture (landscape) needs.
+                XCTAssertGreaterThan(da.dx, u.dx * step, name)
+                if l.landscape {
+                    XCTAssertEqual(bb.frame.minX, Self.layout(name, TouchLayout.Options(showAABB: false)).pad.b.x - l.faceButton / 2, accuracy: 0.01, name)
+                } else {
+                    XCTAssertEqual(bb.frame.minX, g.dpad.maxX + TouchLayout.turboGap, accuracy: 0.01, name)
+                }
+            }
+            XCTAssertLessThan(bb.frame.maxX, aa.frame.minX, name)
             XCTAssertLessThan(aa.frame.width, l.faceButton)
             XCTAssertEqual(aa.frame.width, bb.frame.width)
             let zoneR = aa.frame.width / 2 + TouchLayout.turboSlop
@@ -216,6 +244,8 @@ final class TouchLayoutTests: XCTestCase {
                 var visible: [CGRect] = [l.pad.dpad, l.select, l.start, Self.disc(l.pad.a, l.faceButton), Self.disc(l.pad.b, l.faceButton)]
                 visible += l.extras.map(\.frame)
                 for r in visible { XCTAssertFalse(r.intersects(game), "\(r) under the picture \(game) (\(name))") }
+                // AA / BB never cost picture width.
+                XCTAssertEqual(game.width, Self.layout(name, TouchLayout.Options(showAABB: false, dpadSize: o.dpadSize)).gameArea.width, accuracy: 0.01, name)
                 let pad = TouchGamepad(press: { _, _ in }).with(l.pad)
                 pad.setHome(1000, 0)
                 XCTAssertLessThanOrEqual(l.pad.dpad.maxX + pad.ox, game.minX + 0.01, name)

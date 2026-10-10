@@ -1,6 +1,6 @@
 // The ReplayNES buttons NESTERM's controller has no equivalent for - L2 (rewind, ⏪), frame step
 // back / forward, L (slow), MENU (Quick Menu), R (pause), R2 (fast-forward, ⏩) and AA / BB (turbo
-// A / B above A / B) - plus NESTERM's own 4/8-way switch (#ways-switch). A separate view on top of
+// A / B up-left of A / B) - plus NESTERM's own 4/8-way switch (#ways-switch). A separate view on top of
 // the ported gamepad, so the gamepad itself stays exactly Brickboy's: the pills in the style of
 // NESTERM's sub bar switches (.bb-mode-switch / .bb-turbo-switch: pill, 1 px --bb-line border, dim
 // 11 px semibold text or an SF Symbol; "pressed" = accent text and border on a green tint), AA / BB

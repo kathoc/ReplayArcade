@@ -341,7 +341,7 @@ enum QuickMenuPages {
                    L("4-way ignores diagonals (remembered per game)"), ["8", "4"], m.touchWays == 4 ? 1 : 0) {
                 if ($0 == 1) != (m.touchWays == 4) { m.toggleTouchWays() }
             },
-            toggle("touchTurbo", "bolt.circle", L("Turbo Buttons"), L("Show AA / BB (Turbo A / Turbo B) above A / B"), m.touchAABB) { m.touchAABB = $0 },
+            toggle("touchTurbo", "bolt.circle", L("Turbo Buttons"), L("Show AA / BB (Turbo A / Turbo B) up-left of A / B"), m.touchAABB) { m.touchAABB = $0 },
             toggle("touchHaptics", "iphone.radiowaves.left.and.right", L("Vibration"), L("A short vibration when a button is pressed"), m.touchHaptics) { m.touchHaptics = $0 },
             toggle("touchHideWithPad", "gamecontroller", L("Hide With Controller"), L("Hide the on-screen controls while a controller is connected"),
                    m.touchHideWithPad) { m.touchHideWithPad = $0 },

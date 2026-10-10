@@ -78,7 +78,7 @@ struct TouchInsets: Equatable {
 }
 
 /// A ReplayNES control drawn by TouchExtrasView: a pill of the extras row (a ReplayNES button, or
-/// NESTERM's 4/8-way switch) or one of the AA / BB rounds above A / B.
+/// NESTERM's 4/8-way switch) or one of the AA / BB rounds up-left of A / B.
 struct TouchExtra: Equatable {
     enum Kind: Equatable {
         case button(TouchButton)
@@ -106,7 +106,7 @@ struct TouchExtra: Equatable {
 
 struct TouchLayout: Equatable {
     struct Options: Equatable {
-        /// AA / BB (turbo A / turbo B) above A / B.
+        /// AA / BB (turbo A / turbo B) up-left of A / B.
         var showAABB = true
         /// --bb-dpad (controller.mjs applySize: 130...210 px, CSS default 144px).
         var dpadSize: CGFloat = TouchLayout.dpadDefault
@@ -247,16 +247,45 @@ struct TouchLayout: Equatable {
         return false
     }
 
-    /// AA / BB above A / B: diameter and the vertical step from the A (B) centre to the AA (BB)
-    /// centre (the discs stay `turboGap` apart; BB lands beside A, the pair keeps the A/B tilt).
+    /// AA / BB up-left of A / B: diameter and the distance from the A (B) centre to the AA (BB)
+    /// centre (the discs stay `turboGap` apart).
     static func turboMetrics(btn: CGFloat) -> (size: CGFloat, step: CGFloat) {
         let s = (btn * turboScale).rounded()
         return (s, (btn + s) / 2 + turboGap)
     }
 
-    private static func turboExtras(a: CGPoint, b: CGPoint, btn: CGFloat) -> [TouchExtra] {
+    /// The direction from A (B) to AA (BB): perpendicular to the B → A axis, up and to the left,
+    /// so AA / BB form a row parallel to A / B (a Pro Controller's X / Y over A / B, with the A/B
+    /// tilt). Unit vector, screen coordinates (y down).
+    static func turboDirection(btn: CGFloat) -> CGVector {
+        let dx = btn + faceGap, dy = 2 * (btn + faceGap) * faceTilt   // B → A: (dx, -dy)
+        let n = hypot(dx, dy)
+        return CGVector(dx: -dy / n, dy: -dx / n)
+    }
+
+    /// The offset from A (B) to AA (BB): `turboDirection` × `step`, turned toward straight up (same
+    /// distance, so the discs stay as far from A / B) only as far as needed to keep BB's disc right
+    /// of `minLeft` (portrait: clear of the D-pad; landscape: the picture's edge).
+    static func turboOffset(btn: CGFloat, b: CGPoint, minLeft: CGFloat) -> CGVector {
+        let t = turboMetrics(btn: btn), u = turboDirection(btn: btn)
+        var v = CGVector(dx: u.dx * t.step, dy: u.dy * t.step)
+        if b.x + v.dx - t.size / 2 < minLeft {
+            v.dx = min(0, minLeft + t.size / 2 - b.x)
+            v.dy = -(max(0, t.step * t.step - v.dx * v.dx)).squareRoot()
+        }
+        return v
+    }
+
+    /// How far AA / BB (top of the disc) reach above the A/B midpoint.
+    static func turboAbove(btn: CGFloat, offset v: CGVector) -> CGFloat {
+        (btn + faceGap) * faceTilt - v.dy + turboMetrics(btn: btn).size / 2
+    }
+
+    private static func turboExtras(a: CGPoint, b: CGPoint, btn: CGFloat, offset v: CGVector) -> [TouchExtra] {
         let t = turboMetrics(btn: btn)
-        func disc(_ c: CGPoint) -> CGRect { CGRect(x: c.x - t.size / 2, y: c.y - t.step - t.size / 2, width: t.size, height: t.size) }
+        func disc(_ c: CGPoint) -> CGRect {
+            CGRect(x: c.x + v.dx - t.size / 2, y: c.y + v.dy - t.size / 2, width: t.size, height: t.size)
+        }
         // B first (the left one), as .gp-face lists its rounds.
         return [TouchExtra(kind: .button(.turboB), frame: disc(b), style: .round),
                 TouchExtra(kind: .button(.turboA), frame: disc(a), style: .round)]
@@ -356,18 +385,19 @@ struct TouchLayout: Equatable {
         let btn = min(max(48, min(0.19 * W, 0.13 * H)), 78)
         let off = (btn + faceGap) * faceTilt
         let faceW = 2 * 4 + 2 * btn + faceGap
-        let t = turboMetrics(btn: btn)
-        let below = btn / 2 + off + 4
-        let above = o.showAABB ? off + t.step + t.size / 2 : below
-        let m = faceMid(row: row1, top: row1.minY, above: above, below: below)
-        let f = face(x: W - pi - faceW, midY: m, btn: btn, padX: 4, padY: off + 4)
-
+        let faceX = W - pi - faceW
         // #app:not(.bb-side) .gp-dpad { width: min(var(--bb-dpad, 144px), max(112px, el-h * .24)) };
         // .gp-dpad { justify-self: start; margin-left: 2px }; align-items: center - here × 1.1 and
         // centred on the A/B midpoint (ReplayNES).
         let d = (min(o.dpadSize, max(112, H * 0.24)) * dpadScale).rounded()
+        // AA / BB up-left of A / B, BB kept `turboGap` clear of the D-pad (narrow screens).
+        let tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 4 + btn / 2, y: 0), minLeft: pi + 2 + d + turboGap)
+        let below = btn / 2 + off + 4
+        let above = o.showAABB ? turboAbove(btn: btn, offset: tv) : below
+        let m = faceMid(row: row1, top: row1.minY, above: above, below: below)
+        let f = face(x: faceX, midY: m, btn: btn, padX: 4, padY: off + 4)
         let dpad = CGRect(x: pi + 2, y: m - d / 2, width: d, height: d)
-        if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn) }
+        if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv) }
 
         // .gp-system { display: flex; justify-content: center; gap: 22px }.
         let total = sel.width + 22 + sta.width
@@ -433,13 +463,24 @@ struct TouchLayout: Equatable {
         // .gp-face { --gp-btn: min(19vw, 78px); padding: 48px 16px }; justify-self: end; align-self: center.
         let btn = min(0.19 * W, 78)
         let faceW = 2 * 16 + 2 * btn + faceGap
-        let off = (btn + faceGap) * faceTilt
-        let t = turboMetrics(btn: btn)
+        var faceX = rightCol.maxX - faceW
+        // AA / BB up-left of A / B without narrowing the picture: B's disc edge (CSS place) is the
+        // limit; the face moves right into its 16 px padding first (keeping A 8 pt from the screen
+        // edge), then AA / BB turn toward straight up as far as needed.
+        var tv = CGVector.zero
+        if o.showAABB {
+            let bLeft = faceX + 16
+            let t = turboMetrics(btn: btn), u = turboDirection(btn: btn)
+            let protrude = max(0, -(u.dx * t.step) + t.size / 2 - btn / 2)
+            faceX += min(protrude, 16, 8 + safe.right)
+            tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 16 + btn / 2, y: 0), minLeft: bLeft)
+        }
         let below = btn / 2 + 48
-        let above = o.showAABB ? off + t.step + t.size / 2 : below
+        let above = o.showAABB ? turboAbove(btn: btn, offset: tv) : below
         let m = faceMid(row: row3, top: row2.maxY + 4, above: above, below: below)
-        let f = face(x: rightCol.maxX - faceW, midY: m, btn: btn, padX: 16, padY: 48)
-        if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn) }
+        var f = face(x: faceX, midY: m, btn: btn, padX: 16, padY: 48)
+        f.box = f.box.intersection(CGRect(x: 0, y: 0, width: W, height: H))
+        if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv) }
 
         // .bb-side > .bb-root .gp-dpad { justify-self: start; margin-inline-start: var(--bb-ctl-inset)
         //   (16px); align-self: center; width: var(--bb-dpad, 144px) } - × 1.1, on the A/B midpoint.

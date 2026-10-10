@@ -126,7 +126,7 @@ final class AppModel: ObservableObject {
     @AppStorage("touchHaptics") var touchHaptics = true { didSet { objectWillChange.send() } }
     /// NESTERM's controller is drawn opaque (its colours already sit on --bb-bg); kept adjustable.
     @AppStorage("touchOpacity") var touchOpacity = 1.0 { didSet { objectWillChange.send() } }
-    /// AA / BB (turbo A / B) above A / B; on by default (a new key: the old "touchTurbo" switch
+    /// AA / BB (turbo A / B) up-left of A / B; on by default (a new key: the old "touchTurbo" switch
     /// showed the turbo pills and was off by default).
     @AppStorage("touchAABB") var touchAABB = true { didSet { objectWillChange.send() } }
     /// Settings › Display › Picture Shape › Orientation (iPhone): OrientationLock raw value.
