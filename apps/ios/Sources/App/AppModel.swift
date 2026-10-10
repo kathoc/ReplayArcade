@@ -109,6 +109,11 @@ final class AppModel: ObservableObject {
     @Published var playLayout: TouchLayout?
     @Published private(set) var pendingResume: ResumeRecord?
     @Published var selectedSlot = 0 { didSet { FilmstripModel.shared.selectedSlot = selectedSlot } }
+    /// A session change (save, close, switch, open, reset) is in flight on the emulation thread /
+    /// a background queue; RootView shows a spinner (after a short delay) and takes no touches.
+    @Published private(set) var showBusy = false
+    private var busyCount = 0
+    private var afterBusy: [() -> Void] = []
 
     // Preferences (same keys as macOS where the setting exists there).
     @AppStorage("showLatency") var showLatency = false { didSet { objectWillChange.send() } }
@@ -485,6 +490,7 @@ final class AppModel: ObservableObject {
     /// "Play" on a game card: free = the temporary slot; recording unlocked = a new project in
     /// Projects/ (FeatureGate.sessionTarget).
     func playFromLibrary(_ rom: LibraryROM, autoplay: Bool = false) {
+        guard whenIdle({ [weak self] in self?.playFromLibrary(rom, autoplay: autoplay) }) else { return }
         leaveCurrentSession { [weak self] in
             guard let self else { return }
             switch FeatureGate.sessionTarget(forLibraryPlay: self.entitlements.state) {
@@ -503,18 +509,24 @@ final class AppModel: ObservableObject {
 
     /// Test hooks: forget the temporary session and the resume record (no prompts).
     func discardTemporarySession() {
-        if current?.isTemp == true { releaseSession() }
-        removeTempProject()
-        writeResume(nil)
+        guard whenIdle({ [weak self] in self?.discardTemporarySession() }) else { return }
+        let finish = { [weak self] in
+            guard let self else { return }
+            self.removeTempProject()
+            self.writeResume(nil)
+        }
+        if current?.isTemp == true { releaseSession(then: finish) } else { finish() }
     }
 
     /// "Continue" on a project of a game.
     func continueProject(_ url: URL) {
+        guard whenIdle({ [weak self] in self?.continueProject(url) }) else { return }
         leaveCurrentSession { [weak self] in self?.openProject(url) }
     }
 
     /// The Continue card: the last session where it was, else the newest project.
     func continueLast() {
+        guard whenIdle({ [weak self] in self?.continueLast() }) else { return }
         guard !status.hasSession else { hideLibraryScreen(); return }
         if let r = pendingResume {
             openProject(URL(fileURLWithPath: r.projectPath), resume: r)
@@ -528,9 +540,7 @@ final class AppModel: ObservableObject {
     private func leaveCurrentSession(then next: @escaping () -> Void) {
         if let c = current, !c.isTemp {
             captureThumbnail()
-            _ = emu.sync(timeout: 60) { e in e.flushForResume(fullSave: true) }
-            releaseSession()
-            next()
+            releaseSession(flush: true, then: next)
             return
         }
         settleTempSlot(then: next)
@@ -539,8 +549,20 @@ final class AppModel: ObservableObject {
     /// Makes room for a new temporary session (see leaveCurrentSession).
     private func settleTempSlot(then next: @escaping () -> Void) {
         guard persistSessions else { next(); return }
-        let isCurrent = current?.isTemp == true
-        if isCurrent { captureThumbnail(); _ = emu.sync(timeout: 60) { e in e.flushForResume(fullSave: true) } }
+        if current?.isTemp == true {
+            // Persist it first (on the emulation thread), then decide with its files up to date.
+            captureThumbnail()
+            beginBusy()
+            emu.perform({ e in _ = e.flushForResume(fullSave: true) }, completion: { [weak self] in
+                self?.decideTempSlot(isCurrent: true, then: next)
+                self?.endBusy()
+            })
+            return
+        }
+        decideTempSlot(isCurrent: false, then: next)
+    }
+
+    private func decideTempSlot(isCurrent: Bool, then next: @escaping () -> Void) {
         let exists = sessionPaths.tempProjectExists
         let hasContent: Bool = {
             if isCurrent { return takes.contains { $0.length > 0 } || !bookmarks.isEmpty || practiceSlots.contains { $0.hasA } }
@@ -548,9 +570,11 @@ final class AppModel: ObservableObject {
         }()
         let discard = { [weak self] in
             guard let self else { return }
-            if isCurrent { self.releaseSession() }
-            self.removeTempProject()
-            next()
+            let remove = { [weak self] in
+                self?.removeTempProject()
+                next()
+            }
+            if isCurrent { self.releaseSession(then: remove) } else { remove() }
         }
         guard exists || isCurrent else { next(); return }
         switch FeatureGate.previousSession(hasContent: hasContent, entitlements.state) {
@@ -565,8 +589,10 @@ final class AppModel: ObservableObject {
                              actions: [
                                 AppAlert.Action(title: L("Keep as Project")) { [weak self] in
                                     guard let self else { return }
-                                    if isCurrent { self.releaseSession() }
-                                    if self.keepTempAsProject(romName: romName) { next() }
+                                    let keep = { [weak self] in
+                                        if self?.keepTempAsProject(romName: romName) == true { next() }
+                                    }
+                                    if isCurrent { self.releaseSession(then: keep) } else { keep() }
                                 },
                                 AppAlert.Action(title: String(localized: "Don’t Save"), role: .destructive) { discard() },
                                 AppAlert.Action(title: String(localized: "Cancel"), role: .cancel),
@@ -594,7 +620,9 @@ final class AppModel: ObservableObject {
         if projectDir == nil && persistSessions { projectDir = sessionPaths.tempProject }
         let dirExisted = projectDir.map { FileManager.default.fileExists(atPath: $0.path) } ?? true
         let isTemp = requestedDir == nil
+        beginBusy()
         DispatchQueue.global(qos: .userInitiated).async {
+            defer { DispatchQueue.main.async { self.endBusy() } }
             do {
                 let s = try EngineSession.create(rom: rom, projectDir: projectDir)
                 DispatchQueue.main.async {
@@ -616,7 +644,9 @@ final class AppModel: ObservableObject {
 
     func openProject(_ url: URL, romOverride: URL? = nil, dropCorrupt: Bool = false, dropCorruptPractice: Bool = false,
                      resume: ResumeRecord? = nil) {
+        beginBusy()
         DispatchQueue.global(qos: .userInitiated).async {
+            defer { DispatchQueue.main.async { self.endBusy() } }
             do {
                 let s = try EngineSession.open(projectDir: url, romOverride: romOverride, dropCorruptStates: dropCorrupt,
                                                dropCorruptPractice: dropCorruptPractice)
@@ -704,62 +734,112 @@ final class AppModel: ObservableObject {
 
     /// Game › Save: a project saves; the temporary session becomes a project (recording unlocked).
     func save() {
+        guard whenIdle({ [weak self] in self?.save() }) else { return }
         guard status.hasSession, let c = current else { return }
         guard entitlements.allows(.save) else { showLocked(.recording); return }
         if c.isTemp {
             let romName = URL(fileURLWithPath: status.romPath).lastPathComponent
             let practicing = status.practicing
-            let failure = emu.sync(timeout: 60) { e -> String? in
+            beginBusy()
+            emu.perform({ e -> String? in
                 guard let s = e.session else { return String(localized: "No session") }
                 do { try s.save() } catch { return (error as? LocalizedError)?.errorDescription ?? "\(error)" }
                 e.install(nil)
                 return nil
-            } ?? String(localized: "Saving didn’t respond")
-            if let failure { showError(String(localized: "Couldn’t save (your work is still in the temporary location)"), failure); return }
-            current = nil
-            let name = URL(fileURLWithPath: romName).deletingPathExtension().lastPathComponent
-            let dest = LibraryScanner.newProjectURL(projectsDir: library.paths.projects, romName: name, date: Date())
-            var target = dest
-            do { try SessionResume.moveTempProject(sessionPaths, to: dest) } catch {
-                target = sessionPaths.tempProject
-                showError(String(localized: "Couldn’t save (your work is still in the temporary location)"), error.localizedDescription)
-            }
-            openProject(target, resume: ResumeRecord(projectPath: target.path, isTemp: target == sessionPaths.tempProject,
-                                                     practiceSlot: practicing ? -1 : nil))
-            library.refresh()
-            flash(String(localized: "Saved"))
+            }, completion: { [weak self] failure in
+                self?.tempSaved(failure: failure, romName: romName, practicing: practicing)
+                self?.endBusy()
+            })
             return
         }
-        let ok = emu.sync(timeout: 60) { e -> Bool in
+        emu.perform({ e -> Bool in
             guard let s = e.session else { return false }
             do { try s.save(); e.markStructureDirty(); return true } catch {
                 e.reportError(String(localized: "Couldn’t save (your work is still kept in memory)"), error)
                 return false
             }
-        } ?? false
-        if ok { flash(String(localized: "Saved")) }
+        }, completion: { [weak self] ok in
+            if ok { self?.flash(String(localized: "Saved")) }
+        })
+    }
+
+    /// The temporary session was saved and closed on the emulation thread: it becomes a project.
+    private func tempSaved(failure: String?, romName: String, practicing: Bool) {
+        if let failure { showError(String(localized: "Couldn’t save (your work is still in the temporary location)"), failure); return }
+        current = nil
+        let name = URL(fileURLWithPath: romName).deletingPathExtension().lastPathComponent
+        let dest = LibraryScanner.newProjectURL(projectsDir: library.paths.projects, romName: name, date: Date())
+        var target = dest
+        do { try SessionResume.moveTempProject(sessionPaths, to: dest) } catch {
+            target = sessionPaths.tempProject
+            showError(String(localized: "Couldn’t save (your work is still in the temporary location)"), error.localizedDescription)
+        }
+        openProject(target, resume: ResumeRecord(projectPath: target.path, isTemp: target == sessionPaths.tempProject,
+                                                 practiceSlot: practicing ? -1 : nil))
+        library.refresh()
+        flash(String(localized: "Saved"))
     }
 
     /// Game › Close: back to the library. Everything is persisted; the session stays offered by the
     /// Continue card (a temporary one until another game replaces it).
     func closeProject() {
-        guard let c = current else { return }
+        guard whenIdle({ [weak self] in self?.closeProject() }) else { return }
+        guard current != nil else { return }
         captureThumbnail()
-        _ = emu.sync(timeout: 60) { e in e.flushForResume(fullSave: true) }
         updateResumeRecord()
         let record = lastResume
-        releaseSession()
-        _ = c
-        pendingResume = record
-        showLibrary = false
-        updateUIMode()
+        releaseSession(flush: true) { [weak self] in
+            guard let self else { return }
+            self.pendingResume = record
+            self.showLibrary = false
+            self.updateUIMode()
+        }
     }
 
-    private func releaseSession() {
+    /// Closes the session on the emulation thread (paused; with `flush` a full save first), then
+    /// on the main thread forgets it and runs `done`. Never waits on the main thread.
+    private func releaseSession(flush: Bool = false, then done: @escaping () -> Void = {}) {
         flushPlay()
         playSHA = ""
-        _ = emu.sync(timeout: 30) { e in e.install(nil) }
-        current = nil
+        beginBusy()
+        emu.perform({ e in
+            e.paused = true
+            if flush { _ = e.flushForResume(fullSave: true) }
+            e.install(nil)
+        }, completion: { [weak self] in
+            self?.current = nil
+            done()
+            self?.endBusy()
+        })
+    }
+
+    // MARK: busy (session changes in flight)
+
+    private func beginBusy() {
+        busyCount += 1
+        // A spinner only when it takes noticeably long (no flicker for a quick close).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.busyCount > 0 else { return }
+            self.showBusy = true
+        }
+    }
+
+    private func endBusy() {
+        busyCount = max(0, busyCount - 1)
+        guard busyCount == 0 else { return }
+        showBusy = false
+        let run = afterBusy
+        afterBusy = []
+        // Next main-loop turn: after the completion that ended the change has finished.
+        if !run.isEmpty { DispatchQueue.main.async { run.forEach { $0() } } }
+    }
+
+    /// True when no session change is in flight; otherwise `retry` runs once it is done (a second
+    /// tap / a test hook right behind the first change waits instead of racing it).
+    private func whenIdle(_ retry: @escaping () -> Void) -> Bool {
+        guard busyCount > 0 else { return true }
+        afterBusy.append(retry)
+        return false
     }
 
     // MARK: Restart Recording / Start Over (as ProjectReset.swift on macOS)
@@ -779,8 +859,10 @@ final class AppModel: ObservableObject {
     }
 
     func performProjectReset(keepPracticeSlots: Bool, backup: Bool) {
+        guard whenIdle({ [weak self] in self?.performProjectReset(keepPracticeSlots: keepPracticeSlots, backup: backup) }) else { return }
         let backups = library.paths.root.appendingPathComponent("Backups", isDirectory: true)
-        let err: String?? = emu.sync(timeout: 120) { e -> String? in
+        beginBusy()
+        emu.perform({ e -> String? in
             guard let s = e.session else { return nil }
             if s.mode == RN_MODE_PRACTICE { try? s.setMode(RN_MODE_RECORD) }
             if e.fastForwardActive { e.endFastForward(s) }
@@ -806,19 +888,22 @@ final class AppModel: ObservableObject {
             }
             e.install(s)
             return nil
-        }
-        switch err {
-        case .some(nil):
-            if let c = current, !c.projectPath.isEmpty {
-                writeResume(ResumeRecord(projectPath: c.projectPath, isTemp: c.isTemp, romPath: status.romPath, romSHA256: c.romSHA256,
-                                         frame: 0, atTakeEnd: true, mode: .record, hasContent: keepPracticeSlots && practiceSlots.contains { $0.hasA }))
-            }
-            flash(String(localized: "Project reset"))
-        case .some(.some(let msg)):
+        }, completion: { [weak self] err in
+            self?.projectResetDone(err, keepPracticeSlots: keepPracticeSlots)
+            self?.endBusy()
+        })
+    }
+
+    private func projectResetDone(_ err: String?, keepPracticeSlots: Bool) {
+        if let msg = err {
             showError(String(localized: "Couldn’t reset the project"), msg)
-        case .none:
-            showError(String(localized: "Couldn’t reset the project"), String(localized: "Saving didn’t respond"))
+            return
         }
+        if let c = current, !c.projectPath.isEmpty {
+            writeResume(ResumeRecord(projectPath: c.projectPath, isTemp: c.isTemp, romPath: status.romPath, romSHA256: c.romSHA256,
+                                     frame: 0, atTakeEnd: true, mode: .record, hasContent: keepPracticeSlots && practiceSlots.contains { $0.hasA }))
+        }
+        flash(String(localized: "Project reset"))
     }
 
     // MARK: play history
@@ -893,17 +978,33 @@ final class AppModel: ObservableObject {
 
     /// The app leaves the foreground: pause, persist (temporary: full save; project: journal) and
     /// write the resume record right away (iOS may end the process without notice from here on).
+    /// Nothing waits on the main thread: a background task keeps the process running until the
+    /// emulation thread has saved and the resume queue (record, thumbnail) is written.
     func enterBackground() {
         wasInBackground = true
         releaseTouch()
         guard current != nil else { return }
         setPaused(true)
         captureThumbnail()
-        let isTemp = current?.isTemp == true
-        _ = emu.sync(timeout: 10) { e in e.paused = true; return e.flushForResume(fullSave: isTemp) }
         updateResumeRecord()
         flushPlay()
-        resumeQueue.sync {}
+        let isTemp = current?.isTemp == true
+        let app = UIApplication.shared
+        var task = UIBackgroundTaskIdentifier.invalid
+        let finish = {
+            guard task != .invalid else { return }
+            app.endBackgroundTask(task)
+            task = .invalid
+        }
+        task = app.beginBackgroundTask(withName: "ReplayNES save", expirationHandler: finish)
+        emu.perform({ e in
+            e.paused = true
+            _ = e.flushForResume(fullSave: isTemp)
+        }, completion: { [weak self] in
+            guard let self else { finish(); return }
+            self.updateResumeRecord()
+            self.resumeQueue.async { DispatchQueue.main.async(execute: finish) }
+        })
     }
 
     /// Back from the background (not the launch's first activation: the audio session was set up

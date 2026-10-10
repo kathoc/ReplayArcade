@@ -14,9 +14,13 @@
 //   -resetLibraryForTests YES empty Documents/ROM and Documents/Projects and forget the temporary session
 //   -importTestBatch YES      at 1 s, open 7 files at once like a multi-item Share › ReplayNES: 5 distinct
 //                             test ROMs (one name twice, from two folders), a duplicate, a non-ROM
+//   -sessionCycle YES         with -autoplayTestROM: close, continue, switch to the Test Cartridge, save,
+//                             background, close; writes Library/Caches/session-cycle.json with the longest
+//                             main-thread stall (no main-thread waits on the emulation thread)
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation
 import UIKit
+import QuartzCore
 
 enum TestHooks {
     /// Before the app model starts.
@@ -66,6 +70,7 @@ enum TestHooks {
         if d.string(forKey: "orientation") == "landscape" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { rotate(to: .landscapeRight) }
         }
+        if d.bool(forKey: "sessionCycle") { SessionCycle.run(m) }
         let cycle = d.double(forKey: "rotateCycle")
         if cycle > 0 { rotateCycle(every: cycle, step: 0) }
     }
@@ -119,6 +124,55 @@ enum TestHooks {
             NSLog("ReplayNES: rotateCycle step \(step + 1): \(o == .portrait ? "portrait" : o == .landscapeLeft ? "landscapeLeft" : "landscapeRight")")
             rotate(to: o)
             rotateCycle(every: s, step: step + 1)
+        }
+    }
+}
+
+/// -sessionCycle: session changes back to back while a 5 ms main-thread timer measures the longest
+/// gap between its fires (a blocking wait on the main thread shows up as a long stall).
+enum SessionCycle {
+    static func run(_ m: AppModel) {
+        var maxGap = 0.0, windowGap = 0.0
+        var last = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 0.005, repeats: true) { _ in
+            let t = CACurrentMediaTime()
+            maxGap = max(maxGap, t - last)
+            windowGap = max(windowGap, t - last)
+            last = t
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        var log: [String] = []
+        func note(_ s: String) {
+            log.append(String(format: "%.2f %@ hasSession=%d stallMs=%.0f", CACurrentMediaTime(), s, m.status.hasSession ? 1 : 0, windowGap * 1000))
+            windowGap = 0
+        }
+        let cart = m.library.paths.roms.appendingPathComponent("ReplayNES Test Cartridge.nes")
+        let steps: [(Double, String, () -> Void)] = [
+            (3.0, "close", { m.closeProject() }),
+            (4.5, "continue", { m.continueLast() }),
+            (6.5, "switch", {
+                try? Engine.writeTestCartridge(to: cart)
+                let e = LibraryROM(url: cart, name: "ReplayNES Test Cartridge", relativePath: cart.lastPathComponent,
+                                   size: 0, modified: Date(), sha256: nil, game: nil)
+                m.playFromLibrary(e, autoplay: true)
+            }),
+            (9.0, "save", { m.save() }),
+            (11.0, "background", { m.enterBackground() }),
+            (12.0, "close", { m.closeProject() }),
+        ]
+        for (t, name, f) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) { note(name + " begin"); f(); note(name + " called") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + t + 0.2) { note(name + " +0.2s") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + t + 0.9) { note(name + " +0.9s") }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 14) {
+            timer.invalidate()
+            let out: [String: Any] = ["maxMainStallMs": (maxGap * 1000).rounded(), "log": log, "hasSessionAtEnd": m.status.hasSession]
+            let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("session-cycle.json")
+            if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: url)
+                NSLog("ReplayNES session cycle: \(String(decoding: data, as: UTF8.self))")
+            }
         }
     }
 }

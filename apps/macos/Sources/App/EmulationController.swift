@@ -250,6 +250,16 @@ final class EmulationController {
         cmdLock.lock(); commands.append(block); cmdLock.unlock()
     }
 
+    /// Runs `block` on the emulation thread, then `completion` with its result on the main queue:
+    /// the non-blocking form of sync() for UI code (the main thread never waits on the emulation
+    /// thread, so there is no hang or priority inversion while a save runs).
+    func perform<T>(_ block: @escaping (EmulationController) -> T, completion: @escaping (T) -> Void) {
+        perform { emu in
+            let out = block(emu)
+            DispatchQueue.main.async { completion(out) }
+        }
+    }
+
     /// Runs `block` on the emulation thread and waits (main thread use only; emulation thread
     /// never waits on main, so this cannot deadlock).
     func sync<T>(timeout: Double = 30, _ block: @escaping (EmulationController) -> T) -> T? {

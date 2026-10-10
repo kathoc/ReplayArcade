@@ -46,7 +46,18 @@ struct RootView: View {
                 LibraryView()
                     .overlay(alignment: .bottom) { LibraryNotice() }
             }
+            if model.showBusy {
+                // A session change is saving / loading off the main thread (AppModel.beginBusy).
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView().controlSize(.large).tint(.white)
+                }
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("busy")
+                .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.15), value: model.showBusy)
         .alert(model.alert?.title ?? "", isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } }),
                presenting: model.alert) { a in
             ForEach(Array(a.actions.enumerated()), id: \.offset) { _, act in
