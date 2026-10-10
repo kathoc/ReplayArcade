@@ -46,6 +46,9 @@ struct TouchQuickMenu: View {
         .frame(width: width)
         .background(RoundedRectangle(cornerRadius: 18).fill(Color(red: 0.08, green: 0.08, blue: 0.09).opacity(0.95)))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("quickMenu")
         .position(x: geo.size.width / 2, y: geo.size.height / 2)
     }
 
@@ -57,10 +60,14 @@ struct TouchQuickMenu: View {
                 Button { menu.back() } label: {
                     Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold)).frame(width: 36, height: 36)
                         .background(Color.white.opacity(0.1), in: Circle())
+                        .touchTarget(width: 36, height: 36)
                 }
+                .accessibilityLabel(String(localized: "Back"))
+                .accessibilityIdentifier("qmBack")
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(p == .top ? String(localized: "Menu") : p.iosTitle).font(.system(size: 20, weight: .semibold)).lineLimit(1)
+                    .accessibilityIdentifier("qmTitle")
                 if p.depth > 1 || content.caption != nil {
                     Text(content.caption ?? p.path.dropFirst().dropLast().map(\.iosTitle).joined(separator: " › "))
                         .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
@@ -76,7 +83,10 @@ struct TouchQuickMenu: View {
             Button { menu.close() } label: {
                 Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).frame(width: 36, height: 36)
                     .background(Color.white.opacity(0.1), in: Circle())
+                    .touchTarget(width: 36, height: 36)
             }
+            .accessibilityLabel(String(localized: "Close"))
+            .accessibilityIdentifier("qmClose")
         }
     }
 
@@ -87,8 +97,10 @@ struct TouchQuickMenu: View {
                 Text(t.iosTitle).font(.system(size: 13, weight: t == p ? .semibold : .regular)).lineLimit(1).minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity, minHeight: 32)
                     .background(RoundedRectangle(cornerRadius: 8).fill(t == p ? Color.white.opacity(0.22) : .clear))
-                    .contentShape(Rectangle())
+                    .touchTarget(height: 32)
                     .onTapGesture { menu.switchTab(to: t) }
+                    .accessibilityAddTraits(t == p ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityIdentifier("qmTab.\(t.rawValue)")
             }
         }
         .padding(3)
@@ -127,6 +139,8 @@ struct TouchQuickMenu: View {
                     row(item, focused: i == focus && hasPad)
                         .contentShape(Rectangle())
                         .onTapGesture { menu.setFocus(i, on: p); tapRow(item, p) }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("qm.\(item.id)")
                 }
             }
         case .custom:
@@ -143,6 +157,9 @@ struct TouchQuickMenu: View {
                 cell(item, i == focus && hasPad)
                     .contentShape(Rectangle())
                     .onTapGesture { menu.setFocus(i, on: p); activate(item, p) }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("qm.\(item.id)")
             }
         }
     }
@@ -213,7 +230,9 @@ struct TouchQuickMenu: View {
                         if let x = item.x { Button(x.label, role: .destructive) { x.run(); menu.touch() } }
                     } label: {
                         Image(systemName: "ellipsis.circle").font(.system(size: 18)).frame(width: 30, height: 30)
+                            .touchTarget(width: 30, height: 30)
                     }
+                    .accessibilityIdentifier("qmMore.\(item.id)")
                 }
             }
             if let a = item.accent { Rectangle().fill(a).frame(height: 3).clipShape(RoundedRectangle(cornerRadius: 1.5)) }
@@ -231,7 +250,10 @@ struct TouchQuickMenu: View {
             if item.locked != nil { lockBadge }
             Spacer(minLength: 8)
             value(item)
-            if item.page != nil { Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.4)) }
+            if item.page != nil {
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.4))
+                    .accessibilityIdentifier("qmLink.\(item.id)")
+            }
             if let x = item.x { smallButton(x.label) { x.run(); menu.touch() } }
         }
         .padding(.horizontal, 12)
@@ -252,6 +274,9 @@ struct TouchQuickMenu: View {
                 .frame(width: 46, height: 28)
                 .overlay(Circle().fill(.white).frame(width: 24, height: 24).offset(x: on ? 9 : -9))
                 .animation(.easeOut(duration: 0.12), value: on)
+                .accessibilityElement()
+                .accessibilityIdentifier("qmToggle.\(item.id)")
+                .accessibilityValue(on ? "1" : "0")
         case .choice(let options, let index) where options.count > 3:
             Menu {
                 ForEach(Array(options.enumerated()), id: \.offset) { i, o in
@@ -266,15 +291,19 @@ struct TouchQuickMenu: View {
                 }
                 .padding(.horizontal, 10).frame(minHeight: 30)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.14)))
+                .touchTarget(height: 30)
             }
+            .accessibilityIdentifier("qmChoice.\(item.id)")
         case .choice(let options, let index):
             HStack(spacing: 2) {
                 ForEach(Array(options.enumerated()), id: \.offset) { i, o in
                     Text(o).font(.system(size: 12, weight: i == index ? .semibold : .regular)).lineLimit(1)
                         .padding(.horizontal, 8).frame(minHeight: 30)
                         .background(RoundedRectangle(cornerRadius: 7).fill(i == index ? Color.white.opacity(0.25) : .clear))
-                        .contentShape(Rectangle())
+                        .touchTarget(height: 30)
                         .onTapGesture { item.setChoice?(i); menu.touch() }
+                        .accessibilityAddTraits(i == index ? [.isButton, .isSelected] : .isButton)
+                        .accessibilityIdentifier("qmSeg.\(item.id).\(i)")
                 }
             }
             .padding(2).background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.08)))
@@ -283,6 +312,7 @@ struct TouchQuickMenu: View {
                 Slider(value: Binding(get: { (v - range.lowerBound) / max(0.0001, range.upperBound - range.lowerBound) },
                                       set: { item.setFraction?($0); menu.touch() }), in: 0...1)
                     .frame(width: 130)
+                    .accessibilityIdentifier("qmSlider.\(item.id)")
                 Text(verbatim: text).font(.system(size: 12).monospacedDigit()).frame(minWidth: 44, alignment: .trailing)
             }
         case .text(let t):
@@ -322,6 +352,7 @@ struct TouchQuickMenu: View {
         Button(action: run) {
             Text(label).font(.system(size: 12, weight: .semibold)).padding(.horizontal, 10).frame(height: 30)
                 .background(Color.white.opacity(0.12), in: Capsule())
+                .touchTarget(height: 30)
         }
     }
 
@@ -329,6 +360,7 @@ struct TouchQuickMenu: View {
         Button(action: run) {
             Image(systemName: icon).font(.system(size: 14, weight: .semibold)).frame(width: 32, height: 32)
                 .background(Color.white.opacity(0.1), in: Circle())
+                .touchTarget(width: 32, height: 32)
         }
     }
 }

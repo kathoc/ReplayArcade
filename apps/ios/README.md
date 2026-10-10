@@ -173,6 +173,13 @@ xcodebuild -project apps/ios/ReplayNES.xcodeproj -scheme ReplayNES \
 xcrun simctl launch booted io.github.replaynes.dev -autoplayTestROM YES -pacingProbe 8
 ```
 
+Tap audit (scheme `ReplayNESTouchUI`, `TapAuditUITests`): taps every control of the library, the
+play screen (MENU pill, seek bar, portrait and landscape), every Quick Menu page (tiles, tabs,
+toggles, segments, choice menus, sliders, detail rows, cards and their … menus, rename prompts,
+confirmations, back, ✕, backdrop) and the Export / Unlocks sheets, and checks each one's visible
+effect (`TEST_RUNNER_AUDIT_DIR=<dir>` also saves a screenshot and the element tree of a failure).
+Note: it changes settings in the simulator (toggles and choices are set back, sliders are moved).
+
 Import checks (scheme `ReplayNESTouchUI`, `ROMImportUITests`): `testMultiFileImportBatch` needs
 nothing; `testShareFromFilesApp` shares On My iPhone › ShareROMs from the Files app through the
 Share Extension (Select All › Share › ReplayNES › Add) and checks that every ROM arrives - put

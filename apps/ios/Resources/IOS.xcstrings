@@ -741,6 +741,16 @@
         }
       }
     },
+    "Timeline": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タイムライン"
+          }
+        }
+      }
+    },
     "Tap a button on the picture to change what it does": {
       "localizations": {
         "ja": {

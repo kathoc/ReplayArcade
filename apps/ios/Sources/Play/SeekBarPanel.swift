@@ -17,19 +17,27 @@ struct SeekBarPanel: View {
                 Button { model.togglePause() } label: {
                     Image(systemName: "play.fill").font(.system(size: 18, weight: .bold)).frame(width: 44, height: 36)
                         .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
+                        .touchTarget(height: 36)
                 }
                 .accessibilityLabel(String(localized: "Resume"))
+                .accessibilityIdentifier("seekResume")
                 Text(verbatim: Engine.timecode(forFrame: st.practicing ? st.practiceFrame : st.frame))
                     .font(.system(size: 12, weight: .semibold, design: .monospaced)).fixedSize()
+                    .accessibilityIdentifier("seekTime")
                 TimelineTrack(status: st)
                     .frame(height: 30)
+                    .accessibilityElement()
+                    .accessibilityLabel(L("Timeline"))
+                    .accessibilityIdentifier("seekTrack")
                 Text(verbatim: st.practicing ? (st.practiceLength > 0 ? Engine.timecode(forFrame: st.practiceLength) : "--:--.--")
                                              : Engine.timecode(forFrame: st.takeLength))
                     .font(.system(size: 12, design: .monospaced)).foregroundStyle(.white.opacity(0.6)).fixedSize()
             }
             HStack(spacing: 8) {
                 tool("backward.frame.fill", String(localized: "Step Back One Frame")) { model.stepFrame(-1) }
+                    .accessibilityIdentifier("seekStepBack")
                 tool("forward.frame.fill", String(localized: "Frame Advance")) { model.stepFrame(1) }
+                    .accessibilityIdentifier("seekStepForward")
                 Spacer(minLength: 4)
                 if !st.practicing {
                     Menu {
@@ -43,14 +51,20 @@ struct SeekBarPanel: View {
                         }
                         .padding(.horizontal, 10).frame(height: 34)
                         .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                        .touchTarget(height: 34)
                     }
+                    .accessibilityIdentifier("seekSlot")
                     textTool(String(localized: "Set A")) { model.emu.perform { [slot = model.selectedSlot] e in e.timelineMarkA(slot) } }
+                        .accessibilityIdentifier("seekSetA")
                     textTool(String(localized: "Set B")) { model.emu.perform { [slot = model.selectedSlot] e in e.timelineMarkB(slot) } }
+                        .accessibilityIdentifier("seekSetB")
                     if model.practiceSlots[model.selectedSlot].hasA {
                         tool("target", String(localized: "Practice")) { model.practiceStart(model.selectedSlot) }
+                            .accessibilityIdentifier("seekPractice")
                     }
                 } else {
                     textTool(String(localized: "Stop Practicing")) { model.practiceStop() }
+                        .accessibilityIdentifier("seekStopPractice")
                 }
             }
         }
@@ -59,12 +73,15 @@ struct SeekBarPanel: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.08), lineWidth: 1))
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("seekBar")
     }
 
     private func tool(_ icon: String, _ label: String, _ run: @escaping () -> Void) -> some View {
         Button(action: run) {
             Image(systemName: icon).font(.system(size: 15, weight: .semibold)).frame(width: 44, height: 34)
                 .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                .touchTarget(height: 34)
         }
         .accessibilityLabel(label)
     }
@@ -73,6 +90,7 @@ struct SeekBarPanel: View {
         Button(action: run) {
             Text(label).font(.system(size: 13, weight: .semibold)).lineLimit(1).padding(.horizontal, 10).frame(height: 34)
                 .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                .touchTarget(height: 34)
         }
     }
 }

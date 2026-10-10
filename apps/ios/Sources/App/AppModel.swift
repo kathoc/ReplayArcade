@@ -238,6 +238,11 @@ final class AppModel: ObservableObject {
         }
         input.onPausedStep = { [weak emu] dir, down in emu?.perform { e in e.pausedStep(dir, down: down) } }
         quickMenu.model = self
+        // The screens read quickMenu.isOpen through this model (RootView / LibraryView / PlayView /
+        // PlaySurface): without this, opening or closing the menu redrew nothing unless the game's
+        // pause state changed with it - "…" › Settings in the library, the MENU pill on a paused game
+        // and ✕ / the backdrop / Resume on a menu opened while paused did nothing on screen.
+        quickMenu.$isOpen.removeDuplicates().sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subs)
         ensureTouchBindings()
         entitlements.$state.sink { [weak self] st in
             DispatchQueue.main.async { self?.entitlementsChanged(st) }

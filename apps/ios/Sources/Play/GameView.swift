@@ -137,7 +137,8 @@ final class PlaySurfaceView: UIView {
             "select": [g.select.midX, g.select.midY], "start": [g.start.midX, g.start.midY], "size": [l.size.width, l.size.height],
             "game": [l.gameArea.minX, l.gameArea.minY, l.gameArea.width, l.gameArea.height],
         ]
-        for (k, b) in [("aa", TouchButton.turboA), ("bb", .turboB), ("l2", .l2), ("r2", .r2), ("stepBack", .stepBack), ("stepForward", .stepForward)] {
+        for (k, b) in [("aa", TouchButton.turboA), ("bb", .turboB), ("l2", .l2), ("r2", .r2), ("stepBack", .stepBack), ("stepForward", .stepForward),
+                      ("menu", .menu), ("l", .l), ("r", .r)] {
             if let e = l.extra(b) { pts[k] = [e.frame.midX, e.frame.midY] }
         }
         if let d = try? JSONSerialization.data(withJSONObject: pts.mapValues { $0.map(Double.init) }), let s = String(data: d, encoding: .utf8) {

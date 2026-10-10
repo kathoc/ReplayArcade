@@ -56,6 +56,7 @@ struct LibraryView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     if model.status.hasSession {
                         Button { model.hideLibraryScreen() } label: { Label(L("Back to Game"), systemImage: "chevron.left") }
+                            .accessibilityIdentifier("backToGame")
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -65,8 +66,12 @@ struct LibraryView: View {
                         .accessibilityIdentifier("importROMs")
                     Menu {
                         Button { model.quickMenu.open(at: .display) } label: { Label(String(localized: "Settings"), systemImage: "gearshape") }
+                            .accessibilityIdentifier("librarySettings")
                         Button { model.showUnlocks = true } label: { Label(L("Unlocks"), systemImage: "lock.open") }
+                            .accessibilityIdentifier("libraryUnlocks")
                     } label: { Image(systemName: "ellipsis.circle") }
+                    .accessibilityLabel(String(localized: "More"))
+                    .accessibilityIdentifier("libraryMore")
                 }
             }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.nesROM, .data], allowsMultipleSelection: true) { result in
@@ -113,6 +118,8 @@ struct LibraryView: View {
                 ForEach(LibraryCatalog.filters, id: \.rawValue) { f in Text(LibraryCatalog.name(f)).tag(f.rawValue) }
             }
         } label: { Image(systemName: "arrow.up.arrow.down") }
+        .accessibilityLabel(L("Sort"))
+        .accessibilityIdentifier("librarySort")
     }
 
     @ViewBuilder
@@ -191,6 +198,7 @@ struct HeroCard: View {
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(focused ? Color.white : .clear, lineWidth: 2))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("heroCard")
     }
 }
 

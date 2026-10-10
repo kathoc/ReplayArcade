@@ -73,7 +73,10 @@ struct PlayView: View {
             Button { model.quickMenu.open() } label: {
                 Image(systemName: "line.3.horizontal").font(.system(size: 16, weight: .semibold))
                     .padding(10).background(.black.opacity(0.5), in: Circle()).foregroundStyle(.white.opacity(0.8))
+                    .touchTarget(width: 38, height: 38)
             }
+            .accessibilityLabel(String(localized: "Menu"))
+            .accessibilityIdentifier("menuButton")
             .position(x: l.size.width - 40, y: max(40, game.minY + 30))
         }
         if model.quickMenu.isOpen {
