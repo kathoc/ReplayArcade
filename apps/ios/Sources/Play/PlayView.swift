@@ -11,14 +11,22 @@ struct PlayView: View {
     var body: some View {
         // The surface and the overlay layer each fill the whole screen (safe area ignored) in the
         // same coordinate space: the overlays are placed with the surface's layout (points).
-        GeometryReader { _ in
+        // Everything is sized from the screen (the proxy), never from the published layout: that
+        // one is the previous orientation's for a moment after a rotation, and sizing the overlays
+        // with it made the ZStack the union of both orientations (874 x 874), which the surface
+        // then laid out for - and kept, rotation after rotation.
+        GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 PlaySurface(model: model, displayOptions: model.displayOptions, touchOptions: model.touchOptions,
                             controlsVisible: model.touchControlsVisible && !model.quickMenu.isOpen,
                             opacity: model.touchOpacity, haptics: model.touchHaptics,
                             followX: model.touchFollowX, followY: model.touchFollowY)
-                if let l = model.playLayout { overlays(l) }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                // A layout for another size is stale (mid-rotation): the overlays wait for the new one.
+                if let l = model.playLayout, abs(l.size.width - geo.size.width) < 1, abs(l.size.height - geo.size.height) < 1 { overlays(l) }
             }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+            .clipped()
         }
         .ignoresSafeArea(.all, edges: .all)
         .background(Color.black.ignoresSafeArea())
@@ -54,7 +62,7 @@ struct PlayView: View {
         // Paused: the seek bar over the bottom of the game area.
         if st.hasSession && st.paused && !model.quickMenu.isOpen {
             SeekBarPanel()
-                .frame(width: min(l.landscape ? picture.width + 120 : game.width - 16, 640))
+                .frame(width: min(l.landscape ? max(picture.width, game.width - 16) : game.width - 16, 640))
                 .position(x: game.midX, y: game.maxY - (l.landscape ? 70 : 64))
                 .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
                 .transition(.opacity)

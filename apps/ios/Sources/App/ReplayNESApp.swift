@@ -6,6 +6,7 @@ import SwiftUI
 @main
 struct ReplayNESApp: App {
     @StateObject private var model = AppModel.shared
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var phase
 
     init() {

@@ -126,7 +126,13 @@ final class AppModel: ObservableObject {
     @AppStorage("touchHaptics") var touchHaptics = true { didSet { objectWillChange.send() } }
     /// NESTERM's controller is drawn opaque (its colours already sit on --bb-bg); kept adjustable.
     @AppStorage("touchOpacity") var touchOpacity = 1.0 { didSet { objectWillChange.send() } }
-    @AppStorage("touchTurbo") var touchTurbo = false { didSet { objectWillChange.send() } }
+    /// AA / BB (turbo A / B) above A / B; on by default (a new key: the old "touchTurbo" switch
+    /// showed the turbo pills and was off by default).
+    @AppStorage("touchAABB") var touchAABB = true { didSet { objectWillChange.send() } }
+    /// Settings › Display › Picture Shape › Orientation (iPhone): OrientationLock raw value.
+    @AppStorage(OrientationLock.key) var orientationLock = OrientationLock.auto.rawValue {
+        didSet { OrientationLock.apply(OrientationLock(rawValue: orientationLock) ?? .auto); objectWillChange.send() }
+    }
     /// controller.mjs (NESTERM settings, 操作): 十字キーの大きさ --bb-dpad (130...210 px, CSS 144px),
     /// 追従 ↔ / ↕ setHomeGain (0...2, defaults recentre-x 0.3, recentre-y 1).
     @AppStorage("touchDpadSize") var touchDpadSize = Double(TouchLayout.dpadDefault) { didSet { objectWillChange.send() } }
@@ -142,7 +148,7 @@ final class AppModel: ObservableObject {
     }
 
     var touchOptions: TouchLayout.Options {
-        TouchLayout.Options(showTurbo: touchTurbo, dpadSize: min(max(CGFloat(touchDpadSize), TouchLayout.dpadRange.lowerBound), TouchLayout.dpadRange.upperBound),
+        TouchLayout.Options(showAABB: touchAABB, dpadSize: min(max(CGFloat(touchDpadSize), TouchLayout.dpadRange.lowerBound), TouchLayout.dpadRange.upperBound),
                             ways: touchWays)
     }
 
@@ -239,6 +245,7 @@ final class AppModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        OrientationLock.apply(OrientationLock(rawValue: orientationLock) ?? .auto)
         audioSession.activate()
         input.setPausedStepEnabled(dpadStepWhenPaused)
         input.setSouthConfirm(southConfirm)
@@ -382,6 +389,12 @@ final class AppModel: ObservableObject {
         let pausedInPlay = st.hasSession && st.paused && !quickMenu.isOpen && !showLibrary
         for b in pressed {
             if b == .menu { quickMenu.open(); continue }
+            // Frame step buttons: as the desktop's Step Back / Frame Advance keys (EmulationController
+            // stepFrame): playing, the press pauses and steps; paused, it steps. Never game input.
+            if b == .stepBack || b == .stepForward {
+                if st.hasSession && !quickMenu.isOpen && !showLibrary { stepFrame(b == .stepBack ? -1 : 1) }
+                continue
+            }
             // Paused: L / R step one frame, the D-pad ← / → too (setting), never game input.
             if pausedInPlay {
                 if b == .l || b == .r { stepFrame(b == .l ? -1 : 1); touchRouted.insert(b); continue }

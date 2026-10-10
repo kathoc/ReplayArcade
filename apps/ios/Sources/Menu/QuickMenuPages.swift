@@ -76,10 +76,7 @@ enum QuickMenuPages {
         case .practice: return QMContent(items: practice(m, menu))
         case .share, .stream: return QMContent(items: share(m, menu))
         case .display: return QMContent(items: display(m))
-        case .displayShape:
-            // The Mac moved 8:7 / Hide Edges onto this page; on iPhone they stay on Display, so
-            // this page is not linked (the shared switch must cover it).
-            return QMContent(items: display(m).filter { $0.id == "par" || $0.id == "overscan" })
+        case .displayShape: return QMContent(items: displayShape(m))
         case .crtDetail:
             return QMContent(items: crtDetail(m), y: QMAction(label: String(localized: "Defaults")) { CRTSettingsModel.shared.resetToNestermDefaults() })
         case .controls: return QMContent(items: controls(m))
@@ -264,13 +261,28 @@ enum QuickMenuPages {
                    L("Integer: sharp pixels · FILL: as large as the screen allows"),
                    [String(localized: "Integer"), "FILL"], m.integerScale ? 0 : 1) { m.integerScale = $0 == 0 },
             crtItem,
-            toggle("par", "rectangle.arrowtriangle.2.outward", "8:7", String(localized: "Pixel aspect ratio of a CRT TV"), m.displayPAR87) { m.displayPAR87 = $0 },
             choice("flash", "bolt.trianglebadge.exclamationmark", String(localized: "Reduce Flashing"),
                    String(localized: "Tone down full-screen flashes (photosensitivity)"),
                    levels.map(\.label), levels.firstIndex(of: m.flashLevel) ?? 2) { m.flashReduction = levels[$0].rawValue },
-            toggle("overscan", "crop", String(localized: "Hide Edges"), String(localized: "Hide 8 pixels at each edge (overscan)"), m.hideOverscan) { m.hideOverscan = $0 },
+            link("shape", "aspectratio", String(localized: "Picture Shape"), L("8:7 pixels, hide the edges, orientation"), .displayShape),
             detail,
         ]
+    }
+
+    /// Settings › Display › Picture Shape (as on the Mac: 8:7 and Hide Edges), plus the iPhone's
+    /// screen orientation (Auto / Portrait / Landscape lock: OrientationLock).
+    private static func displayShape(_ m: AppModel) -> [QMItem] {
+        var items = [
+            toggle("par", "rectangle.arrowtriangle.2.outward", "8:7", String(localized: "Pixel aspect ratio of a CRT TV"), m.displayPAR87) { m.displayPAR87 = $0 },
+            toggle("overscan", "crop", String(localized: "Hide Edges"), String(localized: "Hide 8 pixels at each edge (overscan)"), m.hideOverscan) { m.hideOverscan = $0 },
+        ]
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            items.append(choice("orientation", "rectangle.portrait.rotate", L("Orientation"),
+                                L("Auto follows the iPhone · Portrait / Landscape lock the screen"),
+                                [L("Auto"), L("Portrait"), L("Landscape")],
+                                OrientationLock(rawValue: m.orientationLock)?.rawValue ?? 0) { m.orientationLock = $0 })
+        }
+        return items
     }
 
     private static func crtDetail(_ m: AppModel) -> [QMItem] {
@@ -329,7 +341,7 @@ enum QuickMenuPages {
                    L("4-way ignores diagonals (remembered per game)"), ["8", "4"], m.touchWays == 4 ? 1 : 0) {
                 if ($0 == 1) != (m.touchWays == 4) { m.toggleTouchWays() }
             },
-            toggle("touchTurbo", "bolt.circle", L("Turbo Buttons"), L("Show Turbo A / Turbo B buttons"), m.touchTurbo) { m.touchTurbo = $0 },
+            toggle("touchTurbo", "bolt.circle", L("Turbo Buttons"), L("Show AA / BB (Turbo A / Turbo B) above A / B"), m.touchAABB) { m.touchAABB = $0 },
             toggle("touchHaptics", "iphone.radiowaves.left.and.right", L("Vibration"), L("A short vibration when a button is pressed"), m.touchHaptics) { m.touchHaptics = $0 },
             toggle("touchHideWithPad", "gamecontroller", L("Hide With Controller"), L("Hide the on-screen controls while a controller is connected"),
                    m.touchHideWithPad) { m.touchHideWithPad = $0 },

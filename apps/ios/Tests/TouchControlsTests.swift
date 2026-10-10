@@ -5,22 +5,47 @@
 // Exact step-by-step equality with the JS implementation: BrickboyGoldenTests.
 // SPDX-License-Identifier: Apache-2.0 AND GPL-2.0-or-later
 import CoreGraphics
+import UIKit
 import XCTest
 
+private extension TouchGamepad {
+    func with(_ g: Geometry) -> TouchGamepad { geometry = g; return self }
+}
+
 final class TouchLayoutTests: XCTestCase {
-    let portrait = TouchLayout.make(size: CGSize(width: 390, height: 844), safe: TouchInsets())
-    let landscape = TouchLayout.make(size: CGSize(width: 844, height: 390), safe: TouchInsets())
-    // iPhone 16 Pro (points) with its safe areas.
-    let phonePortrait = TouchLayout.make(size: CGSize(width: 402, height: 874), safe: TouchInsets(top: 62, left: 0, bottom: 34, right: 0),
-                                         options: TouchLayout.Options(showTurbo: true))
-    let phoneLandscape = TouchLayout.make(size: CGSize(width: 874, height: 402), safe: TouchInsets(top: 0, left: 62, bottom: 21, right: 62),
-                                          options: TouchLayout.Options(showTurbo: true))
+    /// NESTERM's CSS as measured (no AA / BB: those are ReplayNES's).
+    static let css = TouchLayout.Options(showAABB: false)
+    let portrait = TouchLayout.make(size: CGSize(width: 390, height: 844), safe: TouchInsets(), options: css)
+    let landscape = TouchLayout.make(size: CGSize(width: 844, height: 390), safe: TouchInsets(), options: css)
+    // iPhone 16 Pro / iPhone 17 (points) with their safe areas.
+    let phonePortrait = TouchLayout.make(size: CGSize(width: 402, height: 874), safe: TouchInsets(top: 62, left: 0, bottom: 34, right: 0))
+    let phoneLandscape = TouchLayout.make(size: CGSize(width: 874, height: 402), safe: TouchInsets(top: 0, left: 62, bottom: 21, right: 62))
+
+    /// Screens the layout must fit (points, safe areas): iPhone 17 / 16 Pro, 17 Pro Max / 16 Pro
+    /// Max, SE (2nd / 3rd generation), and the browser sizes of the CSS measurements.
+    static let devices: [(String, CGSize, TouchInsets)] = [
+        ("iPhone 17", CGSize(width: 402, height: 874), TouchInsets(top: 62, left: 0, bottom: 34, right: 0)),
+        ("iPhone 17 landscape", CGSize(width: 874, height: 402), TouchInsets(top: 0, left: 62, bottom: 21, right: 62)),
+        ("iPhone 17 Pro Max", CGSize(width: 440, height: 956), TouchInsets(top: 62, left: 0, bottom: 34, right: 0)),
+        ("iPhone 17 Pro Max landscape", CGSize(width: 956, height: 440), TouchInsets(top: 0, left: 62, bottom: 21, right: 62)),
+        ("iPhone SE", CGSize(width: 375, height: 667), TouchInsets(top: 20, left: 0, bottom: 0, right: 0)),
+        ("iPhone SE landscape", CGSize(width: 667, height: 375), TouchInsets()),
+        ("390 x 844", CGSize(width: 390, height: 844), TouchInsets()),
+        ("844 x 390", CGSize(width: 844, height: 390), TouchInsets()),
+    ]
+
+    static func layouts(_ o: TouchLayout.Options = TouchLayout.Options()) -> [(String, TouchLayout)] {
+        devices.map { ($0.0, TouchLayout.make(size: $0.1, safe: $0.2, options: o)) }
+    }
+
+    private static func disc(_ c: CGPoint, _ d: CGFloat) -> CGRect { CGRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d) }
 
     /// Browser measurements of NESTERM's controller (getBoundingClientRect, 390 x 844). Blink rounds
-    /// layout boxes to 1/64 px (LayoutUnit): ±0.05 for derived sizes.
+    /// layout boxes to 1/64 px (LayoutUnit): ±0.05 for derived sizes. The D-pad is 10 % larger
+    /// (ReplayNES), at the same left edge and centre.
     func testPortraitMatchesNESTERMCSS() {
         let g = portrait.pad
-        XCTAssertEqual(g.dpad.width, 144)                       // min(--bb-dpad 144, max(112, 844 * .24))
+        XCTAssertEqual(g.dpad.width, (144 * 1.1).rounded())     // min(--bb-dpad 144, max(112, 844 * .24)) × 1.1
         XCTAssertEqual(g.dpad.minX, 19.546875, accuracy: 0.01)  // padding-inline 4.5vw + margin-left 2px
         XCTAssertEqual(g.face.minX, 214.265625, accuracy: 0.05)
         XCTAssertEqual(g.face.width, 158.1875, accuracy: 0.05)
@@ -47,10 +72,10 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(portrait.gameArea.maxY + TouchLayout.subbarHeight, clip.minY + 0.01)
     }
 
-    /// Browser measurements at 844 x 390 (.bb-side).
+    /// Browser measurements at 844 x 390 (.bb-side); D-pad × 1.1.
     func testLandscapeMatchesNESTERMCSS() {
         let g = landscape.pad
-        XCTAssertEqual(g.dpad, CGRect(x: 16, y: g.dpad.minY, width: 144, height: 144))
+        XCTAssertEqual(g.dpad, CGRect(x: 16, y: g.dpad.minY, width: 158, height: 158))
         XCTAssertEqual(g.face, CGRect(x: 654, y: g.face.minY, width: 190, height: 174))
         XCTAssertEqual(g.a.x, 789, accuracy: 0.01)
         XCTAssertEqual(g.b.x, 709, accuracy: 0.01)
@@ -62,7 +87,9 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(g.select.height, 31.390625, accuracy: 0.01)
         XCTAssertEqual(g.select.midX, 25.671875 + 92.65625 / 2, accuracy: 0.01, "centred in the 144 px column")
         XCTAssertEqual(g.start.midX, 729.28125 + 85.421875 / 2, accuracy: 0.01)
-        XCTAssertEqual(landscape.gameArea, CGRect(x: 0, y: 0, width: 844, height: 390))
+        // ReplayNES: the picture sits between the columns, centred.
+        XCTAssertEqual(landscape.gameArea.midX, 422, accuracy: 0.01)
+        XCTAssertEqual(landscape.gameArea.height, 390)
     }
 
     func testSafeAreasMoveTheControlsIn() {
@@ -70,35 +97,138 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(l.dpad.minX, 62 + 16)
         XCTAssertEqual(l.face.maxX, 874 - 62, accuracy: 0.01)
         XCTAssertEqual(l.select.maxY, 402 - 8 - 21, accuracy: 0.01)
-        XCTAssertEqual(l.frame, CGRect(x: 62, y: 0, width: 874 - 124, height: 402))
+        XCTAssertEqual(l.frame.minX, 62)
+        XCTAssertEqual(l.frame.maxX, phoneLandscape.gameArea.minX + EDGE_MARGIN, accuracy: 0.01, "the pad's frame ends at the picture")
         let p = phonePortrait.pad
         XCTAssertEqual(phonePortrait.gameArea.minY, 62)
         XCTAssertEqual(p.system!.maxY, 874 - 34 - 6, accuracy: 0.01)
     }
 
     func testEverythingOnScreenAndApart() {
-        for l in [portrait, landscape, phonePortrait, phoneLandscape] {
-            let screen = CGRect(origin: .zero, size: l.size)
-            var boxes: [(String, CGRect)] = [("dpad", l.pad.dpad), ("face", l.pad.face), ("select", l.select), ("start", l.start)]
-            boxes += l.extras.map { ("\($0.kind)", $0.frame) }
-            for (n, r) in boxes { XCTAssertTrue(screen.contains(r), "\(n) \(r) off \(screen)") }
-            for i in boxes.indices { for j in boxes.indices where j > i {
-                XCTAssertFalse(boxes[i].1.intersects(boxes[j].1), "\(boxes[i].0) overlaps \(boxes[j].0) in \(l.size)")
-            } }
-            let kinds = l.extras.map(\.kind)
-            for b in [TouchButton.l2, .l, .r, .r2, .menu] { XCTAssertTrue(kinds.contains(.button(b)), "\(b) in \(l.size)") }
-            XCTAssertTrue(kinds.contains(.ways))
+        for o in [TouchLayout.Options(), Self.css] {
+            for (name, l) in Self.layouts(o) {
+                let screen = CGRect(origin: .zero, size: l.size)
+                let rounds = l.extras.filter { $0.style == .round }
+                let pills = l.extras.filter { $0.style != .round }
+                var boxes: [(String, CGRect)] = [("dpad", l.pad.dpad), ("face", l.pad.face), ("select", l.select), ("start", l.start)]
+                boxes += pills.map { ("\($0.kind)", $0.frame) }
+                for (n, r) in boxes + rounds.map({ ("\($0.kind)", $0.frame) }) {
+                    XCTAssertTrue(screen.contains(r), "\(n) \(r) off \(screen) (\(name))")
+                }
+                for i in boxes.indices { for j in boxes.indices where j > i {
+                    XCTAssertFalse(boxes[i].1.intersects(boxes[j].1), "\(boxes[i].0) overlaps \(boxes[j].0) (\(name))")
+                } }
+                // AA / BB sit over .gp-face's padding (by design) but clear of everything else.
+                for r in rounds {
+                    for (n, b) in boxes where n != "face" {
+                        XCTAssertFalse(r.frame.intersects(b), "\(r.kind) overlaps \(n) (\(name))")
+                    }
+                }
+                let kinds = l.extras.map(\.kind)
+                for b in [TouchButton.l2, .stepBack, .l, .r, .stepForward, .r2, .menu] {
+                    XCTAssertTrue(kinds.contains(.button(b)), "\(b) (\(name))")
+                }
+                XCTAssertTrue(kinds.contains(.ways))
+                XCTAssertEqual(kinds.contains(.button(.turboA)), o.showAABB)
+                XCTAssertEqual(kinds.contains(.button(.turboB)), o.showAABB)
+            }
         }
-        XCTAssertTrue(phonePortrait.extras.contains { $0.kind == .button(.turboA) })
-        XCTAssertFalse(portrait.extras.contains { $0.kind == .button(.turboA) })
+    }
+
+    /// The D-pad is 10 % larger and centred on the A/B midpoint, in both orientations.
+    func testDpadLargerAndOnTheABMidpoint() {
+        for o in [TouchLayout.Options(), Self.css] {
+            for (name, l) in Self.layouts(o) {
+                let g = l.pad
+                XCTAssertEqual(g.dpad.midY, (g.a.y + g.b.y) / 2, accuracy: 0.01, name)
+                let css = l.landscape ? o.dpadSize : min(o.dpadSize, max(112, l.size.height * 0.24))
+                XCTAssertEqual(g.dpad.width, (css * 1.1).rounded(), name)
+                XCTAssertEqual(g.dpad.width, g.dpad.height)
+                if let clip = g.dpadClip { XCTAssertTrue(clip.contains(g.dpad), name) }
+            }
+        }
+    }
+
+    /// AA / BB: above A / B (same columns, the A/B tilt), the same .gp-round look but smaller, and
+    /// hit zones that never reach the A / B discs (the ported roll logic keeps its buttons).
+    func testAABBZonesAboveAB() {
+        for (name, l) in Self.layouts() {
+            let g = l.pad
+            let aa = l.extra(.turboA)!, bb = l.extra(.turboB)!
+            XCTAssertEqual(aa.style, .round)
+            XCTAssertEqual(aa.frame.midX, g.a.x, accuracy: 0.01, name)
+            XCTAssertEqual(bb.frame.midX, g.b.x, accuracy: 0.01, name)
+            XCTAssertLessThan(aa.frame.maxY, g.a.y - l.faceButton / 2, name)
+            XCTAssertLessThan(bb.frame.maxY, g.b.y - l.faceButton / 2, name)
+            XCTAssertEqual(aa.frame.midY - bb.frame.midY, g.a.y - g.b.y, accuracy: 0.01, "the A/B tilt (\(name))")
+            XCTAssertLessThan(aa.frame.width, l.faceButton)
+            XCTAssertEqual(aa.frame.width, bb.frame.width)
+            let zoneR = aa.frame.width / 2 + TouchLayout.turboSlop
+            for z in [aa, bb] {
+                for c in [g.a, g.b] {
+                    XCTAssertGreaterThanOrEqual(hypot(z.frame.midX - c.x, z.frame.midY - c.y), zoneR + l.faceButton / 2, "\(z.kind) zone reaches a face disc (\(name))")
+                }
+                XCTAssertTrue(z.hit(CGPoint(x: z.frame.midX, y: z.frame.midY)))
+                XCTAssertTrue(z.hit(CGPoint(x: z.frame.midX, y: z.frame.minY - TouchLayout.turboSlop + 0.5)))
+                XCTAssertFalse(z.hit(CGPoint(x: z.frame.midX, y: z.frame.maxY + TouchLayout.turboSlop + 0.5)))
+            }
+            // A touch on A or B never lands on an extra (TouchExtrasView is on top): the face gets it.
+            for c in [g.a, g.b] {
+                XCTAssertNil(l.extras.first { $0.hit(c) }, name)
+                XCTAssertEqual(TouchGamepad(press: { _, _ in }).with(g).regionAt(c), .face, name)
+            }
+        }
+    }
+
+    /// L2 / R2: larger icon pills (⏪ / ⏩); the frame step pills right inside them.
+    func testRewindFastForwardAndFrameStepZones() {
+        for (name, l) in Self.layouts() {
+            let l2 = l.extra(.l2)!, r2 = l.extra(.r2)!, sb = l.extra(.stepBack)!, sf = l.extra(.stepForward)!, lp = l.extra(.l)!, rp = l.extra(.r)!
+            XCTAssertEqual(l2.style, .icon("backward.fill"))
+            XCTAssertEqual(r2.style, .icon("forward.fill"))
+            XCTAssertEqual(sb.style, .icon("backward.frame"))
+            XCTAssertEqual(sf.style, .icon("forward.frame"))
+            XCTAssertGreaterThan(l2.frame.height, lp.frame.height, name)
+            XCTAssertGreaterThan(l2.frame.width, lp.frame.width, name)
+            XCTAssertEqual(r2.frame.size, l2.frame.size)
+            // ◀| just inside L2 (toward the centre), |▶ just inside R2.
+            XCTAssertEqual(sb.frame.midY, l2.frame.midY, accuracy: 0.01)
+            XCTAssertGreaterThan(sb.frame.minX, l2.frame.maxX, name)
+            XCTAssertLessThan(sb.frame.minX - l2.frame.maxX, 7, name)
+            XCTAssertLessThan(sb.frame.maxX, lp.frame.minX, name)
+            XCTAssertLessThan(sf.frame.maxX, r2.frame.minX, name)
+            XCTAssertLessThan(r2.frame.minX - sf.frame.maxX, 7, name)
+            XCTAssertGreaterThan(sf.frame.minX, rp.frame.maxX, name)
+            XCTAssertGreaterThanOrEqual(sb.frame.width, 0.6 * TouchLayout.stepIconWidth - 0.01, name)
+            XCTAssertNil(TouchButton.stepBack.inputID, "handled by the app (stepFrame)")
+        }
+    }
+
+    /// Landscape: the picture never runs under a control, on any of the screens, and the D-pad's
+    /// home cannot follow the thumb over it.
+    func testLandscapePictureBetweenTheControls() {
+        for o in [TouchLayout.Options(), Self.css, TouchLayout.Options(dpadSize: 210)] {
+            for (name, l) in Self.layouts(o) where l.landscape {
+                let game = l.gameArea
+                // The picture yields to the controls: at the largest D-pad (210 × 1.1) it gets narrow.
+                XCTAssertGreaterThan(game.width, l.size.width * (o.dpadSize > TouchLayout.dpadDefault ? 0.2 : 0.4), name)
+                XCTAssertEqual(game.midX, l.size.width / 2, accuracy: 0.01, name)
+                var visible: [CGRect] = [l.pad.dpad, l.select, l.start, Self.disc(l.pad.a, l.faceButton), Self.disc(l.pad.b, l.faceButton)]
+                visible += l.extras.map(\.frame)
+                for r in visible { XCTAssertFalse(r.intersects(game), "\(r) under the picture \(game) (\(name))") }
+                let pad = TouchGamepad(press: { _, _ in }).with(l.pad)
+                pad.setHome(1000, 0)
+                XCTAssertLessThanOrEqual(l.pad.dpad.maxX + pad.ox, game.minX + 0.01, name)
+            }
+        }
     }
 
     func testDpadSizeSetting() {
         let big = TouchLayout.make(size: CGSize(width: 844, height: 390), safe: TouchInsets(), options: TouchLayout.Options(dpadSize: 210))
-        XCTAssertEqual(big.pad.dpad.width, 210)
-        // Portrait caps it: min(--bb-dpad, max(112px, el-h * .24)).
+        XCTAssertEqual(big.pad.dpad.width, (210 * 1.1).rounded())
+        // Portrait caps it: min(--bb-dpad, max(112px, el-h * .24)), then × 1.1.
         let small = TouchLayout.make(size: CGSize(width: 320, height: 568), safe: TouchInsets(), options: TouchLayout.Options(dpadSize: 210))
-        XCTAssertEqual(small.pad.dpad.width, 568 * 0.24, accuracy: 0.01)
+        XCTAssertEqual(small.pad.dpad.width, (568 * 0.24 * 1.1).rounded(), accuracy: 0.01)
     }
 
     func testTouchBindingsCoverEveryGameButtonOnce() {
@@ -106,11 +236,20 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(Set(TouchBindings.defaults.map(\.input)), Set(ids))
         XCTAssertEqual(TouchBindings.defaults.count, ids.count)
         XCTAssertNil(TouchButton.menu.inputID)
+        XCTAssertNil(TouchButton.stepForward.inputID)
+        XCTAssertEqual(TouchButton.turboA.inputID, "touch:turboA", "AA is bound like the old turbo pill")
         XCTAssertEqual(TouchBindings.missing(existing: [("kb:1", "p1.a")]).count, TouchBindings.defaults.count)
         XCTAssertTrue(TouchBindings.missing(existing: [("touch:a", "p1.b")]).isEmpty, "a customised touch table is kept")
         // input-router.mjs BUTTON_NAME: every Brickboy id reaches the NES button of the same name.
         XCTAssertEqual(BBButton.allCases.map { TouchButton($0).inputID! },
                        ["touch:dpad.right", "touch:dpad.left", "touch:dpad.up", "touch:dpad.down", "touch:a", "touch:b", "touch:select", "touch:start"])
+    }
+
+    func testOrientationLockMasks() {
+        XCTAssertEqual(OrientationLock.auto.mask, .allButUpsideDown)
+        XCTAssertEqual(OrientationLock.portrait.mask, .portrait)
+        XCTAssertEqual(OrientationLock.landscape.mask, .landscape)
+        XCTAssertEqual(OrientationLock.allCases.count, 3)
     }
 
     func testTouchBindingsAreAcceptedByTheEngine() {
@@ -178,7 +317,7 @@ final class NESTERMControllerCheckTests: XCTestCase {
     private var g: TouchGamepad.Geometry { pad.geometry }
 
     override func setUp() {
-        let l = TouchLayout.make(size: CGSize(width: 390, height: 844), safe: TouchInsets())
+        let l = TouchLayout.make(size: CGSize(width: 390, height: 844), safe: TouchInsets(), options: TouchLayoutTests.css)
         pad = TouchGamepad(press: { _, _ in })
         pad.geometry = l.pad
         pad.setHomeGain(0.3, 1)

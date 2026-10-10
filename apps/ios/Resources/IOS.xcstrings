@@ -11,6 +11,16 @@
         }
       }
     },
+    "8:7 pixels, hide the edges, orientation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8:7・端を隠す・画面の向き"
+          }
+        }
+      }
+    },
     "A backup copy of the project is kept in the Backups folder first.": {
       "localizations": {
         "ja": {
@@ -47,6 +57,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "お気に入りに追加"
+          }
+        }
+      }
+    },
+    "Auto": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動"
+          }
+        }
+      }
+    },
+    "Auto follows the iPhone · Portrait / Landscape lock the screen": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動：iPhoneの向きに合わせる・縦／横：その向きに固定"
           }
         }
       }
@@ -351,6 +381,16 @@
         }
       }
     },
+    "Landscape": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "横"
+          }
+        }
+      }
+    },
     "License Text": {
       "localizations": {
         "ja": {
@@ -431,6 +471,16 @@
         }
       }
     },
+    "Orientation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の向き"
+          }
+        }
+      }
+    },
     "Play": {
       "localizations": {
         "ja": {
@@ -447,6 +497,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "遊ぶ（新しい記録）"
+          }
+        }
+      }
+    },
+    "Portrait": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "縦"
           }
         }
       }
@@ -571,12 +631,12 @@
         }
       }
     },
-    "Show Turbo A / Turbo B buttons": {
+    "Show AA / BB (Turbo A / Turbo B) above A / B": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "連射A / 連射Bボタンを表示します"
+            "value": "A / B の上に AA / BB（連射A / 連射B）を表示します"
           }
         }
       }

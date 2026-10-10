@@ -132,10 +132,14 @@ final class PlaySurfaceView: UIView {
     private func updateProbe(_ l: TouchLayout) {
         guard let probe else { return }
         let g = l.pad
-        let pts: [String: [CGFloat]] = [
+        var pts: [String: [CGFloat]] = [
             "dpad": [g.dpad.midX, g.dpad.midY, g.dpad.width], "a": [g.a.x, g.a.y], "b": [g.b.x, g.b.y],
             "select": [g.select.midX, g.select.midY], "start": [g.start.midX, g.start.midY], "size": [l.size.width, l.size.height],
+            "game": [l.gameArea.minX, l.gameArea.minY, l.gameArea.width, l.gameArea.height],
         ]
+        for (k, b) in [("aa", TouchButton.turboA), ("bb", .turboB), ("l2", .l2), ("r2", .r2), ("stepBack", .stepBack), ("stepForward", .stepForward)] {
+            if let e = l.extra(b) { pts[k] = [e.frame.midX, e.frame.midY] }
+        }
         if let d = try? JSONSerialization.data(withJSONObject: pts.mapValues { $0.map(Double.init) }), let s = String(data: d, encoding: .utf8) {
             probe.accessibilityLabel = s
         }
@@ -158,6 +162,7 @@ final class PlaySurfaceView: UIView {
         game.frame = l.gameArea
         controls.frame = bounds
         extras.frame = bounds
+        if let old = lastLayout, old.landscape != l.landscape { extras.releaseAll() }
         controls.layoutModel = l
         extras.ways = options.ways
         extras.extras = l.extras

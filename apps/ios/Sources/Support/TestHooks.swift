@@ -10,6 +10,7 @@
 //   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")
 //   -logTouchEvents YES       log every UITouch the on-screen gamepad receives
 //   -orientation landscape    rotate the window (screenshots of the landscape layout)
+//   -rotateCycle <s>          rotate portrait → landscape right → portrait → landscape left ... every s seconds
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation
 import UIKit
@@ -47,10 +48,26 @@ enum TestHooks {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.3) { m.touchButtons(pressed: [], released: [button]) }
         }
         if d.string(forKey: "orientation") == "landscape" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-                scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { NSLog("ReplayNES: rotate: \($0)") }
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { rotate(to: .landscapeRight) }
+        }
+        let cycle = d.double(forKey: "rotateCycle")
+        if cycle > 0 { rotateCycle(every: cycle, step: 0) }
+    }
+
+    private static func rotate(to o: UIInterfaceOrientationMask) {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: o)) { NSLog("ReplayNES: rotate: \($0)") }
+    }
+
+    /// -rotateCycle <s>: portrait, landscape right, portrait, landscape left, ... every s seconds
+    /// (rotation checks: the layout must be the same after any number of turns).
+    private static func rotateCycle(every s: Double, step: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + s) {
+            let seq: [UIInterfaceOrientationMask] = [.landscapeRight, .portrait, .landscapeLeft, .portrait]
+            let o = seq[step % seq.count]
+            NSLog("ReplayNES: rotateCycle step \(step + 1): \(o == .portrait ? "portrait" : o == .landscapeLeft ? "landscapeLeft" : "landscapeRight")")
+            rotate(to: o)
+            rotateCycle(every: s, step: step + 1)
         }
     }
 }

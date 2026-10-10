@@ -90,8 +90,15 @@ final class TouchControlsView: UIView {
         didSet {
             guard layoutModel != oldValue, let l = layoutModel else { return }
             pad.geometry = l.pad
-            // input.mjs relayoutSignal / relayout(): a learned home re-clamped to the new geometry.
-            pad.relayout()
+            if let old = oldValue, old.landscape != l.landscape {
+                // Rotated (ReplayNES): the grip changed, so fingers still down are let go and the
+                // home learned in the other orientation starts over at the natural place.
+                releaseAll()
+                pad.resetHome()
+            } else {
+                // input.mjs relayoutSignal / relayout(): a learned home re-clamped to the new geometry.
+                pad.relayout()
+            }
             rebuild()
         }
     }
@@ -222,6 +229,9 @@ final class TouchControlsView: UIView {
 
         // .gp-dpad: the cross (::before / ::after), hub, arrows, perimeter edges.
         let d = l.pad.dpad.width
+        // frame is only defined for an untransformed layer: drop the old translate(ox, oy) first
+        // (restyle puts the current one back), else the pad is drawn off its hit box after a relayout.
+        dpadLayer.setAffineTransform(.identity)
         dpadLayer.frame = l.pad.dpad
         dpadLayer.actions = ["position": NSNull(), "bounds": NSNull()]
         let bar = d * 0.34

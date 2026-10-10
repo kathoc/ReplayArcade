@@ -160,6 +160,7 @@ targets:
       - path: Sources/Entitlements
       - path: Sources/Play/Brickboy/TouchGamepad.swift
       - path: Sources/Play/Brickboy/TouchLayout.swift
+      - path: Sources/App/OrientationLock.swift
       - path: Sources/Support/L10n.swift
       - path: Sources/Library/ROMImport.swift
       - path: Tests

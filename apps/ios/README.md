@@ -73,12 +73,14 @@ Ways to get ROMs there:
   long-press a card for favourites and its kept recordings.
 - **Playing:** the on-screen controller is NESTERM's (Brickboy's) touch gamepad, ported line by
   line (docs/TOUCH_PORT.md): portrait = picture on top, controls below; landscape = picture
-  centred, controls beside it. Adaptive D-pad (it follows your thumb; 8-way or 4-way per game:
+  centred between the control columns (never under them). Adaptive D-pad (it follows your thumb; 8-way or 4-way per game:
   the 8-WAY pill), A / B as one pad (between them = both; holding one and rolling the thumb onto
   the other taps it; a second finger while one is held presses the other), SELECT / START
-  (between them = both). Extra pills: L2 rewind (hold), L slow motion, MENU, R pause, R2
-  fast-forward through what was recorded (hold), optional turbo B / A. D-pad size and follow,
-  opacity, turbo pills, vibration: Quick Menu › Settings › Controls › Touch Controls.
+  (between them = both), AA / BB above A / B (turbo A / B). Extra pills: ⏪ L2 rewind (hold),
+  ◀︎| / |▶︎ one frame back / forward (pauses first while playing), L slow motion, MENU, R pause,
+  ⏩ R2 fast-forward through what was recorded (hold). D-pad size and follow, opacity, AA / BB,
+  vibration: Quick Menu › Settings › Controls › Touch Controls; screen orientation (Auto /
+  Portrait / Landscape): Settings › Display › Picture Shape.
 - **Paused:** the seek bar - drag to scrub (replays, never records), step one frame (also L / R
   and D-pad ← / →), set A / B of a section at the playhead, practice it, ▶ resumes.
 - **Game controllers** (MFi, Xbox, PlayStation, Switch Pro / Joy-Con): same bindings and rules as
@@ -161,7 +163,8 @@ xcrun simctl launch booted io.github.replaynes.dev -autoplayTestROM YES -pacingP
 ```
 
 Launch arguments for checks (`Sources/Support/TestHooks.swift`): `-autoplayTestROM YES`,
-`-openMenu <page>`, `-pauseAfter <s>`, `-holdTouch r`, `-orientation landscape`,
+`-openMenu <page>`, `-pauseAfter <s>`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
+`-orientationLock 0|1|2`,
 `-debugUnlockAll NO`, `-touchHideWithPad NO`, `-showLatency YES`, `-pacingProbe <s>` (writes
 `Library/Caches/pacing.json` in the app container).
 
@@ -255,8 +258,9 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
   親指に追従する十字キー（ゲームごとに 8 方向 / 4 方向：8-WAY ボタン）、A / B は一体のパッド
   （間を押すと両方、片方を押したまま親指を転がすともう片方をタップ、押している間の 2 本目の指は
   もう片方）、SELECT / START（間で両方）。追加ボタン：L2 巻き戻し（長押し）、L スロー、MENU、
-  R 一時停止、R2 録画済み区間の早送り（長押し）、連射 B / A（任意）。十字キーの大きさと追従・
-  不透明度・連射ボタン・振動：クイックメニュー › 設定 › 操作 › タッチ操作。
+  R 一時停止、R2 録画済み区間の早送り（長押し）、◀︎| / |▶︎ 1コマ戻る／進む（再生中は一時停止してから）、
+  A / B の上に AA / BB（連射 A / B）。十字キーの大きさと追従・不透明度・AA / BB・振動：
+  クイックメニュー › 設定 › 操作 › タッチ操作。画面の向き（自動／縦／横）：設定 › 画面 › 画面の形。
 - **一時停止中：** シークバー。ドラッグで移動（再生のみで記録しません）、1 フレーム送り／戻し
   （L / R、十字キー ← / → でも）、再生位置に区間の A / B を設定、その区間を練習、▶ で再開。
 - **ゲームコントローラ**（MFi、Xbox、PlayStation、Switch Pro / Joy-Con）：Mac と同じ割り当てと
