@@ -78,7 +78,8 @@ PY
 )"
 fi
 rm -f "$DEVJSON"
-if [ -n "$DEVICE" ]; then DEST="id=$DEVICE"; echo "==> iPhone: $DEVICE"; else DEST="generic/platform=iOS"; echo "==> no paired iPhone found: generic build"; fi
+DEST="generic/platform=iOS"   # build generically (the device may be locked/not prepared for xcodebuild); install with devicectl
+if [ -n "$DEVICE" ]; then echo "==> iPhone: $DEVICE"; else echo "==> no paired iPhone found: build only"; fi
 
 DERIVED="$REPO/build/ios-device"
 xcodebuild -project "$HERE/ReplayNES.xcodeproj" -scheme ReplayNES -configuration "$CONFIG" \
