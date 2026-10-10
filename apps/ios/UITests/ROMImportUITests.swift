@@ -6,8 +6,8 @@
 //  - testShareFromFilesApp: the real thing through the Files app's share sheet (select all ›
 //    Share › Add to ReplayNES, the Share Extension › Add). It needs .nes files in On My iPhone ›
 //    ShareROMs (copy them into the simulator's File Provider Storage first; see apps/ios/README.md)
-//    and is skipped otherwise. Every file arrives (iOS hands the app's own "ReplayNES" entry only
-//    the first one, hence the extension); SHARE_ROM_COUNT (default 7) = the .nes files there.
+//    and is skipped otherwise. Every file arrives (the extension is the only ReplayNES entry; iOS hands an app's own entry only
+//    the first, hence no .nes document type); SHARE_ROM_COUNT (default 7) = the .nes files there.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import XCTest
 
@@ -83,13 +83,16 @@ final class ROMImportUITests: XCTestCase {
         let share = files.buttons["Share"]
         XCTAssertTrue(share.waitForExistence(timeout: 5), files.debugDescription)
         share.tap()
-        // The share sheet: the app row shows the extension under the app's name, next to the app's
-        // own "ReplayNES" entry (document types; it gets only the first file): find the one that
-        // brings up the extension's confirmation.
+        // The share sheet: the Share Extension is the only ReplayNES entry (the app declares no
+        // document type for .nes, so there is no second "Open in" entry).
         let cells = files.cells.matching(NSPredicate(format: "label == 'ReplayNES' OR label == 'Add to ReplayNES' OR label == 'ReplayNESに追加'"))
         XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 10), files.debugDescription)
-        let index = Int(env["SHARE_CELL_INDEX"] ?? "") ?? (cells.count - 1)
-        cells.element(boundBy: index).tap()
+        let shotRow = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shotRow.name = "share sheet"
+        shotRow.lifetime = .keepAlways
+        add(shotRow)
+        XCTAssertEqual(cells.count, 1, "exactly one ReplayNES entry in the share sheet: \(files.debugDescription)")
+        cells.element(boundBy: 0).tap()
 
         // The extension's confirmation ("Add N file(s) to ReplayNES" + Add / Cancel), hosted by Files.
         let title = files.staticTexts["shareTitle"]

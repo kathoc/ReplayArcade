@@ -61,15 +61,16 @@ Ways to get ROMs there:
 - **Mac Finder:** select the iPhone in the sidebar › **Files** tab › drag the `.nes` files onto
   **ReplayNES**. Files dropped at the top level are moved into `ROM/` automatically.
 - **Files app** on the iPhone: copy / move into On My iPhone › ReplayNES › ROM (also from iCloud
-  Drive, AirDrop, a USB stick).
-- In the app: **+** in the library (document picker, several files at once), or "Open in
-  ReplayNES" / share from another app. Imports run in the background: each file is checked (`.nes`
+  Drive, AirDrop to Files, a USB stick).
+- In the app: **+** in the library (document picker, several files at once), or share from
+  another app (Share Extension, below). Imports run in the background: each file is checked (`.nes`
   with an iNES header), skipped if the same ROM (SHA-256) is already in the library, and copied
   under a free name (`Name 2.nes`); a toast says how many were added / already there / skipped.
   An import never starts a game (also not for one file) and never touches the running session.
   Many files from the Files app (Select › Share) or another app: the **Share Extension** ("Add to
-  ReplayNES"; in the share sheet's app row it shows the app's name and icon, next to the app's own
-  "ReplayNES" entry, which iOS hands only the first file) asks "Add N file(s) to ReplayNES" and
+  ReplayNES"; the only ReplayNES entry in the share sheet: the app declares no
+  document type for `.nes`, so there is no "Open in ReplayNES" for `.nes` (the app's own entry would
+  get only the first file); `.nesrec` projects can still be opened in place) asks "Add N file(s) to ReplayNES" and
   copies every file into the App Group's `ShareInbox`; the app imports them as above as soon as it
   is active (at once when it is running). A shared `.nesrec` goes into `Projects/` (one alone is
   opened). The extension needs the App Group `group.<your bundle id>` (automatic signing registers
@@ -174,10 +175,10 @@ xcrun simctl launch booted io.github.replaynes.dev -autoplayTestROM YES -pacingP
 
 Import checks (scheme `ReplayNESTouchUI`, `ROMImportUITests`): `testMultiFileImportBatch` needs
 nothing; `testShareFromFilesApp` shares On My iPhone › ShareROMs from the Files app through the
-Share Extension (Select All › Share › the extension › Add) and checks that every ROM arrives - put
+Share Extension (Select All › Share › ReplayNES › Add) and checks that every ROM arrives - put
 7 `.nes` files (or set `TEST_RUNNER_SHARE_ROM_COUNT`) into the simulator's `…/data/Containers/Shared/AppGroup/<group.com.apple.FileProvider.LocalStorage>/File Provider Storage/ShareROMs`
-first (`TEST_RUNNER_SHARE_WHILE_PLAYING=1` / `TEST_RUNNER_SHARE_COLD=1` for the other states;
-`TEST_RUNNER_SHARE_CELL_INDEX` picks the share sheet cell if the two "ReplayNES" cells swap).
+first (`TEST_RUNNER_SHARE_WHILE_PLAYING=1` / `TEST_RUNNER_SHARE_COLD=1` for the other states).
+The test also asserts that the share sheet lists exactly one ReplayNES entry.
 
 Launch arguments for checks (`Sources/Support/TestHooks.swift`): `-autoplayTestROM YES`,
 `-openMenu <page>`, `-pauseAfter <s>`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
@@ -260,15 +261,15 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
 - **Mac の Finder：** サイドバーで iPhone を選び › **ファイル** タブ › `.nes` を **ReplayNES** に
   ドラッグ。いちばん上に置かれたファイルは自動で `ROM/` に移動します。
 - iPhone の **ファイル App：** このiPhone内 › ReplayNES › ROM へコピー／移動（iCloud Drive、
-  AirDrop、USB メモリからも）。
-- アプリ内：ライブラリの **＋**（ファイル選択、複数可）、または他の App から「ReplayNES で開く」／
-  共有。読み込みはバックグラウンドで行い、各ファイルを確認（`.nes` かつ iNES ヘッダ）、同じ ROM
+  AirDrop でファイル App へ、USB メモリからも）。
+- アプリ内：ライブラリの **＋**（ファイル選択、複数可）、または他の App からの共有（共有拡張、下記）。読み込みはバックグラウンドで行い、各ファイルを確認（`.nes` かつ iNES ヘッダ）、同じ ROM
   （SHA-256）がすでにあれば追加せず、空いている名前（`名前 2.nes`）でコピーします。結果は
   「N 本のROMを追加しました」のトーストで表示（追加済み・スキップ件数つき）。読み込みでゲームが
   起動することはなく（1 ファイルでも）、実行中のセッションにも触れません。
   ファイル App（選択 › 共有）や他の App から複数ファイルを送るときは **共有拡張**（「ReplayNESに追加」。
-  共有シートの App の列ではアプリ名とアイコンで表示され、アプリ本体の「ReplayNES」（iOS は最初の
-  1 ファイルしか渡しません）と並びます）が「N 本をReplayNESに追加」を表示し、すべてのファイルを
+  共有シートに出る ReplayNES はこれだけです。アプリは `.nes` の書類タイプを宣言しないので、`.nes` の
+  「ReplayNES で開く」は出ません（アプリ本体の項目は最初の 1 ファイルしか受け取れないため）。
+  `.nesrec` はその場で開けます）が「N 本をReplayNESに追加」を表示し、すべてのファイルを
   App Group の `ShareInbox` にコピーします。アプリは前面に来たとき（起動中ならすぐ）に上と同じ方法で
   読み込みます。共有した `.nesrec` は `Projects/` に入ります（1 つだけなら開きます）。拡張には
   App Group `group.<バンドルID>` が必要です（自動署名で拡張の ID `<バンドルID>.share` とともに登録されます）。

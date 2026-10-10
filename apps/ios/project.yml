@@ -145,11 +145,10 @@ targets:
             UTTypeConformsTo: [public.data]
             UTTypeTagSpecification:
               public.filename-extension: [nes, NES]
+        # No document type for .nes on purpose: the app's own "Open in" entry would show up in the share
+        # sheet next to the Share Extension (same name and icon) and gets only the first file. The
+        # imported UTI above stays (the picker and the extension use it).
         CFBundleDocumentTypes:
-          - CFBundleTypeName: NES ROM
-            CFBundleTypeRole: Viewer
-            LSHandlerRank: Alternate
-            LSItemContentTypes: [io.github.replaynes.nes-rom]
           - CFBundleTypeName: ReplayNES Project
             CFBundleTypeRole: Editor
             LSHandlerRank: Owner
