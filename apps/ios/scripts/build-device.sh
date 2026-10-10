@@ -71,7 +71,8 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 for dev in d.get("result", {}).get("devices", []):
     hw = dev.get("hardwareProperties", {})
-    if hw.get("platform") == "iOS" and dev.get("connectionProperties", {}).get("pairingState") == "paired":
+    if hw.get("platform") == "iOS" and hw.get("reality") == "physical" \
+            and dev.get("connectionProperties", {}).get("pairingState") == "paired":
         print(hw.get("udid", "")); break
 PY
 )"
@@ -87,7 +88,11 @@ echo "==> built $APP"
 
 if [ "$INSTALL" = 1 ]; then
   [ -n "$DEVICE" ] || { echo "error: connect and unlock the iPhone (Developer Mode on), then run again"; exit 1; }
-  xcrun devicectl device install app --device "$DEVICE" "$APP"
+  # devicectl's service can't read bundles inside hidden directories (e.g. .claude/worktrees):
+  # install from a copy in a plain temporary folder.
+  STAGE="$(mktemp -d /tmp/replaynes-ios.XXXXXX)"
+  ditto "$APP" "$STAGE/ReplayNES.app"
+  xcrun devicectl device install app --device "$DEVICE" "$STAGE/ReplayNES.app"
   xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" || \
     echo "note: if iOS says the developer is not trusted: Settings › General › VPN & Device Management › your Apple ID › Trust"
 fi
