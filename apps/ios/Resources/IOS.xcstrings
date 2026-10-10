@@ -91,6 +91,16 @@
         }
       }
     },
+    "Added %lld project(s) to the Projects folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件のプロジェクトを Projects フォルダに追加しました"
+          }
+        }
+      }
+    },
     "Auto": {
       "localizations": {
         "ja": {

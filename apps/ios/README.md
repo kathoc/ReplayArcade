@@ -67,8 +67,13 @@ Ways to get ROMs there:
   with an iNES header), skipped if the same ROM (SHA-256) is already in the library, and copied
   under a free name (`Name 2.nes`); a toast says how many were added / already there / skipped.
   An import never starts a game (also not for one file) and never touches the running session.
-  Note: iOS hands an app only the first file of a multi-item **Share › ReplayNES**; for many
-  files use **+** or copy them into `ROM/` with the Files app.
+  Many files from the Files app (Select › Share) or another app: the **Share Extension** ("Add to
+  ReplayNES"; in the share sheet's app row it shows the app's name and icon, next to the app's own
+  "ReplayNES" entry, which iOS hands only the first file) asks "Add N file(s) to ReplayNES" and
+  copies every file into the App Group's `ShareInbox`; the app imports them as above as soon as it
+  is active (at once when it is running). A shared `.nesrec` goes into `Projects/` (one alone is
+  opened). The extension needs the App Group `group.<your bundle id>` (automatic signing registers
+  it and the extension's id `<your bundle id>.share`).
 - No ROM at hand: **Add Test Cartridge** in the empty library writes the ReplayNES Test Cartridge (a small CC0 test program built into the engine; `tools/testcart`).
 
 ## Using it
@@ -168,9 +173,11 @@ xcrun simctl launch booted io.github.replaynes.dev -autoplayTestROM YES -pacingP
 ```
 
 Import checks (scheme `ReplayNESTouchUI`, `ROMImportUITests`): `testMultiFileImportBatch` needs
-nothing; `testShareFromFilesApp` shares On My iPhone › ShareROMs from the Files app - put `.nes`
-files into the simulator's `…/data/Containers/Shared/AppGroup/<group.com.apple.FileProvider.LocalStorage>/File Provider Storage/ShareROMs`
-first (`TEST_RUNNER_SHARE_WHILE_PLAYING=1` / `TEST_RUNNER_SHARE_COLD=1` for the other states).
+nothing; `testShareFromFilesApp` shares On My iPhone › ShareROMs from the Files app through the
+Share Extension (Select All › Share › the extension › Add) and checks that every ROM arrives - put
+7 `.nes` files (or set `TEST_RUNNER_SHARE_ROM_COUNT`) into the simulator's `…/data/Containers/Shared/AppGroup/<group.com.apple.FileProvider.LocalStorage>/File Provider Storage/ShareROMs`
+first (`TEST_RUNNER_SHARE_WHILE_PLAYING=1` / `TEST_RUNNER_SHARE_COLD=1` for the other states;
+`TEST_RUNNER_SHARE_CELL_INDEX` picks the share sheet cell if the two "ReplayNES" cells swap).
 
 Launch arguments for checks (`Sources/Support/TestHooks.swift`): `-autoplayTestROM YES`,
 `-openMenu <page>`, `-pauseAfter <s>`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
@@ -259,8 +266,12 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
   （SHA-256）がすでにあれば追加せず、空いている名前（`名前 2.nes`）でコピーします。結果は
   「N 本のROMを追加しました」のトーストで表示（追加済み・スキップ件数つき）。読み込みでゲームが
   起動することはなく（1 ファイルでも）、実行中のセッションにも触れません。
-  注意：iOS は複数ファイルの **共有 › ReplayNES** で最初の 1 ファイルしかアプリに渡しません。
-  まとめて入れるときは **＋** か、ファイル App で `ROM/` へコピーしてください。
+  ファイル App（選択 › 共有）や他の App から複数ファイルを送るときは **共有拡張**（「ReplayNESに追加」。
+  共有シートの App の列ではアプリ名とアイコンで表示され、アプリ本体の「ReplayNES」（iOS は最初の
+  1 ファイルしか渡しません）と並びます）が「N 本をReplayNESに追加」を表示し、すべてのファイルを
+  App Group の `ShareInbox` にコピーします。アプリは前面に来たとき（起動中ならすぐ）に上と同じ方法で
+  読み込みます。共有した `.nesrec` は `Projects/` に入ります（1 つだけなら開きます）。拡張には
+  App Group `group.<バンドルID>` が必要です（自動署名で拡張の ID `<バンドルID>.share` とともに登録されます）。
 - ROM が手元にない場合：空のライブラリの **テストカートリッジを追加** で、エンジンに内蔵された ReplayNES テストカートリッジ（CC0 の小さなテストプログラム、`tools/testcart`）を追加できます。
 
 ### 使い方

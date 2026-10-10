@@ -276,6 +276,8 @@ final class AppModel: ObservableObject {
         input.startControllers()
         setupSessionPersistence()
         library.start()
+        observeShareInbox()
+        drainShareInbox()
         loadPendingResume()
         updateUIMode()
         statsTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -1010,6 +1012,7 @@ final class AppModel: ObservableObject {
     /// Back from the background (not the launch's first activation: the audio session was set up
     /// by start(), and reconfiguring it while the engine starts stalls the audio server).
     func enterForeground() {
+        drainShareInbox()
         guard wasInBackground else { return }
         wasInBackground = false
         audioSession.reactivate()
@@ -1097,6 +1100,7 @@ final class AppModel: ObservableObject {
     }
 
     private func importFinished(_ r: ROMImportResult, _ batch: ROMImportQueue.Batch) {
+        if let root = ShareInbox.standardRoot() { ShareInbox.finish(batch.urls, root: root) }
         NSLog("ReplayNES import: \(batch.urls.count) file(s): \(r.added.count) added, \(r.existing.count) existing, \(r.invalid.count) invalid, \(r.failed.count) failed")
         for (name, why) in r.failed { NSLog("ReplayNES import: \(name): \(why)") }
         library.refresh()
@@ -1104,6 +1108,52 @@ final class AppModel: ObservableObject {
         // No game is started by an import (also not for one file): iOS hands over only the first
         // file of a multi-item Share › ReplayNES, so one URL doesn't mean the user picked one game,
         // and starting a game would replace the screen (and the session) they came back to.
+    }
+
+    // MARK: Share Extension inbox ("Add to ReplayNES": every file of a multi-file share)
+
+    /// The extension posts a Darwin notification after each share: import at once when running.
+    private func observeShareInbox() {
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
+            DispatchQueue.main.async { AppModel.shared.drainShareInbox() }
+        }, ShareInbox.darwinNotification as CFString, nil, .deliverImmediately)
+    }
+
+    private let shareQueue = DispatchQueue(label: "replaynes.share-inbox", qos: .userInitiated)
+
+    /// Claims the batches the Share Extension left (off the main thread) and imports them: ROMs
+    /// through the import queue (one toast); projects (.nesrec) move into Projects/, and a share of
+    /// exactly one project opens it.
+    func drainShareInbox() {
+        guard started, let root = ShareInbox.standardRoot() else { return }
+        let projectsDir = library.paths.projects
+        shareQueue.async { [weak self] in
+            let items = ShareInbox.claim(root: root)
+            guard !items.isEmpty else { return }
+            NSLog("ReplayNES: share inbox: \(items.count) item(s)")
+            let fm = FileManager.default
+            var roms: [URL] = [], projects: [URL] = []
+            for u in items {
+                guard u.pathExtension.lowercased() == "nesrec" else { roms.append(u); continue }
+                try? fm.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+                let base = u.deletingPathExtension().lastPathComponent
+                var dest = projectsDir.appendingPathComponent(u.lastPathComponent, isDirectory: true)
+                var n = 2
+                while fm.fileExists(atPath: dest.path) { dest = projectsDir.appendingPathComponent("\(base) \(n).nesrec", isDirectory: true); n += 1 }
+                if (try? fm.moveItem(at: u, to: dest)) != nil { projects.append(dest) }
+            }
+            if roms.isEmpty { ShareInbox.finish(items, root: root) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if !roms.isEmpty { self.importQueue.enqueue(roms, fromOtherApp: true) }
+                if !projects.isEmpty { self.library.refresh() }
+                if projects.count == 1 && roms.isEmpty {
+                    self.continueProject(projects[0])
+                } else if !projects.isEmpty {
+                    self.flash(L("Added %lld project(s) to the Projects folder", Int64(projects.count)), duration: 5)
+                }
+            }
+        }
     }
 
     /// Runs `f` now when start() has run, else at its end (a cold launch by "Open in").

@@ -4,10 +4,10 @@
 //    "Open in ReplayNES" (AppModel.open(urls:), as SceneDelegate does); the library must list
 //    every ROM, show one toast, start no game and stay responsive.
 //  - testShareFromFilesApp: the real thing through the Files app's share sheet (select all ›
-//    Share › ReplayNES). It needs .nes files in On My iPhone › ShareROMs (copy them into the
-//    simulator's File Provider Storage first; see apps/ios/README.md) and is skipped otherwise.
-//    Note: iOS 18 hands an app only the FIRST file of a multi-item share (one UIOpenURLContext),
-//    so SHARE_ROM_COUNT defaults to 1 there; what arrives is imported, no game starts.
+//    Share › Add to ReplayNES, the Share Extension › Add). It needs .nes files in On My iPhone ›
+//    ShareROMs (copy them into the simulator's File Provider Storage first; see apps/ios/README.md)
+//    and is skipped otherwise. Every file arrives (iOS hands the app's own "ReplayNES" entry only
+//    the first one, hence the extension); SHARE_ROM_COUNT (default 7) = the .nes files there.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import XCTest
 
@@ -83,18 +83,31 @@ final class ROMImportUITests: XCTestCase {
         let share = files.buttons["Share"]
         XCTAssertTrue(share.waitForExistence(timeout: 5), files.debugDescription)
         share.tap()
-        // The share sheet: ReplayNES in the app row (or under More).
-        let target = files.descendants(matching: .any).matching(NSPredicate(format: "label == 'ReplayNES'")).firstMatch
-        if !target.waitForExistence(timeout: 10) {
-            let moreApps = files.descendants(matching: .any).matching(NSPredicate(format: "label == 'More'")).firstMatch
-            moreApps.tap()
-        }
-        XCTAssertTrue(target.waitForExistence(timeout: 10), files.debugDescription)
-        target.tap()
+        // The share sheet: the app row shows the extension under the app's name, next to the app's
+        // own "ReplayNES" entry (document types; it gets only the first file): find the one that
+        // brings up the extension's confirmation.
+        let cells = files.cells.matching(NSPredicate(format: "label == 'ReplayNES' OR label == 'Add to ReplayNES' OR label == 'ReplayNESに追加'"))
+        XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 10), files.debugDescription)
+        let index = Int(env["SHARE_CELL_INDEX"] ?? "") ?? (cells.count - 1)
+        cells.element(boundBy: index).tap()
 
+        // The extension's confirmation ("Add N file(s) to ReplayNES" + Add / Cancel), hosted by Files.
+        let title = files.staticTexts["shareTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 15), files.debugDescription)
+        let shotSheet = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shotSheet.name = "share extension: \(title.label)"
+        shotSheet.lifetime = .keepAlways
+        add(shotSheet)
+        files.buttons["shareAdd"].tap()
+        XCTAssertTrue(waitFor(15) { !title.exists }, "the extension finishes")
+
+        // Back to ReplayNES: the batch is imported when it becomes active.
+        if env["SHARE_COLD"] == "1" { app.launchArguments = ["-AppleLanguages", "(en)"]; app.launch() } else { app.activate() }
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         let toast = app.staticTexts["notice"]
         XCTAssertTrue(toast.waitForExistence(timeout: 20), "the import toast")
+        let roms = Int(env["SHARE_ROM_COUNT"] ?? "") ?? 7
+        XCTAssertTrue(toast.label.hasPrefix("Added \(roms) ROM(s)"), toast.label)
         let shotToast = XCTAttachment(screenshot: app.screenshot())
         shotToast.name = "after Files share: \(toast.label)"
         shotToast.lifetime = .keepAlways
@@ -107,7 +120,7 @@ final class ROMImportUITests: XCTestCase {
             app.launch()
             XCTAssertTrue(app.buttons["importROMs"].waitForExistence(timeout: 15))
         }
-        let expected = Int(env["SHARE_ROM_COUNT"] ?? "") ?? 1
+        let expected = Int(env["SHARE_ROM_COUNT"] ?? "") ?? 7
         XCTAssertTrue(waitFor(10) { gameCards(app) == expected }, "\(expected) game cards, found \(gameCards(app))")
         XCTAssertTrue(app.buttons["importROMs"].isHittable, "the library still answers")
         let shot = XCTAttachment(screenshot: app.screenshot())
