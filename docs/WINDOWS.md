@@ -152,16 +152,54 @@ processor, the optional flash filter, the exact BT.709 limited-range 4:2:0 conve
 `ExportJob` (shared: `export/export_frame.*`, `export_job.cpp`); the project is never touched, a
 failed / cancelled export removes its file.
 
-* `IMFSinkWriter` -> MPEG-4: H.264 High (hardware MFT when the system has one -
-  `MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS` - else Microsoft's software encoder; "mf_hardware" /
-  "mf_software" in Export -> Advanced force one), VBR at the shared bit rate, GOP 120, **no
-  B-frames** (no reordering delay against the audio); AAC-LC 48 kHz mono from the engine's 16-bit
-  PCM. BT.709 colour tags.
+* **Written under a temporary name** (`<name>.mp4.part` next to the destination) and renamed to
+  `<name>.mp4` only after `Finalize`, the timescale fix-up and the self-check below succeeded
+  (Linux and macOS: the same). Until 0.5.2 the sink wrote the final name directly: an export that
+  never got to `Finalize` (process killed / crashed, PC asleep or shut down) left an `.mp4` with
+  media data but no `moov` box, which no player opens ("moov atom not found"; reproduced by
+  killing an export in the VM). Now such a run leaves at most a `.part` file.
+* **Self-check before the rename** (`verifyExportedMp4`; `replaynes-export --check FILE.mp4
+  [--frames N]` runs it on any file): `export/mp4_check.*` walks the box structure (top-level
+  boxes up to the end of the file, one `moov`, no unterminated `mdat`), every chunk of every track
+  inside an `mdat` and not overlapping another, and the first H.264 sample of every chunk plus the
+  last one parsing as length-prefixed NAL units of exactly the sample size (a wrong / wrapped
+  32-bit chunk offset fails here); then Media Foundation's MPEG-4 source opens the file (duration
+  = the frame count), decodes the first frame and the last 3 s up to the final frame, and reads
+  the last 3 s of audio. Any failure is the export's error message; the file is removed.
+
+* `IMFSinkWriter` -> MPEG-4: H.264 High, VBR at the shared bit rate, GOP 120, **no B-frames** (no
+  reordering delay against the audio); AAC-LC 48 kHz mono from the engine's 16-bit PCM. BT.709
+  colour tags.
+* **Encoder: hardware first.** Automatic mode tries a hardware H.264 MFT
+  (`MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS`) with a Direct3D 11 device manager
+  (`MF_SINK_WRITER_D3D_MANAGER`; Media Foundation uploads the NV12 frames for MFTs that want
+  surfaces), then without one, then Microsoft's software encoder; an attempt that ends up with a
+  software MFT is dropped. The same settings go to every encoder. If the hardware encoder fails
+  while encoding / finishing, or its file fails the self-check, the export is redone once with the
+  software encoder on a second renderer (`ExportOptions::retryRenderer`, created next to the first
+  by `ExportJob` / `replaynes-export`): same picture and timing, and the result's encoder reads
+  "... - the hardware encoder failed (...)". "mf_hardware" / "mf_software" in Export -> Advanced
+  force one (no retry). The result line names the encoder ("(hardware)" when it is one;
+  `"hardware": true` in `replaynes-export`'s JSON). The VM has no hardware MFT (Parallels on
+  Apple silicon: "H264 Encoder MFT (software)" only), so the hardware path and the retry are
+  exercised by the self-test's simulated failure (`simulateHardwareFailureAfter`) there.
 * Timestamps from counts: frame n at n x 655171 / 39375000 s, audio sample n at n / 48000 s (in
   Media Foundation's 100 ns units). The MPEG-4 sink stores the video at a rounded timescale (fps x
   1000 = 60098: 999 / 1000 ticks per frame), so after `Finalize` the moov box is rewritten
   (`export/mp4_retime.*`, unit-tested): video timescale **39375000, every frame 655171 ticks**, as the
-  FFmpeg exporter writes it.
+  FFmpeg exporter writes it. The video `mdhd` is version 1 (64-bit duration: in this timescale any
+  take longer than 109 s needs more than 32 bits - 27:53 = 65,895,133,667 ticks); `tkhd` / `mvhd`
+  stay in the movie timescale (48000) and switch to version 1 only when needed; chunk offsets
+  (`stco` / `co64`) and a 64-bit `mdat` size are left as the sink wrote them (moov is at the end,
+  so rewriting it moves no media data). The rewritten moov is smaller (the sink's 999 / 1000 stts
+  runs collapse to one): the rest of the old one becomes a `free` box - **the file is never
+  truncated**. 0.5.2 truncated it with `std::filesystem::resize_file`, which llvm-mingw's libc++
+  implements through a 32-bit `off_t`: every export past 4 GiB was cut to its size modulo 2^32
+  (moov and the end of the media data gone; nothing plays it), or failed when that remainder was
+  over 2 GiB. Reproduced in the VM: the 27:53 Salamander take, 1920x1080 + CRT (31 Mbit/s, 6.42 GB)
+  came out as 2.13 GB; the user's unplayable 1.4 GB file is the same cut of a ~5.7 GB export. Unit tests: a 27:53 take (100577 frames) and a sparse
+  file past 4 GiB (64-bit `mdat`, `co64`), plus files the check must reject (wrapped 32-bit
+  offsets, no `moov`, a 32-bit `mdat` size past 4 GiB).
 * Verification: `scripts/windows-vm/verify-export.sh [arch]` runs `replaynes-export --self-test` in
   the VM (synthetic test ROM + recorded input: renderer hash == a fresh renderer, flash + processor,
   sub-range, native 8:7, cancel, invalid settings, ExportJob), copies the files back and checks each

@@ -28,7 +28,7 @@ Or from the release bundle (`io.github.replaynes.ReplayNES-<version>-x86_64.flat
 (remote `replaynes-origin`), so it updates the same way:
 
 ```sh
-flatpak install --user io.github.replaynes.ReplayNES-0.5.1-x86_64.flatpak   # fetches the runtime from Flathub
+flatpak install --user io.github.replaynes.ReplayNES-0.5.2-x86_64.flatpak   # fetches the runtime from Flathub
 flatpak remotes --user                                                      # replaynes-origin  https://kathoc.github.io/ReplayNES/flatpak/
 ```
 
@@ -419,9 +419,16 @@ active take on a fresh core (`rn_renderer`, the same frames and renderer hash as
 and encodes H.264 High (GOP 120, BT.709 limited range, bit rate `rnf_export_video_bitrate`) + AAC
 192 kbit/s 48 kHz mono into MP4 with FFmpeg from the runtime. Timestamps are exact: track timescale
 39375000, frame f at `(f - start) * 655171`, so ffprobe reports `avg_frame_rate=39375000/655171`.
-Encoder: `libx264` (from `org.freedesktop.Platform.codecs-extra`), else `h264_vaapi` (works on the
-Deck, needs `--device=dri`), else `libopenh264`. Flash reduction and an optional CRT post-process
-apply to the exported picture only. Headless tool (also in the Flatpak):
+Encoder (automatic): hardware first - `h264_vaapi` (the Deck's AMD GPU; the Flatpak has
+`--device=dri`), else `libx264` (from `org.freedesktop.Platform.codecs-extra`), else `libopenh264`;
+the result names it (`"hardware": true` in the CLI's JSON). A VAAPI encoder that fails while
+encoding / finishing or whose file fails the self-check is retried once with the software encoders
+on a second renderer (same picture and timing; the result says the hardware encoder failed). Flash reduction and an optional CRT post-process
+apply to the exported picture only. The file is written as `<name>.mp4.part` and renamed to
+`<name>.mp4` only after the trailer and a structural self-check (`export/mp4_check.*`: complete
+boxes, every chunk offset pointing at its H.264 samples; FFmpeg switches to a 64-bit `mdat` and
+`co64` past 4 GiB) - an interrupted export never leaves an unplayable `.mp4`.
+`replaynes-export --check FILE.mp4` runs the check on any file. Headless tool (also in the Flatpak):
 
 ```sh
 flatpak run --command=replaynes-export io.github.replaynes.ReplayNES \

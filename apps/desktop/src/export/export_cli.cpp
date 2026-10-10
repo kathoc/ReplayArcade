@@ -88,6 +88,7 @@ int usage() {
                "                   [--verify-hash] [--quiet]\n"
                "                   [--crt [--crt-lines N] [--crt-dbuv X] [--crt-no-growth|-persistence|-supply]]\n"
                "  replaynes-export --self-test DIR [--frames N] [--encoder NAME]\n"
+               "  replaynes-export --check FILE.mp4 [--frames N]   (the exporter's self-check of a finished file)\n"
                "  replaynes-export --list-presets | --encoders\n");
   return 2;
 }
@@ -134,8 +135,10 @@ RunOut runExport(rn_session* s, const ExportOptions& opt, const std::string& out
   }
   uint64_t lastShown = 0, doneNow = 0;
   const double t0 = now();
+  ExportOptions eo = opt;
+  if (eo.encoder.empty() && !eo.retryRenderer) eo.retryRenderer = rnl::makeRetryRenderer(s, opt.settings.start_frame, opt.settings.end_frame);
   o.ok = rnl::exportProject(
-      r, opt, out,
+      r, eo, out,
       [&](uint64_t done, uint64_t total) {
         doneNow = done;
         if (showProgress && (done - lastShown >= 60 || done == total)) {
@@ -155,9 +158,9 @@ std::string resultJson(const RunOut& o, const std::string& out) {
     char b[512];
     std::snprintf(b, sizeof b,
                   ",\"frames\":%" PRIu64 ",\"audio_samples\":%" PRIu64 ",\"renderer_hash\":\"%s\",\"duration\":%.6f,"
-                  "\"encoder\":%s,\"seconds\":%.3f,\"fps\":%.1f",
+                  "\"encoder\":%s,\"hardware\":%s,\"seconds\":%.3f,\"fps\":%.1f",
                   o.res.frames, o.res.audioSamples, hex(o.res.rendererHash).c_str(), o.res.duration,
-                  jsonStr(o.res.encoder).c_str(), o.seconds, o.seconds > 0 ? double(o.res.frames) / o.seconds : 0.0);
+                  jsonStr(o.res.encoder).c_str(), o.res.hardware ? "true" : "false", o.seconds, o.seconds > 0 ? double(o.res.frames) / o.seconds : 0.0);
     j += b;
   } else {
     j += ",\"error\":" + jsonStr(o.error);
@@ -414,6 +417,12 @@ int selfTest(const Args& a) {
   expectTrue(freshHash(s, 0, 0, &h, &n) && h == full.res.rendererHash && n == full.res.frames,
              "full: renderer hash == fresh renderer");
   expectTrue(full.res.frames == take, "full: frames == take length");
+  expectTrue(!fs::exists(fs::u8path(fullOut + ".part")), "full: no temporary file left");
+  {
+    std::string why;
+    expectTrue(rnl::verifyExportedMp4(fullOut, full.res.frames, &why), "full: self-check of the finished file");
+    if (!why.empty()) std::printf("    %s\n", why.c_str());
+  }
   failures += checkFile("full", fullOut, full.res, rn_audio_samples_before(take), 1280, 960);
 
   // 2) flash reduction High + a processor: same renderer hash (display only)
@@ -458,7 +467,27 @@ int selfTest(const Args& a) {
   // 5) cancel after 50 frames: false, "cancelled", no file left
   const std::string cancelOut = (dir / "cancelled.mp4").u8string();
   RunOut can = runExport(s, base, cancelOut, false, 50);
-  expectTrue(!can.ok && can.error == "cancelled" && !fs::exists(fs::u8path(cancelOut)), "cancel: error \"cancelled\", partial file removed");
+  expectTrue(!can.ok && can.error == "cancelled" && !fs::exists(fs::u8path(cancelOut)) && !fs::exists(fs::u8path(cancelOut + ".part")),
+             "cancel: error \"cancelled\", partial file removed");
+
+  // 5b) automatic encoder: a "hardware" failure half-way -> one retry with the software encoder
+  //     on the retry renderer; the same picture (renderer hash), a checked file, no .part left.
+  {
+    ExportOptions hw = base;
+    hw.simulateHardwareFailureAfter = 100;
+    const std::string hwOut = (dir / "hw-fallback.mp4").u8string();
+    RunOut hr = runExport(s, hw, hwOut, false);
+    std::printf("  fallback:  %s\n", resultJson(hr, hwOut).c_str());
+    if (base.encoder.empty()) {
+      expectTrue(hr.ok && hr.res.rendererHash == full.res.rendererHash && hr.res.frames == take && !hr.res.hardware &&
+                     hr.res.encoder.find("hardware encoder failed") != std::string::npos && !fs::exists(fs::u8path(hwOut + ".part")),
+                 "hardware failure: software retry, same renderer hash");
+      if (hr.ok) failures += checkFile("fallback", hwOut, hr.res, rn_audio_samples_before(take), 1280, 960);
+    } else {
+      expectTrue(!hr.ok && !fs::exists(fs::u8path(hwOut)) && !fs::exists(fs::u8path(hwOut + ".part")),
+                 "hardware failure, encoder chosen: error, no file");
+    }
+  }
 
   // 6) invalid settings + empty range
   ExportOptions badCrop = base;
@@ -571,5 +600,12 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (a.get("--self-test")) return selfTest(a);
+  if (const char* file = a.get("--check")) {
+    std::string why;
+    const bool ok = rnl::verifyExportedMp4(file, a.num("--frames", 0), &why);
+    std::printf("{\"ok\":%s,\"file\":%s%s}\n", ok ? "true" : "false", jsonStr(file).c_str(),
+                ok ? "" : (",\"error\":" + jsonStr(why)).c_str());
+    return ok ? 0 : 1;
+  }
   return exportCmd(a);
 }

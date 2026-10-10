@@ -57,11 +57,16 @@ CRT Display itself is off by default (the conventional crisp display).
 - nesterm uses the PPU bitmap of @nesjs/core (6-bit color + 3-bit emphasis) and line-start sample positions obtained by counting PPU clocks.
   ReplayNES exposes Nestopia's `Video::Screen` (the same 9-bit format: `(color & greyscale) | emphasis<<6`) through
   `rn_video_indices` (an additional display-only API; it is not part of the state or hash, and is verified in `tests/test_render.cpp`).
-- Carrier phase: the nesjs tap uses `8 x PPU dot count mod 12`. Nestopia's colour-burst phase `b` advances by +1 in a frame of 89342 dots and
-  by +2 in a frame with the odd-frame dot skipped (89341), so `b = -dot count (mod 3)`,
-  that is, `8 x dot count mod 12 = 4b` (the difference in origin falls within the scope of nesterm's `phaseOrigin: 'assumed-relative'`).
-- The frame number (the key for persistence history and RF noise) is the core's frame number. When the number does not increase, as with a rewind or seek,
-  the receiver, supply, and persistence states are reset (the same treatment as nesterm's `reset`).
+- Carrier phase: the nesjs tap uses `8 x PPU dot count mod 12`. ReplayNES derives the colour-burst phase `b` from the CPU's
+  monotonic master-clock counter at the frame boundary (`NestopiaCore::burstPhaseAtFrameEnd`: `b = 2 x dots mod 3`, dots = master clocks / 4).
+  A frame advances it by +1 (89342 dots) or +2 (89341, odd-frame dot skip), i.e. `8 x dot count mod 12 = 4b`
+  (the difference in origin falls within the scope of nesterm's `phaseOrigin: 'assumed-relative'`). In uninterrupted play this is exactly
+  Nestopia's `Ppu::GetBurstPhase()`, but that counter is not saved in states (`Ppu::LoadState` resets it to 0), whereas the master-clock
+  counter is (CPU `CLK` chunk): the phase of a frame is the same whether it was reached by play, seek, rewind, take switch or a loaded state.
+  Display only: emulation, states, hashes and the core compatibility ID are unchanged.
+- The frame number (the key for persistence history and RF noise) is the core's frame number. When the number does not increase, as with a rewind or seek
+  (or a re-encoded still), the receiver, supply, and persistence states restart (nesterm's `reset`), and so does the first frame of a renderer.
+  ReplayNES restarts them from **the current picture held** rather than from an idle tube with empty history (intentional difference 6).
 - If flash reduction has modified the frame, then for safety the reduced RGB image is sent to the tube face as nesterm's "composite RGB" input
   (`COMPOSE-ASCII-RGB`: 512x240, sRGB-decoded, no RF). Normal frames take the PPU code -> RF path.
 - MP4 export and Syphon use the same `CRTRenderer`. The same frame sequence yields the same image
@@ -84,7 +89,15 @@ CRT Display itself is off by default (the conventional crisp display).
 5. **Internal resolution cap of 1600x1200**: the same as nesterm's OUTPUT-RESOLUTION-SPEC (256x192 to 1600x1200, the work cap for the detector).
    For larger destinations such as full screen, the display pass enlarges it with bilinear interpolation in linear light
    (in nesterm the browser enlarges the canvas).
-6. **Not ported**: nesterm's "TV (legacy model)" (`web/tv-raster.mjs` / `tv-signal.mjs`) and the ASCII display are out of scope.
+6. **History starts from the picture held**: after a discontinuity (seek, rewind, take switch, load, the first frame), nesterm starts the
+   persistence history empty and the supply idle. A still shown that way (ReplayNES pauses on such frames) got only the first frame's share of
+   each phosphor's light — green and blue emit about 10% of a frame's energy in later frames, red almost none — so it was tinted purple, and
+   its ABL / anode load differed from continuous play. Here the oldest persistence slot also stands for the ordinals before it (M4B-GAP
+   extended to the start of history) and the supply starts from the steady state of the first picture (`supply_state` prime mode). The AGC
+   still starts from its initial gain (it settles within the frame; < 1e-3). The conformance harness reproduces nesterm's start by showing a
+   black frame first (black held = empty history and an idle supply), and checks that a still after a seek equals the same picture shown
+   in continuous play (`stillAfterSeek`).
+7. **Not ported**: nesterm's "TV (legacy model)" (`web/tv-raster.mjs` / `tv-signal.mjs`) and the ASCII display are out of scope.
    Numerical precision is single precision, as in WebGL (the persistence ring is half float, as in nesterm).
 
 ## Verification
@@ -97,7 +110,79 @@ CRT Display itself is off by default (the conventional crisp display).
 - A frame from a real ROM (Super Mario Bros.) was drawn at 512x384 with nesterm's CPU reference chain (receiver -> supply -> horizontal spot -> tube-face growth)
   and compared with the Metal version in 8-bit: maximum difference 1/255 (mean 0.13).
 - `tests/test_render.cpp` "video indices": the code-to-RGB correspondence, an unchanged state hash, agreement between session and export, and
-  the mock core returning "unsupported".
+  the mock core returning "unsupported"; the burst phase of a frame is identical by straight play, seek, rewind and a raw state load
+  (both frame parities, around checkpoints) and advances by 1 or 2 every frame.
+
+## Fast path (live display)
+
+The live view (macOS/iOS `MetalView`, Syphon, the Vulkan and Direct3D 11 live views) renders with
+`CRTRenderer.Quality.fast` / `CrtQuality::fast`; the conformance tests and the MP4 export keep
+`.reference`, everything described above (the 1:1 port and its bit-identical restructurings). The fast
+path is the same model, stage order and temporal state (AGC, supply, persistence slots, M4B-GAP, the
+history start of intentional difference 6) with the work restructured; where it approximates, the
+error is far below 8-bit display precision. Kernels: `CRTShaders.fast` (MSL, fast math),
+`apps/linux/shaders/crt/*_fast.comp`, `scatter_drive.comp`, `show_h.frag`, `show_kernel_h.comp`
+(GLSL; HLSL generated from them). Setup tables: `CRTTube.fastPlan` / `driveScatter`
+(`crt::tube::fastPlan` / `driveScatter`).
+
+| Stage | Reference | Fast path | Effect on the result |
+|---|---|---|---|
+| RF/IF | complex FIR h (1025 taps), 214 complex FFT-4096 blocks, forward and inverse in two passes | the receiver only reads Re(IF output) = signal * Re(h): two real blocks per complex FFT (block 2m real, 2m+1 imaginary), Stockham radix-8 in registers + 16 KB exchange, forward, spectrum multiply and inverse in one threadgroup; real carrier | float rounding (~1e-6) |
+| receiver | serial per-row reductions, one-thread AGC with logs/exps per row | parallel row statistics; AGC target clamp(-log sync) per row in parallel (log(gain*sync) = log gain + log sync), serial loop of multiply-adds; prepare + decode + row mean per row in threadgroup memory | rounding (~1e-6) |
+| supply | one thread per row loops over the rows above (O(rows^2)) | the affine anode recurrence as a parallel scan (v_j = a^(j+1) v0 + P_j), prime mode from P_last | float32 rounding of the 25 kV recurrence (~1e-5 relative) |
+| horizontal spot | 7 exps per tap normalisation, per output tap | weights per source sample: e_k = e1^(k^2) | rounding |
+| persistence | 7 half-float slots of the tube output (56 B/pixel read) | slots of the tube **drive** (512 x lines, half4); the tube renders the persistence-weighted drive | exact for the linear stages; the beam-current spot growth of the afterglow (< 12 % of green/blue, < 1e-6 of red) is computed at its weighted rather than its original current: a faint ghost of a moving bright object is a little thinner |
+| scatter | 2 mm Gaussian (σ 8 px at 1144 wide, 67-93 taps per axis) on the full-resolution emission | the same Gaussian on the drive: blurred by sqrt(σ_scatter² + σ_spot² + σ_detector² - bilinear) per axis, times kappa = mean emission per unit drive (flat field of the plan, 0.749) x 0.12, bilinear at each pixel | the scatter is 8x wider than spot, detector and slot pitch, so the mask / scanline structure it sees is gone either way; edges of bright areas differ by < 1 % of the 12 % scatter share |
+| vertical spot growth | 33 growth-level tables, linear interpolation per tap | a cubic in the beam-current fraction per tap (least squares over the 33 levels) | max 5e-4 of the row's largest weight |
+| tube passes | horizontal (float4), vertical (emission), 2 scatter, lit, persist: 5 full-resolution float4 buffers | horizontal pass staged in threadgroup memory, taps in registers; one full-resolution pass (emission + scatter + ambient computed in place) writing half4 | half-float output (5e-4 relative) |
+
+Measured against the reference (`scripts/bench-crt-macos.sh --compare reference:fast`, M1 Max; PSNR of
+the sRGB-encoded tube picture before 8-bit quantization, every 10th frame of 300):
+
+| Sequence | 640x480 | 1144x858 | 1600x1200 |
+|---|---|---|---|
+| Super Mario Bros. scrolling (mean / worst frame PSNR) | 69.7 / 69.3 dB | 68.2 / 66.9 dB | 66.4 / 64.7 dB |
+| Gradius (sprites on black) | 79.6 / 66.9 dB | 73.8 / 60.6 dB | 71.2 / 58.4 dB |
+| mean ΔE76 (SMB / Gradius) | 0.03 / 0.01 | 0.04 / 0.01 | 0.04 / 0.02 |
+
+The largest differences (up to 11/255 at a few pixels of the worst frame) are at the edges of moving
+sprites (the afterglow's spot shape) and of the bright HUD bar (scatter edge); the ×10 difference
+images show nothing else. The conformance harnesses bound it on every backend
+(`testFastPath*`, `crt_conformance`: PSNR > 45 dB with defaults at 320x240 and 640x480, effects off,
+160 lines and RGB input, a still after a seek equal to continuous play, determinism): 65.9-73.5 dB on
+Metal, MoltenVK, WARP and the Parallels adapter alike.
+
+GPU time, M1 Max, Super Mario Bros. frame sequence, all effects, one command buffer per frame
+(`scripts/bench-crt-macos.sh`; back to back = each frame waited for, high clocks; paced = one frame
+per 1/60 s like the live view, where the GPU's clock management lowers the clock for light loads):
+
+| Tube | reference back to back | fast back to back | reference paced 60 Hz | fast paced 60 Hz |
+|---|---|---|---|---|
+| 640x480 | 1.79 ms | 0.39 ms (4.6x) | 4.78 ms | 1.29 ms (3.7x) |
+| 1144x858 | 2.71 ms | 0.46 ms (5.8x) | 5.89 ms | 1.48 ms (4.0x) |
+| 1600x1200 | 4.18 ms | 0.58 ms (7.3x) | 7.13 ms | 1.84 ms (3.9x) |
+
+Per pass at 1144x858 (back to back, median, each pass in its own encoder): reference: FFT 0.38,
+receiver 0.12, supply 0.19, horizontal spot 0.23, tube_h 0.42, tube_v_growth 0.43, scatter 0.59,
+lit + persist 0.33, show 0.05 ms. Fast: rf_fast 0.08, receiver (stats, AGC, decode) 0.05,
+supply_fast 0.01, drive_post_fast (resample + spot + persistence + scatter x) 0.06, scatter y 0.02,
+tube_h_fast 0.10, tube_v_fast 0.11, show 0.03 ms.
+
+The fast kernels need 32 KB of threadgroup memory and 512-thread groups (all Metal GPUs ReplayNES runs
+on, RADV, lavapipe, Direct3D feature level 11_0); tubes whose horizontal maps have more than 24 taps
+or a 64-column tile reaching more than 160 drive samples (narrower than ~250 pixels) render with the
+reference kernels.
+
+Adaptive resolution on macOS/iOS (`CRTAdaptiveScale` in `MetalView`, the policy of the desktop
+`CrtDisplayPolicy`): when the p90 of the last 60 picture builds' GPU time exceeds 80 % of the NES frame
+period the tube is rendered at 0.85x (at least 512 wide) and enlarged by the show pass; it steps back
+up below 55 %, at most one step per 60 builds.
+
+Benchmarks: `replaynes-cli dump-ppu <rom> --out seq.ppu --frames N --skip S --press start@40,right@180+900,...`
+writes a frame sequence of raw PPU output (no ROM data) for `scripts/bench-crt-macos.sh --ppu seq.ppu
+[--sizes ...] [--pace 60] [--profile] [--mode reference|fast|direct] [--compare reference:fast --png DIR
+--png-frames ...]` and `replaynes-crt-test --bench WxH --ppu seq.ppu [--quality ...] [--pace 60]`
+(`REPLAYNES_CRT_PROFILE=1` for per-pass times; Direct3D 11: `test_crt_d3d11 --bench WxH --quality ...`).
 
 ## Vulkan port (Linux / Steam Deck)
 
@@ -158,7 +243,9 @@ direct) and on the Parallels adapter in the development VM (which fuses `precise
 fast == direct is checked within 2e-3 there; the test detects that). Details and numbers:
 [WINDOWS.md](WINDOWS.md#crt-display-direct3d-11-compute-appswindowssrccrt_d3d11).
 
-About 2.6 ms of it is the fixed receiver (FFT 1.6 ms); the tube passes are memory-bound
+(Reference kernels; the fast path's Deck numbers have not been measured yet: the device was not
+reachable when it was added. MoltenVK on the M1 Max, `--bench 1144x858 --ppu`: reference 23.9 ms,
+fast 4.2 ms mean.) About 2.6 ms of it is the fixed receiver (FFT 1.6 ms); the tube passes are memory-bound
 (persistence reads 7 half-float slots per pixel). 60 fps holds at full screen without lowering the
 resolution; the adaptive step only engages if the GPU p90 passes 13.3 ms.
 
@@ -174,5 +261,6 @@ Existing in-app measurement (emulation done -> display, the `--snapshot` JSON, S
 | CRT, full-screen FILL (tube face 1600x1200 -> enlarged) | 30.9 ms | 60.5 | 7.3 / 11.3 ms |
 
 GPU alone (continuous run, maximum clocks): 4.0 ms/frame with the tube face at 1600x1200 and all effects on (receiver 0.75 ms).
-At a 60 fps pace, GPU clock throttling makes the same work take 8-12 ms. Before the restructuring (literal-translation kernels), the same
+At a 60 fps pace, GPU clock throttling makes the same work take 8-12 ms. These are the reference kernels; the live view now renders the
+fast path (section "Fast path": 1.5-1.8 ms paced at 1144x858-1600x1200 in the headless benchmark). Before the restructuring (literal-translation kernels), the same
 conditions took 6.6 ms, and 16.9 ms at 2400x1800.

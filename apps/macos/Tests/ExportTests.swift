@@ -59,6 +59,9 @@ final class ExportTests: XCTestCase {
         XCTAssertEqual(lastProgress.1, UInt64(frames))
         XCTAssertEqual(result.audioSamples, rn_audio_samples_before(UInt64(frames)))
         XCTAssertEqual(result.rendererHash, refHash, "export run must match a normal offline replay")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: out.path + ".part"), "no temporary file left")
+        XCTAssertTrue(result.encoder.hasPrefix("VideoToolbox H.264"))
+        print("export encoder: \(result.encoder)")
 
         // Export must not mutate the project/session.
         XCTAssertEqual(s.takeLength, lengthBefore)
@@ -85,6 +88,44 @@ final class ExportTests: XCTestCase {
             exp.fulfill()
         }
         wait(for: [exp], timeout: 30)
+    }
+
+    /// Opt-in long-take check (RN_LONG_EXPORT_PROJECT = a .nesrec, RN_LONG_EXPORT_ROM = its ROM,
+    /// RN_LONG_EXPORT_OUT = the .mp4 to write; via TEST_RUNNER_ variables): the whole take at
+    /// 1920x1080, 8:7, flash reduction Standard - a file of several GB and over 109 s (the exact
+    /// video timescale then needs 64-bit durations). AVFoundation must load it with the exact
+    /// duration; the box layout (co64 past 4 GiB) is checked outside with ffprobe / mp4 tools.
+    func testLongExportFromProject() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let project = env["RN_LONG_EXPORT_PROJECT"], let out = env["RN_LONG_EXPORT_OUT"] else {
+            throw XCTSkip("RN_LONG_EXPORT_PROJECT / RN_LONG_EXPORT_OUT not set")
+        }
+        let s = try EngineSession.open(projectDir: URL(fileURLWithPath: project),
+                                       romOverride: env["RN_LONG_EXPORT_ROM"].map { URL(fileURLWithPath: $0) },
+                                       dropCorruptStates: false)
+        var settings = ExportSettings()
+        settings.preset = .canvas(1920, 1080)
+        settings.pixelAspect87 = true
+        settings.flashReduction = .standard
+        let url = URL(fileURLWithPath: out)
+        let t0 = Date()
+        let result = try MP4Exporter(renderer: try s.makeRenderer(), settings: settings, url: url)
+            .run(progress: { _, _ in }, isCancelled: { false })
+        let seconds = Date().timeIntervalSince(t0)
+        print(String(format: "long export: %llu frames in %.1f s (%.1f fps), %@", result.frames, seconds,
+                     Double(result.frames) / seconds, result.encoder))
+        XCTAssertEqual(result.frames, s.takeLength)
+        let expected = Double(result.frames) * Double(RN_FPS_DEN) / Double(RN_FPS_NUM)
+        let exp = expectation(description: "load")
+        Task {
+            let asset = AVURLAsset(url: url)
+            let vt = try await asset.loadTracks(withMediaType: .video)
+            XCTAssertEqual(vt.count, 1)
+            let vdur = try await vt[0].load(.timeRange).duration.seconds
+            XCTAssertEqual(vdur, expected, accuracy: 0.001)
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 120)
     }
 
     func testExportHEVCRangeAndCancel() throws {

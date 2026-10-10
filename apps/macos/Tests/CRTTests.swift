@@ -60,12 +60,54 @@ final class CRTTests: XCTestCase {
         XCTAssertLessThan(d.maxAbs, 2e-3, "\(d)")   // half-float ring, as in tube-webgl.mjs
     }
 
+    // Regression: after a seek / rewind / load the persistence history was empty, so a still showed
+    // only the first frame's share of each phosphor's light (green/blue ~10% darker: purple tint).
+    func testStillAfterSeekMatchesContinuousPlay() throws {
+        let still = try c.stillAfterSeek(phases: [UInt32](repeating: 1, count: 12))
+        XCTAssertLessThan(still.maxAbs, 3e-3, "same picture held: \(still)")
+        // Real play alternates the burst phase every frame (two-frame artifact pattern): the
+        // picture differs per pixel there, but its colour must not.
+        let alternating = try c.stillAfterSeek(phases: (0..<12).map { UInt32($0 % 2 == 0 ? 2 : 0) })
+        XCTAssertLessThan(alternating.meanAbs, 2e-3, "\(alternating)")
+    }
+
     func testSameFrameSequenceIsBitIdentical() throws {
         XCTAssertTrue(try c.deterministic())
     }
 
     func testOptimizedKernelsAreBitIdenticalToDirectPort() throws {
         XCTAssertTrue(try c.fastPathsMatchDirectPort())
+    }
+
+    // Fast path (live display): bounded against the reference on moving pictures. Observed on
+    // M1 Max: 60-75 dB; the bound (45 dB, an 8-bit display step is ~48 dB) leaves room for
+    // other GPUs' transcendental functions without letting a structural error through.
+    func testFastPathMatchesReference() throws {
+        for (w, h) in [(320, 240), (640, 480)] {
+            let q = try c.fastVsReference(ow: w, oh: h)
+            XCTAssertGreaterThan(q.psnr, 45, "\(w)x\(h): \(q)")
+            XCTAssertLessThan(q.meanAbs, 2e-3, "\(w)x\(h): \(q)")
+        }
+    }
+
+    func testFastPathMatchesReferenceWithEffectsOff() throws {
+        let q = try c.fastVsReference(CRTConformance.off)
+        XCTAssertGreaterThan(q.psnr, 45, "\(q)")
+        var s = CRTRenderer.Settings()
+        s.lines = 160
+        let r = try c.fastVsReference(s)
+        XCTAssertGreaterThan(r.psnr, 45, "160 lines: \(r)")
+        let g = try c.fastVsReference(rgb: true)
+        XCTAssertGreaterThan(g.psnr, 45, "RGB input: \(g)")
+    }
+
+    func testFastPathStillAfterSeekMatchesContinuousPlay() throws {
+        let still = try c.stillAfterSeek(phases: [UInt32](repeating: 1, count: 12), quality: .fast)
+        XCTAssertLessThan(still.maxAbs, 3e-3, "\(still)")
+    }
+
+    func testFastPathIsDeterministic() throws {
+        XCTAssertTrue(try c.deterministic(quality: .fast))
     }
 
     func testNoiseHashAndKeyMatchReference() throws {

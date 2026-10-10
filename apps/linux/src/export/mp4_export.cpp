@@ -5,10 +5,12 @@
 #include "mp4_export.h"
 
 #include "export_frame.h"
+#include "mp4_check.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cerrno>
 #include <cstring>
 #include <vector>
 
@@ -27,7 +29,9 @@ namespace {
 constexpr int kFrameW = RN_VIDEO_WIDTH, kFrameH = RN_VIDEO_HEIGHT;
 using exportframe::convertToYuv;
 using exportframe::scaleNearest;
-const char* const kAutoEncoders[] = {"libx264", "h264_vaapi", "libopenh264"};
+// Hardware first (VAAPI: the Steam Deck's AMD GPU, Intel / AMD desktops; needs /dev/dri), then
+// x264, then OpenH264.
+const char* const kAutoEncoders[] = {"h264_vaapi", "libx264", "libopenh264"};
 
 std::string avError(int code) {
   char buf[AV_ERROR_MAX_STRING_SIZE] = {};
@@ -217,13 +221,18 @@ std::string availableEncodersDescription() {
   return out;
 }
 
-bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::string& outPath,
-                   const ExportProgressFn& progress, const ExportCancelFn& cancelled, ExportResult* result,
-                   std::string* error) {
+namespace {
+
+/// One export pass with `renderer` (not owned); softwareOnly: auto mode without VAAPI. *hardwareFailed: a hardware (VAAPI) encoder was
+/// used and the failure came from encoding / finishing / the self-check (worth a software retry).
+bool exportOnce(rn_renderer* renderer, const ExportOptions& opt, const std::string& outPath, const ExportProgressFn& progress,
+                const ExportCancelFn& cancelled, ExportResult* result, std::string* error, bool* hardwareFailed,
+                bool softwareOnly) {
   std::string localError;
   std::string& err = error ? *error : localError;
   err.clear();
-  std::unique_ptr<rn_renderer, void (*)(rn_renderer*)> rend(renderer, rn_renderer_free);
+  *hardwareFailed = false;
+  std::unique_ptr<rn_renderer, void (*)(rn_renderer*)> rend(renderer, [](rn_renderer*) {});
   if (!rend) {
     err = "no renderer";
     return false;
@@ -272,6 +281,9 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
   std::vector<uint32_t> filtered(flash ? size_t(kFrameW) * kFrameH : 0);
 
   // ---- muxer + encoders
+  // Written under a temporary name and renamed once finished and checked (a failed / cancelled
+  // export never leaves a broken file under the chosen name, nor replaces an existing one).
+  const std::string partPath = outPath + ".part";
   AvState av;
   bool fileCreated = false;
   auto fail = [&](const std::string& m) {
@@ -280,11 +292,11 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
       avio_closep(&av.fmt->pb);
       av.fileOpen = false;
     }
-    if (fileCreated) std::remove(outPath.c_str());
+    if (fileCreated) std::remove(partPath.c_str());
     return false;
   };
 
-  int r = avformat_alloc_output_context2(&av.fmt, nullptr, "mp4", outPath.c_str());
+  int r = avformat_alloc_output_context2(&av.fmt, nullptr, "mp4", partPath.c_str());
   if (r < 0 || !av.fmt) return fail("MP4 muxer: " + avError(r));
   const bool globalHeader = (av.fmt->oformat->flags & AVFMT_GLOBALHEADER) != 0;
 
@@ -292,8 +304,12 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
   {
     std::string tried;
     std::vector<std::string> names;
-    if (opt.encoder.empty()) names.assign(std::begin(kAutoEncoders), std::end(kAutoEncoders));
-    else names.push_back(opt.encoder);
+    if (opt.encoder.empty()) {
+      for (const char* n : kAutoEncoders)
+        if (!softwareOnly || std::string(n).find("vaapi") == std::string::npos) names.push_back(n);
+    } else {
+      names.push_back(opt.encoder);
+    }
     for (const auto& n : names) {
       std::string why;
       if (openVideoEncoder(n, g, bitrate, globalHeader, av, &why)) {
@@ -305,6 +321,11 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
     if (!av.video) return fail("No usable H.264 encoder (" + tried + ")");
   }
   if (!openAudioEncoder(opt.audioBitrate, globalHeader, av, &err)) return fail(err);
+  const bool usedHardware = av.vaapi;
+  auto failEncoder = [&](const std::string& m) {  // encoder / muxer / file trouble (not the renderer's)
+    *hardwareFailed = usedHardware;
+    return fail(m);
+  };
 
   av.vStream = avformat_new_stream(av.fmt, nullptr);
   av.aStream = avformat_new_stream(av.fmt, nullptr);
@@ -316,7 +337,7 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
   av.vStream->avg_frame_rate = AVRational{RN_FPS_NUM, RN_FPS_DEN};
   av.aStream->time_base = AVRational{1, RN_SAMPLE_RATE};
 
-  r = avio_open(&av.fmt->pb, outPath.c_str(), AVIO_FLAG_WRITE);
+  r = avio_open(&av.fmt->pb, partPath.c_str(), AVIO_FLAG_WRITE);
   if (r < 0) return fail("Can't create " + outPath + ": " + avError(r));
   av.fileOpen = true;
   fileCreated = true;
@@ -427,19 +448,24 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
       if (r >= 0) r = av_hwframe_transfer_data(hw, fr, 0);
       if (r < 0) {
         av_frame_free(&hw);
-        return fail("VAAPI upload: " + avError(r));
+        return failEncoder("VAAPI upload: " + avError(r));
       }
       hw->pts = pts;
       hw->duration = 1;
       const bool ok = encodeAndWrite(av, av.video, av.vStream, hw, &err);
       av_frame_free(&hw);
-      if (!ok) return fail(err);
+      if (!ok) return failEncoder(err);
     } else {
       fr->pts = pts;
       fr->duration = 1;
-      if (!encodeAndWrite(av, av.video, av.vStream, fr, &err)) return fail(err);
+      if (!encodeAndWrite(av, av.video, av.vStream, fr, &err)) return failEncoder(err);
     }
     ++framesWritten;
+    if (opt.simulateHardwareFailureAfter && framesWritten >= opt.simulateHardwareFailureAfter) {
+      fail("simulated hardware encoder failure");
+      *hardwareFailed = true;
+      return false;
+    }
 
     // Audio: sample position from the absolute count at 48 kHz. The renderer's PCM is contiguous;
     // a gap would be filled with silence and an overlap dropped so A/V never drift.
@@ -462,13 +488,18 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
 
   // ---- flush
   if (!pending.empty() && !sendAudio(int(pending.size()))) return false;
-  if (!encodeAndWrite(av, av.video, av.vStream, nullptr, &err)) return fail(err);
-  if (!encodeAndWrite(av, av.audio, av.aStream, nullptr, &err)) return fail(err);
+  if (!encodeAndWrite(av, av.video, av.vStream, nullptr, &err)) return failEncoder(err);
+  if (!encodeAndWrite(av, av.audio, av.aStream, nullptr, &err)) return failEncoder(err);
   r = av_write_trailer(av.fmt);
-  if (r < 0) return fail("finishing the file: " + avError(r));
+  if (r < 0) return failEncoder("finishing the file: " + avError(r));
   r = avio_closep(&av.fmt->pb);
   av.fileOpen = false;
   if (r < 0) return fail("closing the file: " + avError(r));
+  {
+    std::string why;
+    if (!verifyExportedMp4(partPath, framesWritten, &why)) return failEncoder(why);
+  }
+  if (std::rename(partPath.c_str(), outPath.c_str()) != 0) return fail("saving the file under its name: " + std::string(std::strerror(errno)));
 
   if (result) {
     result->frames = framesWritten;
@@ -476,8 +507,55 @@ bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::s
     result->rendererHash = rn_renderer_hash(rend.get());
     result->duration = double(framesWritten) * RN_FPS_DEN / RN_FPS_NUM;
     result->encoder = encName;
+    result->hardware = usedHardware;
   }
   return true;
+}
+
+}  // namespace
+
+bool exportProject(rn_renderer* renderer, const ExportOptions& opt, const std::string& outPath,
+                   const ExportProgressFn& progress, const ExportCancelFn& cancelled, ExportResult* result,
+                   std::string* error) {
+  std::unique_ptr<rn_renderer, void (*)(rn_renderer*)> rend(renderer, rn_renderer_free);
+  std::string localError;
+  std::string& err = error ? *error : localError;
+  if (!rend) {
+    err = "no renderer";
+    return false;
+  }
+  bool hardwareFailed = false;
+  if (exportOnce(rend.get(), opt, outPath, progress, cancelled, result, &err, &hardwareFailed, false)) return true;
+  // Automatic encoder choice: a hardware encoder that failed while encoding, finishing or in the
+  // self-check gets one retry with the software encoders (the same picture, timing and settings).
+  if (!hardwareFailed || !opt.encoder.empty() || !opt.retryRenderer || (cancelled && cancelled())) return false;
+  const std::string hwError = err;
+  ExportOptions sw = opt;
+  sw.retryRenderer.reset();
+  sw.simulateHardwareFailureAfter = 0;
+  if (!exportOnce(opt.retryRenderer.get(), sw, outPath, progress, cancelled, result, &err, &hardwareFailed, true)) {
+    if (err != "cancelled") err = "Hardware encoder: " + hwError + "; software encoder: " + err;
+    return false;
+  }
+  if (result) result->encoder += " - the hardware encoder failed (" + hwError + ")";
+  return true;
+}
+
+bool verifyExportedMp4(const std::string& path, uint64_t frames, std::string* error) {
+  std::string localError;
+  std::string& err = error ? *error : localError;
+  Mp4Summary sum;
+  if (!checkMp4File(path, &sum, &err)) return false;
+  for (const auto& t : sum.tracks)
+    if (t.handler == "vide") {
+      if (frames && t.samples != frames) {
+        err = "MP4 check: " + std::to_string(t.samples) + " video frames, expected " + std::to_string(frames);
+        return false;
+      }
+      return t.samples > 0 || (err = "MP4 check: no video frames", false);
+    }
+  err = "MP4 check: no video track";
+  return false;
 }
 
 }  // namespace rnl
