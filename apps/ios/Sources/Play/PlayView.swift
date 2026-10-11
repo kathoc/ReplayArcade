@@ -7,6 +7,7 @@ import SwiftUI
 struct PlayView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var crt = CRTSettingsModel.shared
+    @ObservedObject private var countdown = AppModel.shared.resumeCountdown
 
     var body: some View {
         // The surface and the overlay layer each fill the whole screen (safe area ignored) in the
@@ -60,13 +61,22 @@ struct PlayView: View {
         .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.15), value: model.notice)
 
-        // Paused: the seek bar over the bottom of the game area.
-        if st.hasSession && st.paused && !model.quickMenu.isOpen {
+        // Paused: the seek bar over the bottom of the game area (its bottom edge 8 pt above the
+        // area's; it grows upwards). Hidden while the resume countdown runs.
+        if st.hasSession && st.paused && !model.quickMenu.isOpen && countdown.start == nil {
             SeekBarPanel()
                 .frame(width: min(l.landscape ? max(picture.width, game.width - 16) : game.width - 16, 640))
-                .position(x: game.midX, y: game.maxY - (l.landscape ? 70 : 64))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 8)
+                .frame(width: game.width, height: game.height, alignment: .bottom)
+                .offset(x: game.minX, y: game.minY)
                 .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
                 .transition(.opacity)
+        }
+        // Resuming from pause: 3, 2, 1 over the paused picture (a tap on it or ✕ stays paused).
+        if countdown.start != nil && !model.quickMenu.isOpen {
+            ResumeCountdownView(countdown: countdown, picture: picture) { model.abortResumeCountdown() }
+                .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
         }
         // Without touch controls (a controller is connected) the menu stays reachable.
         if !model.touchControlsVisible && !model.quickMenu.isOpen {

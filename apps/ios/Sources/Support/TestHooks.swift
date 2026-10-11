@@ -2,11 +2,13 @@
 //   -autoplayTestROM YES      write the engine's test ROM into ROM/ and play it (temporary session)
 //   -autoplayROM <name.nes>   play that file of ROM/
 //   -pauseAfter <s>           pause after s seconds (the seek bar)
+//   -resumeAfter <s>          resume after s seconds (through the resume countdown when it is on)
 //   -continueLast YES         press the library's Continue card at 1 s (resume check)
 //   -openMenu <page>          open the Quick Menu at a page (top, retry, practice, display, ...) after 2 s
 //   -debugUnlockAll NO        free mode (the prototype switch off)
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
 //   -holdTouch <button>       press an on-screen button at 1 s (e.g. r = pause) to check touch input
+//   -setResumeCountdown NO    store Settings › Controls › Resume Countdown (YES / NO) before the start
 //   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")
 //   -logTouchEvents YES       log every UITouch the on-screen gamepad receives
 //   -orientation landscape    rotate the window (screenshots of the landscape layout)
@@ -25,6 +27,11 @@ import QuartzCore
 enum TestHooks {
     /// Before the app model starts.
     static func prepare() {
+        // Stored in the app's domain (a plain -resumeCountdown argument would pin the setting:
+        // the Controls page's switch could not change it).
+        if let on = UserDefaults.standard.object(forKey: "setResumeCountdown") as? String {
+            UserDefaults.standard.set(on == "YES" || on == "1", forKey: "resumeCountdown")
+        }
         guard UserDefaults.standard.bool(forKey: "resetLibraryForTests") else { return }
         let docs = LibraryPaths.documents
         for dir in [docs.roms, docs.projects] { try? FileManager.default.removeItem(at: dir) }
@@ -58,6 +65,8 @@ enum TestHooks {
         if d.bool(forKey: "continueLast") { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { m.continueLast() } }
         let pause = d.double(forKey: "pauseAfter")
         if pause > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + pause) { m.setPaused(true) } }
+        let resume = d.double(forKey: "resumeAfter")
+        if resume > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + resume) { m.setPaused(false) } }
         if let page = d.string(forKey: "openMenu"), let p = QMPage(rawValue: page) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { m.quickMenu.open(at: p) }
         }

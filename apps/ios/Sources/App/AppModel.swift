@@ -81,10 +81,15 @@ final class AppModel: ObservableObject {
         didSet {
             if status.paused != oldValue.paused || status.hasSession != oldValue.hasSession { updateUIMode() }
             else if status.coarse != oldValue.coarse { markers.sync() }
+            // Resumed some other way, or the session went away: the countdown has nothing to do.
+            if resumeCountdown.isActive && ResumeCountdownGate.shouldAbort(countdownContext) { resumeCountdown.abort() }
         }
     }
     let markers = SeekMarkers()
     let quickMenu = QuickMenuController()
+    /// 3, 2, 1 before a resume from pause (ResumeCountdownLogic.swift); iOS-local until the shared
+    /// core has one (ResumeCountdownDriver).
+    let resumeCountdown = LocalResumeCountdown()
     let clock = PlaybackClock()
 
     @Published var showLibrary = false
@@ -145,6 +150,8 @@ final class AppModel: ObservableObject {
     @AppStorage("touchFollowY") var touchFollowY = 1.0 { didSet { objectWillChange.send() } }
     /// Hide the touch controls while a game controller is connected.
     @AppStorage("touchHideWithPad") var touchHideWithPad = true { didSet { objectWillChange.send() } }
+    /// Settings › Controls › Resume Countdown: 3, 2, 1 before the game goes on after a pause.
+    @AppStorage("resumeCountdown") var resumeCountdownOn = true { didSet { objectWillChange.send() } }
 
     var flashLevel: FlashLevel { FlashLevel(rawValue: flashReduction) ?? .standard }
 
@@ -225,18 +232,33 @@ final class AppModel: ObservableObject {
         input.onNav = { [weak self] n in self?.handleNav(n) }
         input.onPausedResume = { [weak self] in
             guard let self, self.status.hasSession, self.status.paused, !self.quickMenu.isOpen, !self.showLibrary else { return }
+            // The cancel tap during the countdown goes back to paused (as in the practice countdown).
+            if self.resumeCountdown.isActive { self.abortResumeCountdown(); return }
             self.togglePause()
         }
-        input.onSeekInput = { [weak self] i, down in self?.markers.seekInput(i, down: down) }
-        input.onMarkerHold = { [weak self] dir, down in self?.markers.markerHold(dir, down: down) }
-        input.onPausedShoulder = { [weak self] dir in self?.markers.pausedShoulder(dir) }
+        // The seek bar's controller gestures wait while the countdown runs (it is hidden then).
+        input.onSeekInput = { [weak self] i, down in
+            guard let self, !self.resumeCountdown.isActive else { return }
+            self.markers.seekInput(i, down: down)
+        }
+        input.onMarkerHold = { [weak self] dir, down in
+            guard let self, !self.resumeCountdown.isActive || !down else { return }
+            self.markers.markerHold(dir, down: down)
+        }
+        input.onPausedShoulder = { [weak self] dir in
+            guard let self, !self.resumeCountdown.isActive else { return }
+            self.markers.pausedShoulder(dir)
+        }
         markers.model = self
         input.onDisconnect = { [weak self] name in
             guard let self else { return }
             self.emu.perform { emu in emu.paused = true }
             self.flash(String(localized: "Paused because \(name) was disconnected"))
         }
-        input.onPausedStep = { [weak emu] dir, down in emu?.perform { e in e.pausedStep(dir, down: down) } }
+        input.onPausedStep = { [weak self] dir, down in
+            guard let self, !(down && self.resumeCountdown.isActive) else { return }
+            self.emu.perform { e in e.pausedStep(dir, down: down) }
+        }
         quickMenu.model = self
         // The screens read quickMenu.isOpen through this model (RootView / LibraryView / PlayView /
         // PlaySurface): without this, opening or closing the menu redrew nothing unless the game's
@@ -338,9 +360,58 @@ final class AppModel: ObservableObject {
 
     // MARK: transport (main thread -> emulation thread)
 
-    func togglePause() { emu.perform { e in e.togglePause() } }
-    func setPaused(_ p: Bool) { emu.perform { e in e.paused = p } }
+    /// Pause / resume (seek bar ▶, controller cancel tap): a resume from pause counts down first.
+    func togglePause() {
+        if status.hasSession && status.paused {
+            resume { e in if e.paused { e.togglePause() } }
+        } else {
+            resumeCountdown.abort()
+            emu.perform { e in e.togglePause() }
+        }
+    }
+    /// Paused / playing (the Quick Menu's close, resets, the background): playing counts down first
+    /// when the game is paused on the play screen.
+    func setPaused(_ p: Bool) {
+        if p {
+            resumeCountdown.abort()
+            emu.perform { e in e.paused = true }
+        } else {
+            resume { e in e.paused = false }
+        }
+    }
+    /// Plays at once (no countdown): after a reset, where there is nothing to get ready for.
+    func resumeNow() {
+        resumeCountdown.abort()
+        emu.perform { e in e.paused = false }
+    }
+
+    private var countdownContext: ResumeCountdownGate.Context {
+        ResumeCountdownGate.Context(enabled: resumeCountdownOn, hasSession: status.hasSession, paused: status.paused,
+                                    practiceReturning: status.practicing && status.practiceLooping,
+                                    menuOpen: quickMenu.isOpen, libraryShown: showLibrary, dialogShown: alert != nil || prompt != nil)
+    }
+
+    /// Resumes through the countdown when the setting and the state want one, else right away.
+    private func resume(_ play: @escaping (EmulationController) -> Void) {
+        guard ResumeCountdownGate.shouldCountDown(countdownContext) else {
+            resumeCountdown.abort()
+            emu.perform(play)
+            return
+        }
+        releaseTouch()
+        resumeCountdown.begin { [weak self] in
+            guard let self else { return }
+            // Still paused on the play screen with nothing modal up (else it stays paused).
+            guard ResumeCountdownGate.canResume(self.countdownContext) else { return }
+            self.emu.perform(play)
+        }
+    }
+
+    /// ✕ / a tap on the picture / the controller's cancel tap during the countdown: stays paused.
+    func abortResumeCountdown() { resumeCountdown.abort() }
+
     func stepFrame(_ dir: Int) {
+        if resumeCountdown.isActive { return }
         emu.perform { e in
             guard let s = e.session else { return }
             e.stepFrame(dir, s)
@@ -411,7 +482,17 @@ final class AppModel: ObservableObject {
         if Self.logTouch { NSLog("ReplayNES touch: %@", (pressed.map { $0.rawValue + "+" } + released.map { $0.rawValue + "-" }).joined(separator: " ")) }
         let st = status
         let pausedInPlay = st.hasSession && st.paused && !quickMenu.isOpen && !showLibrary
+        let counting = resumeCountdown.isActive
         for b in pressed {
+            if counting {
+                // The countdown: game buttons are held into the first frame, app gestures dropped,
+                // the MENU pill goes back to paused (and opens the menu).
+                switch ResumeCountdownGate.touchRoute(b) {
+                case .abort: abortResumeCountdown(); quickMenu.open(); continue
+                case .drop: touchRouted.insert(b); continue
+                case .game: if let id = b.inputID { rn_input_set_pressed(input.handle, id, 1) }; continue
+                }
+            }
             if b == .menu { quickMenu.open(); continue }
             // Frame step buttons: as the desktop's Step Back / Frame Advance keys (EmulationController
             // stepFrame): playing, the press pauses and steps; paused, it steps. Never game input.
@@ -990,6 +1071,7 @@ final class AppModel: ObservableObject {
     func enterBackground() {
         wasInBackground = true
         releaseTouch()
+        resumeCountdown.abort()
         guard current != nil else { return }
         setPaused(true)
         captureThumbnail()

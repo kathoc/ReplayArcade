@@ -180,6 +180,10 @@ confirmations, back, ✕, backdrop) and the Export / Unlocks sheets, and checks 
 effect (`TEST_RUNNER_AUDIT_DIR=<dir>` also saves a screenshot and the element tree of a failure).
 Note: it changes settings in the simulator (toggles and choices are set back, sliders are moved).
 
+Resume countdown (scheme `ReplayNESTouchUI`, `ResumeCountdownUITests`): the paused seek bar's
+Resume and the Quick Menu's Resume count 3, 2, 1 and then play; a tap on the picture, ✕ or MENU
+goes back to paused; with Settings › Controls › Resume Countdown off Resume plays at once.
+
 Import checks (scheme `ReplayNESTouchUI`, `ROMImportUITests`): `testMultiFileImportBatch` needs
 nothing; `testShareFromFilesApp` shares On My iPhone › ShareROMs from the Files app through the
 Share Extension (Select All › Share › ReplayNES › Add) and checks that every ROM arrives - put
@@ -188,7 +192,7 @@ first (`TEST_RUNNER_SHARE_WHILE_PLAYING=1` / `TEST_RUNNER_SHARE_COLD=1` for the 
 The test also asserts that the share sheet lists exactly one ReplayNES entry.
 
 Launch arguments for checks (`Sources/Support/TestHooks.swift`): `-autoplayTestROM YES`,
-`-openMenu <page>`, `-pauseAfter <s>`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
+`-openMenu <page>`, `-pauseAfter <s>`, `-resumeAfter <s>`, `-setResumeCountdown YES|NO`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
 `-orientationLock 0|1|2`,
 `-debugUnlockAll NO`, `-touchHideWithPad NO`, `-showLatency YES`, `-pacingProbe <s>` (writes
 `Library/Caches/pacing.json` in the app container).

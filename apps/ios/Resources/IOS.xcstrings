@@ -21,6 +21,16 @@
         }
       }
     },
+    "+1 frame": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+1コマ"
+          }
+        }
+      }
+    },
     "4-way ignores diagonals (remembered per game)": {
       "localizations": {
         "ja": {
@@ -127,6 +137,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "ゲームに戻る"
+          }
+        }
+      }
+    },
+    "Cancel Countdown": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "カウントダウンをやめる"
+          }
+        }
+      }
+    },
+    "Count 3, 2, 1 before the game goes on after a pause": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一時停止から再開するとき、3・2・1 と数えてから始めます"
           }
         }
       }
@@ -401,6 +431,26 @@
         }
       }
     },
+    "Keep practicing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "練習を続ける"
+          }
+        }
+      }
+    },
+    "Keep recording": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "録画を続ける"
+          }
+        }
+      }
+    },
     "Keep the previous session (ROM: %@) as a project in the Projects folder? If you don’t keep it, it is discarded.": {
       "localizations": {
         "ja": {
@@ -417,6 +467,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "この記録をプロジェクトとして残します（自動でも保存されます）"
+          }
+        }
+      }
+    },
+    "Keep watching the replay": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "見返しを続ける"
           }
         }
       }
@@ -657,6 +717,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "前回 ReplayNES が正常に終了しなかったため、最後の自動保存までの記録を復元しました。"
+          }
+        }
+      }
+    },
+    "Resume Countdown": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再開時のカウントダウン"
           }
         }
       }
@@ -921,6 +991,16 @@
         }
       }
     },
+    "Watch the replay from the start": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最初から見返す"
+          }
+        }
+      }
+    },
     "What each unlock adds (purchases are stubbed in this build)": {
       "localizations": {
         "ja": {
@@ -937,6 +1017,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "「記録」なしでも遊ぶ・巻き戻し・練習ができ、現在のセッションは別のゲームを始めるまで残ります。「記録」をアンロックすると記録をプロジェクトとして残せます。"
+          }
+        }
+      }
+    },
+    "−1 frame": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "−1コマ"
           }
         }
       }

@@ -18,7 +18,9 @@ final class TapAuditUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["-touchHideWithPad", "NO", "-logTouch", "YES", "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-                               "-debugUnlockAll", "YES"]
+                               "-debugUnlockAll", "YES",
+                               // Resume goes on at once here (the countdown: ResumeCountdownUITests).
+                               "-setResumeCountdown", "NO"]
     }
 
     // MARK: helpers
