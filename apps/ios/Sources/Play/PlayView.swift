@@ -7,7 +7,6 @@ import SwiftUI
 struct PlayView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var crt = CRTSettingsModel.shared
-    @ObservedObject private var countdown = AppModel.shared.resumeCountdown
 
     var body: some View {
         // The surface and the overlay layer each fill the whole screen (safe area ignored) in the
@@ -62,8 +61,8 @@ struct PlayView: View {
         .animation(.easeOut(duration: 0.15), value: model.notice)
 
         // Paused: the seek bar over the bottom of the game area (its bottom edge 8 pt above the
-        // area's; it grows upwards). Hidden while the resume countdown runs.
-        if st.hasSession && st.paused && !model.quickMenu.isOpen && countdown.start == nil {
+        // area's; it grows upwards). The resume countdown is not paused: the bar goes for it.
+        if st.hasSession && st.paused && !model.quickMenu.isOpen {
             SeekBarPanel()
                 .frame(width: min(l.landscape ? max(picture.width, game.width - 16) : game.width - 16, 640))
                 .fixedSize(horizontal: false, vertical: true)
@@ -73,9 +72,9 @@ struct PlayView: View {
                 .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
                 .transition(.opacity)
         }
-        // Resuming from pause: 3, 2, 1 over the paused picture (a tap on it or ✕ stays paused).
-        if countdown.start != nil && !model.quickMenu.isOpen {
-            ResumeCountdownView(countdown: countdown, picture: picture) { model.abortResumeCountdown() }
+        // The resume countdown (drawn by the renderer): a tap on the picture or ✕ goes back to paused.
+        if st.hasSession && model.resumeCountdownShown && !model.quickMenu.isOpen {
+            ResumeCountdownCatcher(picture: picture) { model.abortResumeCountdown() }
                 .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
         }
         // Without touch controls (a controller is connected) the menu stays reachable.

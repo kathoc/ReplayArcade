@@ -151,16 +151,6 @@
         }
       }
     },
-    "Count 3, 2, 1 before the game goes on after a pause": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一時停止から再開するとき、3・2・1 と数えてから始めます"
-          }
-        }
-      }
-    },
     "CRT Display": {
       "localizations": {
         "ja": {
@@ -717,16 +707,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "前回 ReplayNES が正常に終了しなかったため、最後の自動保存までの記録を復元しました。"
-          }
-        }
-      }
-    },
-    "Resume Countdown": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "再開時のカウントダウン"
           }
         }
       }

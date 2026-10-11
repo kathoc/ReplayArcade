@@ -319,9 +319,6 @@ enum QuickMenuPages {
                    String(localized: "← / → step one frame while paused"), m.dpadStepWhenPaused) { m.dpadStepWhenPaused = $0 },
             toggle("pauseRewind", "pause.circle", String(localized: "Pause After Rewind"),
                    String(localized: "Pause when rewind / fast-forward is released"), m.pauseAfterRewind) { m.pauseAfterRewind = $0 },
-            // Placement: Controls, next to the other pause rows (UI_REDESIGN.md has no place for it yet).
-            toggle("resumeCountdown", "timer", L("Resume Countdown"),
-                   L("Count 3, 2, 1 before the game goes on after a pause"), m.resumeCountdownOn) { m.resumeCountdownOn = $0 },
             link("controlsDetail", "slider.horizontal.3", String(localized: "Controls Details"),
                  String(localized: "Turbo, opposite directions, stick"), .controlsDetail),
         ]
@@ -389,6 +386,9 @@ enum QuickMenuPages {
             slider("duty", "timer", String(localized: "Turbo Press Length"), String(localized: "Frames each turbo press is held"),
                    Double(c.turboDuty), 1...Double(max(2, c.turboPeriod - 1)), step: 1,
                    text: String(localized: "\(c.turboDuty) f")) { m.input.setTurbo(period: c.turboPeriod, duty: Int($0)) },
+            // As on macOS (UI_REDESIGN.md, "Resume countdown"): Controls is full (six rows).
+            toggle("resumeCountdown", "play.circle", String(localized: "Resume Countdown"),
+                   String(localized: "3, 2, 1 before play resumes after a pause"), m.resumeCountdown) { m.resumeCountdown = $0 },
             QMItem(id: "resetBindings", icon: "arrow.counterclockwise", title: String(localized: "Default Buttons"),
                    detail: String(localized: "Restore the default keys and buttons"),
                    confirm: {
@@ -554,17 +554,16 @@ enum QuickMenuPages {
         ]
     }
 
-    /// Soft Reset / Power Cycle play at once: the game starts over, nothing to count down for.
     private static func reset(_ m: AppModel, _ menu: QuickMenuController) -> [QMItem] {
         let st = m.status
         let live = st.recording || st.practicing
         return [
             QMItem(id: "soft", icon: "arrow.counterclockwise", title: String(localized: "Soft Reset"),
                    detail: String(localized: "Press the console’s RESET button (recorded)"), enabled: live,
-                   confirm: { menu.close(resume: false); m.softReset(); m.resumeNow() }),
+                   confirm: { menu.close(resume: true); m.softReset() }),
             QMItem(id: "power", icon: "power", title: String(localized: "Power Cycle"),
                    detail: String(localized: "Turn the console off and on again (recorded)"), enabled: live,
-                   confirm: { menu.close(resume: false); m.powerCycle(); m.resumeNow() }),
+                   confirm: { menu.close(resume: true); m.powerCycle() }),
             QMItem(id: "startOver", icon: "trash", title: String(localized: "Start Over"),
                    detail: String(localized: "Delete every take and record again from power-on"),
                    confirm: { menu.close(resume: false); m.resetProjectPrompt() }),

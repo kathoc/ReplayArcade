@@ -18,6 +18,10 @@ final class GameLayerView: UIView {
     let renderer: GameRenderer?
     private weak var emu: EmulationController?
     private var displayTarget: DisplayTarget?
+    /// The scene is in the foreground (true by default): DisplayTarget.visible, so the display
+    /// watchdog (rnf_display_watchdog) does not restart the link while nothing can be presented.
+    private var sceneVisible = true
+    private var sceneObservers: [NSObjectProtocol] = []
 
     init(emu: EmulationController) {
         self.emu = emu
@@ -34,6 +38,24 @@ final class GameLayerView: UIView {
         isOpaque = true
         backgroundColor = .black
         isUserInteractionEnabled = false
+        let nc = NotificationCenter.default
+        sceneObservers = [
+            nc.addObserver(forName: UIScene.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] n in
+                self?.sceneChanged(n.object as? UIScene, visible: false)
+            },
+            nc.addObserver(forName: UIScene.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] n in
+                self?.sceneChanged(n.object as? UIScene, visible: true)
+            },
+        ]
+    }
+
+    deinit { sceneObservers.forEach(NotificationCenter.default.removeObserver) }
+
+    private func sceneChanged(_ scene: UIScene?, visible: Bool) {
+        // Only this view's scene (any scene while it has no window yet).
+        if let scene, let mine = window?.windowScene, scene !== mine { return }
+        sceneVisible = visible
+        displayTarget?.visible = visible
     }
 
     @available(*, unavailable)
@@ -43,6 +65,10 @@ final class GameLayerView: UIView {
         super.didMoveToWindow()
         updateDrawableSize()
         if window != nil { startRendering() } else { stopRendering() }
+        if let state = window?.windowScene?.activationState {
+            sceneVisible = state != .background && state != .unattached
+            displayTarget?.visible = sceneVisible
+        }
     }
 
     override func layoutSubviews() {
@@ -70,6 +96,7 @@ final class GameLayerView: UIView {
         let screen = window?.screen ?? UIScreen.main
         let maxFPS = screen.maximumFramesPerSecond
         let t = DisplayTarget(layer: metalLayer, renderer: renderer, maxFPS: maxFPS, variableRefresh: maxFPS > 60)
+        t.visible = sceneVisible
         displayTarget = t
         emu.setDisplayTarget(t)
     }

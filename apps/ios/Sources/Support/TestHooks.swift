@@ -8,7 +8,7 @@
 //   -debugUnlockAll NO        free mode (the prototype switch off)
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
 //   -holdTouch <button>       press an on-screen button at 1 s (e.g. r = pause) to check touch input
-//   -setResumeCountdown NO    store Settings › Controls › Resume Countdown (YES / NO) before the start
+//   -setResumeCountdown NO    store Settings › Controls › Controls Details › Resume Countdown (YES / NO) before the start
 //   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")
 //   -logTouchEvents YES       log every UITouch the on-screen gamepad receives
 //   -orientation landscape    rotate the window (screenshots of the landscape layout)

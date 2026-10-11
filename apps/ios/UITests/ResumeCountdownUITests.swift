@@ -1,4 +1,4 @@
-// The paused seek bar's Resume and the resume countdown (ResumeCountdownLogic.swift): Resume (and
+// The paused seek bar's Resume and the resume countdown (shared core; ResumeCountdown.swift): Resume (and
 // the Quick Menu's Resume) shows 3, 2, 1 over the paused picture and then plays; a tap on the
 // picture or ✕ goes back to paused; with the setting off Resume plays at once.
 // Reported (iPhone): it was unclear which seek bar button resumes (an unlabelled ▶ read as "play
@@ -90,8 +90,6 @@ final class ResumeCountdownUITests: XCTestCase {
         XCTAssertFalse(el("seekBar").exists, "the seek bar goes while counting down")
         Thread.sleep(forTimeInterval: 0.6)
         shot("countdown-portrait")
-        // Input during the countdown: R (pause / step) is dropped, the game stays paused.
-        tapPoint(pt("r"))
         waitFor(5, "the countdown ends") { !el("resumeCountdown").exists }
         XCTAssertFalse(el("seekBar").exists, "playing after the countdown")
         Thread.sleep(forTimeInterval: 1)
@@ -125,7 +123,8 @@ final class ResumeCountdownUITests: XCTestCase {
         XCTAssertTrue(el("seekBar").exists, "still paused")
     }
 
-    /// The Quick Menu's Resume counts down too; the MENU pill during the countdown goes back to the menu.
+    /// The Quick Menu's Resume counts down too; the MENU pill during the countdown pauses (the menu);
+    /// closing that menu resumes again (the game was running), through a new countdown.
     func testMenuResumeCountsDownAndPillAborts() throws {
         startPlay()
         pause()
@@ -137,8 +136,9 @@ final class ResumeCountdownUITests: XCTestCase {
         XCTAssertTrue(el("quickMenu").waitForExistence(timeout: 3), "MENU during the countdown opens the menu")
         XCTAssertFalse(el("resumeCountdown").exists)
         el("qmClose").tap()
-        // The menu was opened while paused (the countdown): ✕ resumes nothing.
-        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 3), "paused")
+        XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 3), "✕ resumes: a new countdown")
+        el("countdownCancel").tap()
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 3), "✕ on the countdown: paused")
     }
 
     func testCountdownOffResumesAtOnce() throws {

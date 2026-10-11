@@ -182,7 +182,8 @@ Note: it changes settings in the simulator (toggles and choices are set back, sl
 
 Resume countdown (scheme `ReplayNESTouchUI`, `ResumeCountdownUITests`): the paused seek bar's
 Resume and the Quick Menu's Resume count 3, 2, 1 and then play; a tap on the picture, ✕ or MENU
-goes back to paused; with Settings › Controls › Resume Countdown off Resume plays at once.
+goes back to paused (the countdown is the shared core's); with Settings › Controls › Controls Details ›
+Resume Countdown off Resume plays at once.
 
 Import checks (scheme `ReplayNESTouchUI`, `ROMImportUITests`): `testMultiFileImportBatch` needs
 nothing; `testShareFromFilesApp` shares On My iPhone › ShareROMs from the Files app through the
