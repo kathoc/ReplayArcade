@@ -273,6 +273,65 @@ iPhone core is roughly 0.8x, an A12-class one ~0.5x: ~1-1.5 ms typical, ≤ 5 ms
 Run-ahead 1 would add ~0.4-0.8 ms. Display-locked pacing also suits iPhone directly: 60 Hz
 models present every refresh, ProMotion models every 2nd at 120 Hz.
 
+## 5b. Display watchdog (2026-10-11)
+
+Emulation and audio never wait for the display, so anything that stops pictures from reaching the
+screen freezes the picture while the game plays on (reported on iPhone 17 Pro with the CRT model).
+Stuck states found and fixed in the shared Metal path (`CRTRenderer` / `GameRenderer`), and the same
+classes in the Vulkan / D3D11 CRT paths:
+
+- **Line count vs the tube in use.** A new CRT line count (Reduced lines) took effect at once while
+  its tube plan was still being built in the background: the old tube ran with stage buffers sized
+  for the new count and read / wrote past them (Metal shader validation: `tube_h` invalid loads on
+  every such frame; a GPU address fault on iOS, after which the process's command buffers can be
+  ignored). The stages now follow the tube in use (`key.lines`); the new count starts with its plan.
+- **Stale output.** A frame whose CRT passes could not be encoded (no plan yet, stage buffers not
+  allocatable under memory pressure) or whose build command buffer failed on the GPU left the tube
+  output flagged valid, so every later present showed that old picture. A failed encode / a failed
+  build now discards the output and the temporal state (the plain picture is shown until a build
+  succeeds).
+- **Non-finite temporal state.** NaN / inf in the AGC gain or the supply state (shared buffers fed
+  back frame to frame) would stay forever; checked on the CPU before each frame and reset.
+- **Silent failures.** No command buffer status was looked at: every display command buffer now
+  reports failures (`DisplayHealth`, logged: the first 5, then every 300th, with the Metal error
+  code: timeout, pageFault, outOfMemory, notPermitted, ...).
+
+The watchdog (`rnf_display_watchdog`, shared core) covers what is left, including a display link
+that stops calling back while the view is visible (the emulation thread then silently falls back to
+the host clock, which exists for hidden windows): the frontend reports each published picture and
+each picture **confirmed** (its present's command buffer completed without error and the GPU work
+that built it did not fail - so a stale CRT output does not count; not `presentedTime`, which is 0
+for a replaced drawable and always 0 in the Parallels VM; a recovery's plain stand-in does not
+count either). While the viewport is visible (macOS: window occlusion state) and the display link
+has run for a second (a new link settles first), a picture waiting more than 250 ms with emulation still advancing triggers
+RECOVER: fresh command queue, nothing pending, CRT output and temporal state discarded, plain
+picture for one present - or, when the display link stopped calling back, only a new display link.
+If the next 250 ms still show nothing: RESTART (the CRT renderer rebuilt from scratch and the
+display link recreated), then a 2 s back-off. GPU errors that persist across a rebuild switch the
+CRT model to the plain picture until the CRT settings change. Every action is logged with why (`ReplayNES: display watchdog: ...`: wait, link
+callback age, last confirmed frame vs latest, GPU errors and the last one, CRT / build-ahead state)
+and counted (`gpuErrors`, `watchdogActions` in the stats log). Pause, the menu and seeks never
+trigger it. Test hook: `-crtInjectGPUError N` reports every N-th CRT build as failed.
+
+**Desktop (Linux Vulkan, Windows Direct3D 11).** The CRT renderers (`CrtRenderer`,
+`CrtRendererD3D11`) have the same fixes: stages and rows follow the tube in use (`key.lines`), a
+failed encode clears the output (the plain picture is shown), `discardOutput()` drops the output and
+the temporal state, and the AGC / supply state is checked for NaN / inf before each frame (Vulkan:
+small host-visible buffers; Direct3D 11: a staging copy of a recent frame read without waiting) -
+covered by the shared conformance checks (`crt_conformance.h`, "display recovery"). The presenters
+log every failed fence wait / acquire / submit / present / resize with its `VkResult` / `HRESULT`
+(`display_health.h`: the first 5, then every 300th) and recover what they can see: a lost Vulkan
+surface or device is recreated (the device with every resource, the ImGui backend included), a
+failed submit renews its frame slot's fence and semaphore, frame-slot fence and image waits time out
+after 1 s instead of blocking the loop; Direct3D 11 recreates the device on
+`DXGI_ERROR_DEVICE_REMOVED` / `RESET` / `HUNG` and the swap chain after other present / resize
+failures. The frame loop (`app.cpp`) runs the watchdog over each published picture and each
+successful present whose CRT build did not fail, reset while the window is minimised, hidden or
+occluded: RECOVER = CRT output discarded + plain picture for one present, RESTART = CRT renderer and
+swap chain recreated (the device after a loss); CRT builds still failing after two restarts are shown
+plain until the CRT is switched off and on. Logged as `ReplayNES: display watchdog: ...` with the
+wait, the last present and `Renderer::displayHealth()` (failures, device / swap chain / CRT state).
+
 ## 6. Mapping to other platforms
 
 | Platform | Display-locked tick + deadline | Present for a given refresh | Low-latency path |

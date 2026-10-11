@@ -190,6 +190,35 @@ void rnf_build_ahead_update(rnf_build_ahead* b, double present_delay);
 int rnf_build_ahead_active(const rnf_build_ahead* b);
 int rnf_build_ahead_p90(const rnf_build_ahead* b, double* out); /* 0 until a quarter window was seen */
 
+/* Display watchdog (docs/FRAME_PACING.md "Display watchdog"): emulation and audio run on whatever
+ * the display does, so a stuck display path (a GPU command buffer error, a swapchain / device lost,
+ * a display link that stopped calling back, a stale CRT picture) would freeze the picture while the
+ * game plays on. The frontend reports every newly published picture (emulated) and every new
+ * picture confirmed on screen (presented: its GPU work completed without error and it was shown).
+ * While the viewport is visible, check() asks for a recovery once a published picture has waited
+ * RNF_DISPLAY_WATCHDOG_STALL seconds with emulation still advancing: RECOVER (rebuild the renderer's
+ * resources, plain picture for a frame); RESTART when the next stall period still shows nothing
+ * (recreate the display link / swapchain / device); then RNF_DISPLAY_WATCHDOG_BACKOFF seconds before
+ * the cycle repeats. Emulation that stops (pause, the menu, a long seek) never triggers it; a gap
+ * longer than the stall period restarts the wait at the next picture. reset(): the viewport was
+ * hidden / replaced (nothing is expected on screen until it is shown again). */
+#define RNF_DISPLAY_WATCHDOG_STALL 0.25
+#define RNF_DISPLAY_WATCHDOG_BACKOFF 2.0
+typedef enum rnf_watchdog_action {
+  RNF_WATCHDOG_NONE = 0, RNF_WATCHDOG_RECOVER = 1, RNF_WATCHDOG_RESTART = 2
+} rnf_watchdog_action;
+typedef struct rnf_display_watchdog rnf_display_watchdog;
+rnf_display_watchdog* rnf_display_watchdog_new(void);
+rnf_display_watchdog* rnf_display_watchdog_clone(const rnf_display_watchdog* w);
+void rnf_display_watchdog_free(rnf_display_watchdog* w);
+void rnf_display_watchdog_emulated(rnf_display_watchdog* w, double now);
+void rnf_display_watchdog_presented(rnf_display_watchdog* w, double now);
+void rnf_display_watchdog_reset(rnf_display_watchdog* w);
+rnf_watchdog_action rnf_display_watchdog_check(rnf_display_watchdog* w, double now);
+/* Seconds the oldest unshown picture has waited (0: none waiting). */
+double rnf_display_watchdog_waiting(const rnf_display_watchdog* w, double now);
+int rnf_display_watchdog_recoveries(const rnf_display_watchdog* w); /* RECOVER + RESTART actions so far */
+
 /* AudioRateControl: dynamic rate control keeping the audio buffer level (|ratio-base| <= 0.5 %). */
 #define RNF_DRC_MAX_DEVIATION 0.005
 #define RNF_DRC_GAIN 0.005
@@ -1176,6 +1205,40 @@ typedef struct rnf_countdown_visual {
 rnf_countdown_visual rnf_practice_countdown_visual(int count, double fraction);
 /* Index (0 = newest) into a history of count frames for animation progress back. */
 int rnf_practice_history_index(double back, int count);
+
+/* Resume countdown (docs/design/UI_REDESIGN.md, "Resume countdown"): resuming play from a pause (the
+ * pause hotkey / Space, the seek bar's cancel tap, the menu's Resume / closing it, the pill) first
+ * shows 3, 2, 1 over the paused picture (RNF_PRACTICE_COUNTDOWN_SECONDS, one number per second, the
+ * practice countdown's look: rnf_practice_countdown_visual), then plays. The frontend keeps the game
+ * unpaused meanwhile but emulates nothing (the game input is sampled and dropped every tick, audio
+ * stays muted); a pause (hotkey, menu, dialog, frame step) or the cancel tap aborts it back to paused
+ * (rnf_resume_countdown_cancel). Setting "Resume Countdown" (default on), independent of the practice
+ * countdown (rnf_practice_loop_set_countdown). Only for live play: RECORD, or PRACTICE while its loop
+ * is playing (a pending return / its own countdown is never stacked with this one); never REPLAY. */
+typedef struct rnf_resume_countdown rnf_resume_countdown;
+typedef struct rnf_resume_countdown_state {
+  int count;       /* 3, 2, 1 while counting; 0 otherwise */
+  double fraction; /* 0...1 within that number's second (rnf_practice_countdown_visual) */
+  int done;        /* 1 on the tick it ends: play from this tick on (reported once) */
+} rnf_resume_countdown_state;
+rnf_resume_countdown* rnf_resume_countdown_new(void);
+rnf_resume_countdown* rnf_resume_countdown_clone(const rnf_resume_countdown* c);
+void rnf_resume_countdown_free(rnf_resume_countdown* c);
+/* The setting (default on). Off ends a countdown in progress (play at once). */
+void rnf_resume_countdown_set_enabled(rnf_resume_countdown* c, int on);
+int rnf_resume_countdown_enabled(const rnf_resume_countdown* c);
+/* Whether resuming in this state counts down: enabled, and mode RECORD, or PRACTICE with the
+ * practice loop's phase PLAYING. Pure (c may be NULL = enabled). */
+int rnf_resume_countdown_wanted(const rnf_resume_countdown* c, rn_mode mode, rnf_practice_phase practice_phase);
+/* A resume from pause at `now` (seconds): starts (or restarts) the countdown when wanted (returns 1);
+ * 0 = play at once. */
+int rnf_resume_countdown_start(rnf_resume_countdown* c, double now, rn_mode mode, rnf_practice_phase practice_phase);
+/* Every unpaused tick while active. Inactive: {0, 0, 0}. */
+rnf_resume_countdown_state rnf_resume_countdown_tick(rnf_resume_countdown* c, double now);
+/* A modal UI is up while counting: it waits at its start (restarted from `now`, nothing shown yet). */
+void rnf_resume_countdown_hold(rnf_resume_countdown* c, double now);
+void rnf_resume_countdown_cancel(rnf_resume_countdown* c); /* back to paused (the frontend pauses) */
+int rnf_resume_countdown_active(const rnf_resume_countdown* c);
 
 /* Ring of the most recent 256x240 BGRA frames (allocated on first append). */
 typedef struct rnf_frame_history rnf_frame_history;
