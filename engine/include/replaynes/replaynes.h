@@ -300,6 +300,21 @@ rn_status rn_take_activate(rn_session* s, uint64_t take_id); /* keeps cursor if 
 /* "Back to Previous Take": returns to the take active before the last branch/switch, at that frame. */
 rn_status rn_undo_take_switch(rn_session* s);
 size_t rn_undo_depth(const rn_session* s);
+/* Retry bursts (docs/design/VTR_UX.md): an abandoned short attempt is dropped instead of being
+ * kept as another take. Both are timeline edits of the session (no new file format: the dropped
+ * frames simply are not in the next full save; until then a crash may bring them back as an
+ * extra take, nothing else).
+ * rn_take_discard: removes a take that is not active, has no take branching from it and has no
+ *   bookmark / A/B slot on it (RN_ERR_INVALID_ARG otherwise; RN_ERR_NOT_FOUND), with its
+ *   checkpoints and "Back to Previous Take" entries.
+ * rn_take_truncate: cuts the active take at the cursor when every frame after it belongs to the
+ *   active take's own segment (its branch frame < rn_frame() < length) and no take / bookmark /
+ *   A/B slot hangs off it (RN_ERR_INVALID_ARG otherwise): playing on from the cursor then continues
+ *   the take instead of branching. The take gets a new id (rn_active_take); its earlier frames,
+ *   the cursor and the machine state are unchanged. RN_OK without a change at the take end;
+ *   RN_ERR_WRONG_MODE in PRACTICE. */
+rn_status rn_take_discard(rn_session* s, uint64_t take_id);
+rn_status rn_take_truncate(rn_session* s);
 
 /* ------------------------------------------------------------------ input pipeline */
 typedef struct rn_input rn_input;
@@ -388,7 +403,7 @@ typedef enum rn_flash_level {
   RN_FLASH_OFF = 0,      /* output == input */
   RN_FLASH_LOW = 1,      /* "Low": WCAG thresholds as written, <= 3 flashes/s on >= 25% of the screen */
   RN_FLASH_STANDARD = 2, /* "Standard" (recommended default): earlier detection, <= 2 flashes/s, >= 20% */
-  RN_FLASH_HIGH = 3      /* "High": <= 1 flash/s, >= 15% of the screen, smaller residual flicker */
+  RN_FLASH_HIGH = 3      /* "High": <= 2 flashes/s, >= 15% of the screen, smaller changes, smaller residual flicker */
 } rn_flash_level;
 
 typedef struct rn_flash_info {
@@ -405,6 +420,15 @@ rn_status rn_flash_filter_set_level(rn_flash_filter* f, rn_flash_level level); /
 rn_flash_level rn_flash_filter_get_level(const rn_flash_filter* f);
 /* in/out: 256x240 BGRA8 like rn_video (in == out allowed). info may be NULL. */
 rn_status rn_flash_filter_process(rn_flash_filter* f, const uint32_t* in, uint32_t* out, rn_flash_info* info);
+/* Same, also producing the PPU codes of the shown picture for a CRT signal path (RF / composite):
+ * codes_in = rn_video_indices(...).codes of `in`, codes_out = 256x240 codes (codes_in == codes_out
+ * allowed). Blocks passed through keep their codes; a reduced block is an ordered dither of the new
+ * codes and the codes shown before whose mean light matches the reduced RGB picture, so the CRT keeps
+ * its signal path while flashes are reduced. *codes_ok = 0 when codes_out cannot describe this frame
+ * (a reduced block whose previous codes are unknown: a frame without codes came in between); the
+ * frontend then uses the RGB picture for this frame. codes_ok may be NULL. */
+rn_status rn_flash_filter_process_codes(rn_flash_filter* f, const uint32_t* in, uint32_t* out, const uint16_t* codes_in,
+                                        uint16_t* codes_out, rn_flash_info* info, int* codes_ok);
 
 #ifdef __cplusplus
 }

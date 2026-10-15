@@ -396,6 +396,12 @@ rn_status rn_undo_take_switch(rn_session* s) {
   return guard([&] { return s ? ret(s->s->undoTakeSwitch()) : invalid("null session"); });
 }
 size_t rn_undo_depth(const rn_session* s) { return s ? s->s->undoDepth() : 0; }
+rn_status rn_take_discard(rn_session* s, uint64_t id) {
+  return guard([&] { return s ? ret(s->s->discardTake(id)) : invalid("null session"); });
+}
+rn_status rn_take_truncate(rn_session* s) {
+  return guard([&] { return s ? ret(s->s->truncateTake()) : invalid("null session"); });
+}
 
 // ------------------------------------------------------------------ input
 rn_input* rn_input_new(void) {
@@ -523,16 +529,27 @@ rn_status rn_flash_filter_set_level(rn_flash_filter* f, rn_flash_level level) {
 rn_flash_level rn_flash_filter_get_level(const rn_flash_filter* f) {
   return f ? rn_flash_level(int(f->f.level())) : RN_FLASH_OFF;
 }
+static void fillFlashInfo(const rn::FlashFrameInfo& r, rn_flash_info* info) {
+  if (!info) return;
+  info->altered = r.altered ? 1 : 0;
+  info->altered_blocks = uint32_t(r.alteredBlocks);
+  info->event_area_permille = uint32_t(r.eventAreaPermille);
+  info->large_area = r.largeArea ? 1 : 0;
+}
 rn_status rn_flash_filter_process(rn_flash_filter* f, const uint32_t* in, uint32_t* out, rn_flash_info* info) {
   return guard([&] {
     if (!f || !in || !out) return invalid("null argument");
-    rn::FlashFrameInfo r = f->f.process(in, out);
-    if (info) {
-      info->altered = r.altered ? 1 : 0;
-      info->altered_blocks = uint32_t(r.alteredBlocks);
-      info->event_area_permille = uint32_t(r.eventAreaPermille);
-      info->large_area = r.largeArea ? 1 : 0;
-    }
+    fillFlashInfo(f->f.process(in, out), info);
+    return RN_OK;
+  });
+}
+rn_status rn_flash_filter_process_codes(rn_flash_filter* f, const uint32_t* in, uint32_t* out, const uint16_t* codes_in,
+                                        uint16_t* codes_out, rn_flash_info* info, int* codes_ok) {
+  return guard([&] {
+    if (!f || !in || !out || !codes_in || !codes_out) return invalid("null argument");
+    rn::FlashFrameInfo r = f->f.process(in, out, codes_in, codes_out);
+    fillFlashInfo(r, info);
+    if (codes_ok) *codes_ok = r.codesOk ? 1 : 0;
     return RN_OK;
   });
 }
