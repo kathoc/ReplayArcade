@@ -185,7 +185,7 @@ struct LatencyText: View {
         let s = model.stats
         VStack(alignment: .leading, spacing: 2) {
             Text(verbatim: s.pacing.isEmpty ? "—" : s.pacing)
-            Text(verbatim: String(format: "emu %.1f fps · shown %.1f fps · lead %.1f ms", s.emulatedFPS, s.presentedFPS, s.inputLeadMs))
+            Text(verbatim: String(format: "emu %.1f fps · shown %.1f fps (own %.1f) · lead %.1f ms", s.emulatedFPS, s.onScreenFPS, s.presentedFPS, s.inputLeadMs))
             Text(verbatim: String(format: "sample→screen %.1f ms · hitches %llu · dropped %llu", s.sampleToPresentMs, s.presentHitches, s.droppedFrames))
             Text(verbatim: String(format: "audio %.1f ms · underruns %llu · ratio %.4f", s.audioFillMs, s.audioUnderruns, s.audioRatio))
         }

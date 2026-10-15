@@ -285,6 +285,7 @@ final class DisplayMonitor {
     private var threadStuckSince: Double?
     private var pictureStuckSince: Double?
     private var lastStats = 0.0
+    private var statsConfirmed: UInt64 = 0, statsRepeats: UInt64 = 0
     private(set) var stalls = 0
     /// Longest time a published picture waited to be confirmed while playing (seconds).
     private(set) var longestWait = 0.0
@@ -346,9 +347,14 @@ final class DisplayMonitor {
         }
         let st = (Self.statsEvery > 0 || Self.probe) ? emu.latency.snapshot(audio: nil) : nil
         if let st, Self.statsEvery > 0, playing, now - lastStats >= Self.statsEvery {
-            lastStats = now
-            DisplayLog.write(String(format: "display stats: %@, emu %.1f fps, shown %.1f fps, dropped %llu, GPU %.1f ms (max %.1f), %@, watchdog %llu, GPU errors %d, layer %@",
-                                    st.pacing, st.emulatedFPS, st.presentedFPS, st.droppedFrames, st.displayGPUMs, st.displayGPUMaxMs,
+            let dt = max(0.001, now - lastStats)
+            let onScreen = Double(h.confirmedSequence &- statsConfirmed) / dt
+            let repeats = Double(st.repeatPresents &- statsRepeats) / dt
+            lastStats = now; statsConfirmed = h.confirmedSequence; statsRepeats = st.repeatPresents
+            // shown: new pictures on screen (own present or the repeat that showed a dropped one);
+            // own: shown by their own present; confirmed: pictures the display watchdog saw on screen.
+            DisplayLog.write(String(format: "display stats: %@, emu %.1f fps, shown %.1f fps (own %.1f), confirmed %.1f/s, repeats %.1f/s, dropped %llu, GPU %.1f ms (max %.1f), %@, watchdog %llu, GPU errors %d, layer %@",
+                                    st.pacing, st.emulatedFPS, st.onScreenFPS, st.presentedFPS, onScreen, repeats, st.droppedFrames, st.displayGPUMs, st.displayGPUMaxMs,
                                     st.crtInfo.isEmpty ? "plain" : "CRT " + st.crtInfo, st.watchdogActions, st.gpuErrors, st.layerPixels))
         }
         if let st, Self.probe, let onProbe {

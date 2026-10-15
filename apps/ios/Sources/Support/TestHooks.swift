@@ -267,6 +267,7 @@ final class PacingProbe {
             "refreshHz": s.refreshHz,
             "emulatedFPS": s.emulatedFPS,
             "presentedFPS": s.presentedFPS,
+            "onScreenFPS": s.onScreenFPS,
             "presents": s.presentCount - a.presentCount,
             "presentHitches": s.presentHitches - a.presentHitches,
             "offCadence": s.offCadence - a.offCadence,
