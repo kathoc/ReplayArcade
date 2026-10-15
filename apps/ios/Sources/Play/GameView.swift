@@ -99,12 +99,18 @@ final class GameLayerView: UIView {
         t.visible = sceneVisible
         displayTarget = t
         emu.setDisplayTarget(t)
+        monitor.start(emu: emu, renderer: renderer, visible: { [weak self] in self?.sceneVisible ?? false })
     }
 
     func stopRendering() {
         if let t = displayTarget { emu?.clearDisplayTarget(t) }
         displayTarget = nil
+        monitor.stop()
     }
+
+    private let monitor = DisplayMonitor()
+    /// -displayProbe: the monitor's counters (main thread, 10 Hz).
+    var onDisplayProbe: ((String) -> Void)? { get { monitor.onProbe } set { monitor.onProbe = newValue } }
 }
 
 /// Game view + touch controls in one UIKit container that lays both out from its own safe area:
@@ -146,6 +152,16 @@ final class PlaySurfaceView: UIView {
             p.isUserInteractionEnabled = false
             addSubview(p)
             probe = p
+        }
+        if DisplayMonitor.probe {
+            // DisplayRecoveryUITests: the display monitor's counters as an accessibility value.
+            let p = UILabel(frame: CGRect(x: 0, y: 0, width: 4, height: 4))
+            p.isAccessibilityElement = true
+            p.accessibilityIdentifier = "displayProbe"
+            p.alpha = 0.02
+            p.isUserInteractionEnabled = false
+            addSubview(p)
+            game.onDisplayProbe = { [weak p] v in p?.accessibilityValue = v; p?.accessibilityLabel = v }
         }
     }
 
@@ -251,5 +267,94 @@ struct PlaySurface: UIViewRepresentable {
         v.game.stopRendering()
         v.controls.releaseAll()
         v.extras.releaseAll()
+    }
+}
+
+/// Main-thread check of the display path, independent of the emulation thread (whose display
+/// watchdog cannot act while that thread itself is stuck): logs (DisplayLog) an emulation thread
+/// that has not moved for a second and pictures that stop being confirmed on screen while the game
+/// plays, and when either ends. `-displayStats <s>` also logs the display numbers every s seconds;
+/// `-displayProbe YES` publishes the counters on an accessibility element (DisplayRecoveryUITests).
+final class DisplayMonitor {
+    private var timer: Timer?
+    private weak var emu: EmulationController?
+    private weak var renderer: GameRenderer?
+    private var visible: () -> Bool = { false }
+    private var lastSeq: UInt64 = 0, seqAt = 0.0, playingSince = 0.0
+    private var lastConfirmed: UInt64 = 0, confirmedAt = 0.0
+    private var threadStuckSince: Double?
+    private var pictureStuckSince: Double?
+    private var lastStats = 0.0
+    private(set) var stalls = 0
+    /// Longest time a published picture waited to be confirmed while playing (seconds).
+    private(set) var longestWait = 0.0
+    var onProbe: ((String) -> Void)?
+    static let threshold = 1.0
+    static let statsEvery = UserDefaults.standard.double(forKey: "displayStats")
+    static let probe = UserDefaults.standard.bool(forKey: "displayProbe")
+
+    func start(emu: EmulationController, renderer: GameRenderer, visible: @escaping () -> Bool) {
+        stop()
+        self.emu = emu
+        self.renderer = renderer
+        self.visible = visible
+        let now = CACurrentMediaTime()
+        seqAt = now; confirmedAt = now; playingSince = now
+        let t = Timer(timeInterval: Self.probe ? 0.1 : 0.5, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    func stop() { timer?.invalidate(); timer = nil }
+
+    private func tick() {
+        guard let emu, let renderer else { return }
+        let now = CACurrentMediaTime()
+        let seq = emu.frames.sequence
+        if seq != lastSeq {
+            if now - seqAt > 0.3 { playingSince = now }   // play (re)started
+            lastSeq = seq; seqAt = now
+        }
+        let h = renderer.health.snapshot
+        if h.confirmedSequence != lastConfirmed { lastConfirmed = h.confirmedSequence; confirmedAt = now }
+        let shown = visible()
+        let (at, phase) = emu.probe.snapshot
+        if shown && now - at > Self.threshold {
+            if threadStuckSince == nil {
+                threadStuckSince = at
+                DisplayLog.write(String(format: "display monitor: emulation thread has not moved for %.1f s (in \"%@\"); GPU errors %d, last confirmed seq %llu of %llu",
+                                        now - at, phase, h.gpuErrors, h.confirmedSequence, seq))
+            }
+        } else if let since = threadStuckSince {
+            threadStuckSince = nil
+            DisplayLog.write(String(format: "display monitor: emulation thread running again after %.1f s", now - since))
+        }
+        let playing = now - seqAt < 0.3
+        // Waiting since the later of the last confirmation and the start of play.
+        let waited = playing && shown ? now - max(confirmedAt, playingSince) : 0
+        longestWait = max(longestWait, waited)
+        if waited > Self.threshold {
+            if pictureStuckSince == nil {
+                pictureStuckSince = now - waited
+                stalls += 1
+                DisplayLog.write(String(format: "display monitor: no new picture confirmed on screen for %.1f s while playing (seq %llu, confirmed %llu, frame %llu; GPU errors %d, emulation thread in \"%@\")",
+                                        waited, seq, h.confirmedSequence, h.confirmedFrame, h.gpuErrors, phase))
+            }
+        } else if let since = pictureStuckSince {
+            pictureStuckSince = nil
+            DisplayLog.write(String(format: "display monitor: pictures on screen again after %.1f s", now - since))
+        }
+        let st = (Self.statsEvery > 0 || Self.probe) ? emu.latency.snapshot(audio: nil) : nil
+        if let st, Self.statsEvery > 0, playing, now - lastStats >= Self.statsEvery {
+            lastStats = now
+            DisplayLog.write(String(format: "display stats: %@, emu %.1f fps, shown %.1f fps, dropped %llu, GPU %.1f ms (max %.1f), %@, watchdog %llu, GPU errors %d, layer %@",
+                                    st.pacing, st.emulatedFPS, st.presentedFPS, st.droppedFrames, st.displayGPUMs, st.displayGPUMaxMs,
+                                    st.crtInfo.isEmpty ? "plain" : "CRT " + st.crtInfo, st.watchdogActions, st.gpuErrors, st.layerPixels))
+        }
+        if let st, Self.probe, let onProbe {
+            onProbe(String(format: "seq=%llu confirmed=%llu confirmedAgo=%.2f playing=%d stalls=%d longestWait=%.2f watchdog=%llu gpuErrors=%d crt=%@",
+                           seq, h.confirmedSequence, now - confirmedAt, playing ? 1 : 0, stalls, longestWait, st.watchdogActions, h.gpuErrors,
+                           st.crtInfo.isEmpty ? "off" : "on"))
+        }
     }
 }

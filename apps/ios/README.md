@@ -192,11 +192,22 @@ Share Extension (Select All › Share › ReplayNES › Add) and checks that eve
 first (`TEST_RUNNER_SHARE_WHILE_PLAYING=1` / `TEST_RUNNER_SHARE_COLD=1` for the other states).
 The test also asserts that the share sheet lists exactly one ReplayNES entry.
 
+Display recovery (scheme `ReplayNESTouchUI`, `DisplayRecoveryUITests`): the test cartridge with the
+CRT model on and one injected display failure per test (`-displayFault crtStale | noPresent | gpuHang
+| linkStall | linkRestart | adaptiveFlip`, `-crtInjectGPUError 1`, background / foreground, rotations);
+the pictures confirmed on screen must keep coming (docs/FRAME_PACING.md "Display watchdog").
+`GameView.swift`'s `DisplayMonitor` (main thread) logs an emulation thread that stopped and
+pictures not confirmed for a second while playing. Every display failure / recovery line also goes
+to `Library/Caches/display-log.txt`; read it from the iPhone with
+`xcrun devicectl device copy from --device <udid> --domain-type appDataContainer --domain-identifier <bundle id> --source Library/Caches/display-log.txt --destination display-log.txt`.
+
 Launch arguments for checks (`Sources/Support/TestHooks.swift`): `-autoplayTestROM YES`,
 `-openMenu <page>`, `-pauseAfter <s>`, `-resumeAfter <s>`, `-setResumeCountdown YES|NO`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
 `-orientationLock 0|1|2`,
 `-debugUnlockAll NO`, `-touchHideWithPad NO`, `-showLatency YES`, `-pacingProbe <s>` (writes
-`Library/Caches/pacing.json` in the app container).
+`Library/Caches/pacing.json` in the app container), `-displayFault <list>`, `-displayStress <s>`
+(+ `-displayStressSteps <n>`: scale, CRT lines, CRT off / on, menu, pause, rotation), `-displayStats <s>`,
+`-displayProbe YES`, `-setDefaults key:value,key:value` (stores settings, e.g. `integerScale:NO,crtLines:240`).
 
 Simulator caveats (functional checks only - measure on the iPhone):
 

@@ -9,10 +9,16 @@
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
 //   -holdTouch <button>       press an on-screen button at 1 s (e.g. r = pause) to check touch input
 //   -setResumeCountdown NO    store Settings › Controls › Controls Details › Resume Countdown (YES / NO) before the start
+//   -setDefaults k:v,k:v      store settings in the app's domain before the start (YES / NO, numbers, text)
 //   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")
 //   -logTouchEvents YES       log every UITouch the on-screen gamepad receives
 //   -orientation landscape    rotate the window (screenshots of the landscape layout)
 //   -rotateCycle <s>          rotate portrait → landscape right → portrait → landscape left ... every s seconds
+//   -displayStress <s>        every s seconds one display change while playing (scale, CRT lines, CRT off / on,
+//                             the menu, pause / resume, rotation), each logged to Library/Caches/display-log.txt;
+//                             -displayStressSteps <n>: stop after n steps and restore the settings
+//   -displayFault <list>      display path fault injection (DisplayFaults: crtStale, noPresent, gpuHang, linkStall,
+//                             linkRestart, skipPresents, adaptiveFlip); -displayStats <s>; -displayProbe YES
 //   -resetLibraryForTests YES empty Documents/ROM and Documents/Projects and forget the temporary session
 //   -importTestBatch YES      at 1 s, open 7 files at once like a multi-item Share › ReplayNES: 5 distinct
 //                             test ROMs (one name twice, from two folders), a duplicate, a non-ROM
@@ -31,6 +37,16 @@ enum TestHooks {
         // the Controls page's switch could not change it).
         if let on = UserDefaults.standard.object(forKey: "setResumeCountdown") as? String {
             UserDefaults.standard.set(on == "YES" || on == "1", forKey: "resumeCountdown")
+        }
+        // -setDefaults key:value,key:value - stored in the app's domain (YES / NO, integers, numbers, text).
+        if let list = UserDefaults.standard.string(forKey: "setDefaults") {
+            for pair in list.split(separator: ",") {
+                let kv = pair.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard kv.count == 2, !kv[0].isEmpty else { continue }
+                let (k, v) = (kv[0], kv[1])
+                let value: Any = v == "YES" ? true : v == "NO" ? false : Int(v).map { $0 as Any } ?? Double(v).map { $0 as Any } ?? v
+                UserDefaults.standard.set(value, forKey: k)
+            }
         }
         guard UserDefaults.standard.bool(forKey: "resetLibraryForTests") else { return }
         let docs = LibraryPaths.documents
@@ -82,6 +98,43 @@ enum TestHooks {
         if d.bool(forKey: "sessionCycle") { SessionCycle.run(m) }
         let cycle = d.double(forKey: "rotateCycle")
         if cycle > 0 { rotateCycle(every: cycle, step: 0) }
+        let stress = d.double(forKey: "displayStress")
+        if stress > 0 {
+            let crt = CRTSettingsModel.shared
+            let saved = (m.integerScale, crt.reducedLines, crt.enabled)
+            let steps = d.integer(forKey: "displayStressSteps")
+            displayStress(m, every: stress, step: 0, steps: steps > 0 ? steps : .max) {
+                // The settings as they were (the stress run must not leave them changed).
+                m.integerScale = saved.0; crt.reducedLines = saved.1; crt.enabled = saved.2
+                DisplayLog.write("stress done: settings restored")
+            }
+        }
+    }
+
+    /// -displayStress <s>: display changes back to back (DisplayMonitor logs any stall).
+    private static func displayStress(_ m: AppModel, every s: Double, step: Int, steps: Int, done: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + s) {
+            if step >= steps { done(); return }
+            let crt = CRTSettingsModel.shared
+            let actions: [(String, () -> Void)] = [
+                ("integer scale", { m.integerScale.toggle() }),
+                ("CRT lines", { crt.reducedLines.toggle() }),
+                ("CRT off", { crt.enabled = false }),
+                ("CRT on", { crt.enabled = true }),
+                ("menu open", { m.quickMenu.open(at: .display) }),
+                ("menu close", { m.quickMenu.close(resume: true) }),
+                ("integer scale", { m.integerScale.toggle() }),
+                ("pause", { m.setPaused(true) }),
+                ("resume", { m.setPaused(false) }),
+                ("landscape", { rotate(to: .landscapeRight) }),
+                ("CRT lines", { crt.reducedLines.toggle() }),
+                ("portrait", { rotate(to: .portrait) }),
+            ]
+            let (name, f) = actions[step % actions.count]
+            DisplayLog.write("stress step \(step + 1): \(name)")
+            f()
+            displayStress(m, every: s, step: step + 1, steps: steps, done: done)
+        }
     }
 
     /// Files outside the library as another app would hand them over.
