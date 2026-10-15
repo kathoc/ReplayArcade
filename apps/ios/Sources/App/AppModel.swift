@@ -224,6 +224,7 @@ final class AppModel: ObservableObject {
         }
         emu.onError = { [weak self] title, msg in self?.showError(title, msg) }
         emu.onNotice = { [weak self] text in self?.flash(text) }
+        emu.onCoach = { [weak self] tip, shown in self?.showCoach(tip, shown: shown) }
         input.onConfigChanged = { [weak self] c in self?.inputConfig = c }
         input.onControllersChanged = { [weak self] c in self?.controllers = c; self?.updateUIMode() }
         input.onNav = { [weak self] n in self?.handleNav(n) }
@@ -282,6 +283,7 @@ final class AppModel: ObservableObject {
         emu.audio.volume = Float(volume)
         audioSession.onRestart = { [weak self] in self?.emu.audio.start() }
         pushPrefs()
+        configureCoach()
         entitlements.refresh()
         entitlementsChanged(entitlements.state)
         emu.start()
@@ -331,6 +333,32 @@ final class AppModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: w)
     }
 
+    /// First-run coach lines (docs/design/VTR_UX.md): each shown once ever; off for scripted runs
+    /// (TestHooks -autoplayTestROM / -autoplayROM).
+    private func configureCoach() {
+        let d = UserDefaults.standard
+        let off = d.bool(forKey: "autoplayTestROM") || d.string(forKey: "autoplayROM") != nil
+        let shown: UInt32? = off ? nil : UInt32(truncatingIfNeeded: UserDefaults.standard.integer(forKey: "coachShown"))
+        emu.perform { e in e.setCoach(shown: shown) }
+    }
+
+    private func showCoach(_ tip: rnf_coach_tip, shown: UInt32) {
+        UserDefaults.standard.set(Int(shown), forKey: "coachShown")
+        flash(CoachTips.text(tip, rewindControl: controlName(for: "hk.rewind")), duration: 5)
+    }
+
+    /// The name of the control bound to `action`: pad 1's button as printed on the connected
+    /// controller, else the touch button ("L2"); nil when unbound.
+    func controlName(for action: String) -> String? {
+        let config = inputConfig
+        if let c = input.controllerMonitor.controllers.min(by: { $0.slot < $1.slot }),
+           let id = InputCatalog.boundInput(config, action: action, pad: true), let colon = id.firstIndex(of: ":") {
+            return c.label(String(id[id.index(after: colon)...]))
+        }
+        guard let id = config.bindings.first(where: { $0.action == action && $0.input.hasPrefix("touch:") })?.input else { return nil }
+        return String(id.dropFirst("touch:".count)).uppercased()
+    }
+
     func showError(_ title: String, _ message: String) {
         alert = AppAlert(title: title, message: message, actions: [AppAlert.Action(title: String(localized: "OK"), role: .cancel)])
     }
@@ -371,7 +399,8 @@ final class AppModel: ObservableObject {
     func softReset() { emu.perform { e in e.requestEvent(UInt8(RN_EV_SOFT_RESET)) } }
     func powerCycle() { emu.perform { e in e.requestEvent(UInt8(RN_EV_POWER_CYCLE)) } }
     func rerecordHere() { emu.perform { e in e.rerecordHere() } }
-    func undoTake() { emu.perform { e in e.undoTake() } }
+    /// "↶ Undo": back to before the last retry (10 s window; EmulationController.undoRetry).
+    func undoRetry() { emu.perform { e in e.undoRetry() } }
     func addBookmark() { emu.perform { e in e.addBookmark(name: nil) } }
     func practiceSetA(_ slot: Int) { emu.perform { e in e.practiceSetA(slot) } }
     func practiceSetB(_ slot: Int) { emu.perform { e in e.practiceSetB(slot) } }
@@ -445,7 +474,11 @@ final class AppModel: ObservableObject {
                     continue
                 }
             }
-            if let id = b.inputID { rn_input_set_pressed(input.handle, id, 1) }
+            if let id = b.inputID {
+                rn_input_set_pressed(input.handle, id, 1)
+                // Playback: a game button plays from here (EmulationController samples the game input).
+                input.noteTakeoverPress()
+            }
         }
         for b in released {
             if touchRouted.remove(b) != nil {

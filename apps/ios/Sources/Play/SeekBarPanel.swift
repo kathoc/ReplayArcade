@@ -1,11 +1,12 @@
-// Paused: the seek bar (docs/design/UI_REDESIGN.md, "Seek bar while paused"), for touch. A large
-// labelled Resume (goes on in the current mode, said under it: recording / watching the replay /
-// practicing; through the resume countdown), the time, the track between the frame step buttons
-// (drag = scrub: paused, muted, replays the take, never records), then the selected A/B section's
-// tools (slot, Set A / Set B at the playhead - shared TimelineActions - and Practice). With a
-// controller connected a hint line names its buttons (cancel = Resume, L / R = Step), as on the
-// desktop. The controller's marker workflow (SeekMarkers, shared) keeps working: its markers are drawn.
-// Watching the recorded take is not here: Quick Menu › Retry › Watch Replay.
+// Paused: the seek bar (docs/design/UI_REDESIGN.md, "Seek bar while paused", amended by
+// docs/design/VTR_UX.md), for touch. A large Play (Continue at the end of the tape; through the
+// resume countdown, which says "Retrying from here" before the end of the tape), the status label
+// and the time, the ↶ Undo / ▶ Make Video chips when they apply, the track between the frame step
+// buttons (drag = scrub: paused, muted, never records; the part ahead of the cursor dimmed), then the
+// selected A/B section's tools (slot, Set A / Set B at the playhead - shared TimelineActions - and
+// Practice). With a controller connected a hint line names its buttons (cancel = Play, L / R = Step,
+// L2 / R2 = Rewind / Fast-forward), as on the desktop. The controller's marker workflow (SeekMarkers,
+// shared) keeps working: its markers are drawn. Playback (watching the tape): Quick Menu › Retry.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
@@ -21,7 +22,17 @@ struct SeekBarPanel: View {
             HStack(alignment: .center, spacing: 10) {
                 resumeButton(st)
                 Spacer(minLength: 4)
-                times(st)
+                VStack(alignment: .trailing, spacing: 4) {
+                    TapeStatusLabelIOS()
+                    times(st)
+                }
+            }
+            if st.canUndo || (st.endOfTape && !st.practicing) {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    if st.canUndo { UndoChipIOS() }
+                    if st.endOfTape && !st.practicing { MakeVideoChipIOS() }
+                }
             }
             if let pad = monitor.controllers.min(by: { $0.slot < $1.slot }) { padHints(pad) }
             HStack(spacing: 6) {
@@ -77,15 +88,21 @@ struct SeekBarPanel: View {
         .accessibilityIdentifier("seekBar")
     }
 
-    /// The primary action: back to the game, in the current mode (named under the title).
+    /// "Play" (at the end of the tape "Continue"): what it goes on with is said under the title.
+    static func playTitle(_ st: EmuStatus) -> String {
+        st.endOfTape && !st.practicing ? String(localized: "Continue (tape)") : String(localized: "Play")
+    }
+
+    /// The primary action: back to the game (what follows named under the title when not plain play).
     private func resumeButton(_ st: EmuStatus) -> some View {
         let mode = Self.resumeDetail(st)
+        let title = Self.playTitle(st)
         return Button { model.togglePause() } label: {
             HStack(spacing: 10) {
                 Image(systemName: "play.fill").font(.system(size: 18, weight: .bold))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(String(localized: "Resume")).font(.system(size: 16, weight: .bold)).lineLimit(1)
-                    Text(mode).font(.system(size: 10, weight: .medium)).opacity(0.65).lineLimit(1)
+                    Text(title).font(.system(size: 16, weight: .bold)).lineLimit(1)
+                    if let mode { Text(mode).font(.system(size: 10, weight: .medium)).opacity(0.65).lineLimit(1) }
                 }
             }
             .padding(.leading, 14).padding(.trailing, 18).frame(height: 46)
@@ -93,19 +110,17 @@ struct SeekBarPanel: View {
             .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
             .fixedSize()
         }
-        .accessibilityLabel(String(localized: "Resume"))
-        .accessibilityHint(mode)
+        .accessibilityLabel(title)
+        .accessibilityHint(mode ?? "")
         .accessibilityIdentifier("seekResume")
     }
 
-    /// What Resume goes on with.
-    static func resumeDetail(_ st: EmuStatus) -> String {
+    /// What Play goes on with (nil: plain play on the tape). docs/design/VTR_UX.md: never "record".
+    static func resumeDetail(_ st: EmuStatus) -> String? {
         if st.practicing { return L("Keep practicing") }
-        if st.recording { return L("Keep recording") }
-        if RecordToggle.shouldRestartOnPlay(recording: false, practicing: false, frame: st.frame, takeLength: st.takeLength) {
-            return L("Watch the replay from the start")
-        }
-        return L("Keep watching the replay")
+        if !st.recording && !st.endOfTape { return L("Keep watching the tape") }
+        if Tape.overwrites(mode: st.mode, frame: st.frame, length: st.takeLength) { return String(localized: "Retrying from here") }
+        return nil
     }
 
     private func times(_ st: EmuStatus) -> some View {
@@ -120,14 +135,17 @@ struct SeekBarPanel: View {
         .fixedSize()
     }
 
-    /// The controller's buttons on the bar (as the desktop's hint row): cancel = Resume, L R = Step.
+    /// The controller's buttons on the bar (as the desktop's hint row): cancel = Play, L R = Step,
+    /// L2 R2 = Rewind / Fast-forward.
     private func padHints(_ pad: ControllerInfo) -> some View {
         let south = UserDefaults.standard.bool(forKey: "southConfirm")
         let back = pad.label(String(cString: rnf_ui_cancel_element(south ? 1 : 0)))
         let ps = pad.family == .playStation
+        let rw = model.controlName(for: "hk.rewind") ?? "L2", ff = model.controlName(for: "hk.fast_forward") ?? "R2"
         return HStack(spacing: 14) {
-            hint([back], String(localized: "Resume"))
+            hint([back], Self.playTitle(clock.status))
             hint([ps ? "L1" : "L", ps ? "R1" : "R"], String(localized: "Step"))
+            hint([rw, ff], String(localized: "Rewind") + " / " + String(localized: "Fast-forward"))
             Spacer(minLength: 0)
         }
         .frame(height: 20)
@@ -175,7 +193,7 @@ struct SeekBarPanel: View {
     }
 }
 
-/// The take as a track: recorded length, A/B sections on this take, controller markers, playhead.
+/// The tape as a track: recorded length, A/B sections on this take, controller markers, playhead.
 /// Drag = scrub.
 struct TimelineTrack: View {
     @EnvironmentObject var model: AppModel
@@ -190,6 +208,9 @@ struct TimelineTrack: View {
             let x = { (f: UInt64) in CGFloat(Double(f) / len) * w }
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.14)).frame(height: 8)
+                // Played up to the cursor: bright; the recorded part ahead of it stays dimmed.
+                RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.32))
+                    .frame(width: CGFloat(max(0, min(1, cursor / len))) * w, height: 8)
                 if !status.practicing {
                     let ranges = TimelineEditing.visibleRanges(slots: model.practiceSlots, takes: model.takes,
                                                                activeTake: status.activeTake, takeLength: status.takeLength)
@@ -204,7 +225,8 @@ struct TimelineTrack: View {
                             .frame(width: 2, height: 22).offset(x: x(f) - 1)
                     }
                 }
-                RoundedRectangle(cornerRadius: 1.5).fill(Color(red: 1, green: 0.23, blue: 0.23))
+                // One tape: a neutral playhead (never the red of recording).
+                RoundedRectangle(cornerRadius: 1.5).fill(Color.white)
                     .frame(width: 3, height: 26)
                     .offset(x: CGFloat(cursor / len) * w - 1.5)
             }

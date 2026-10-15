@@ -352,7 +352,7 @@ final class TapAuditUITests: XCTestCase {
             tap("qmBack")
             waitFor(3, "back from \(tile)") { menuTitle == "Menu" }
         }
-        // Retry › Takes / Bookmarks: cards are tappable (the current take).
+        // Retry › Play from Here / Bookmarks / Playback / Start Over: tappable (no takes: VTR_UX.md).
         tap("qm.retry")
         for id in rowIDs() where id != "qm.retry" {
             let e = el(id)
@@ -430,17 +430,10 @@ final class TapAuditUITests: XCTestCase {
         tap(bm, "bookmark card")
         gone(menuPanel, "a bookmark jumps and closes the menu")
 
-        // Retry › Takes: the current take closes the menu.
+        // Retry › Start Over: its confirmation (Cancel).
         openMenuWithPill()
-        tap("qm.retry"); tap("qm.takes"); waitFor(3, "Takes") { menuTitle == "Takes" }
-        guard let take = rowIDs().first(where: { $0.hasPrefix("qm.take") }) else { return XCTFail("take card") }
-        tap(take)
-        gone(menuPanel, "a take card closes the menu")
-
-        // Retry › Restart Recording: its confirmation (Cancel).
-        openMenuWithPill()
-        tap("qm.retry"); tap("qm.restart", "Restart Recording")
-        XCTAssertTrue(alert.waitForExistence(timeout: 5), "Restart Recording asks first")
+        tap("qm.retry"); tap("qm.restart", "Start Over")
+        XCTAssertTrue(alert.waitForExistence(timeout: 5), "Start Over asks first")
         let cancel = alert.buttons["Cancel"]
         XCTAssertTrue(cancel.exists, "the confirmation's Cancel: \(alert.buttons.allElementsBoundByIndex.map(\.label))")
         cancel.tap()
@@ -466,8 +459,8 @@ final class TapAuditUITests: XCTestCase {
         let ids = rowIDs()
         guard let export = ids.first(where: { $0.lowercased().contains("export") }) else { return XCTFail("no export item: \(ids)") }
         tap(export)
-        XCTAssertTrue(app.navigationBars["Export MP4"].waitForExistence(timeout: 5), "Export sheet")
-        app.navigationBars["Export MP4"].buttons["Close"].tap()
-        gone(app.navigationBars["Export MP4"], "Close closes Export")
+        XCTAssertTrue(app.navigationBars["Make Video"].waitForExistence(timeout: 5), "Make Video sheet")
+        app.navigationBars["Make Video"].buttons["Close"].tap()
+        gone(app.navigationBars["Make Video"], "Close closes Make Video")
     }
 }

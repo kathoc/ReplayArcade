@@ -637,6 +637,10 @@ final class InputManager {
     /// confirm, up, X, Y), which still reach the game. Any thread.
     var takeoverSequence: UInt64 { eventLock.lock(); defer { eventLock.unlock() }; return takeoverSeq }
 
+    /// A press that reached the engine some other way (iOS touch controls: rn_input_set_pressed)
+    /// may take over Playback too.
+    func noteTakeoverPress() { eventLock.lock(); takeoverSeq &+= 1; eventLock.unlock() }
+
     private func setPressed(_ id: String, _ down: Bool, at: Double? = nil, takeover: Bool = true) {
         rn_input_set_pressed(handle, id, down ? 1 : 0)
         if down { eventLock.lock(); pressSeq &+= 1; if takeover { takeoverSeq &+= 1 }; eventLock.unlock() }

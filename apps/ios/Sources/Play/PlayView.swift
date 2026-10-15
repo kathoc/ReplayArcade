@@ -1,6 +1,8 @@
 // The play screen: the game + touch controls (PlaySurface, UIKit) under small SwiftUI overlays:
-// status badges and notices at the top of the picture, the practice pill, the latency meter and,
-// while paused, the seek bar (SeekBarPanel). The Quick Menu goes over everything.
+// notices (and the flash indicator) at the top of the picture, the latency meter; at the bottom of
+// the game area the tape's status label, the practice pill and the ↶ Undo chip while playing, the
+// read-only tape strip while Rewind / Fast-forward is held and, while paused, the seek bar
+// (SeekBarPanel). No REC / mode badge (docs/design/VTR_UX.md). The Quick Menu goes over everything.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
@@ -51,7 +53,6 @@ struct PlayView: View {
                     .accessibilityIdentifier("notice")
                     .transition(.opacity)
             }
-            if st.practicing { PracticePill() }
             if model.showLatency { LatencyText() }
         }
         .frame(width: max(200, picture.width - 16))
@@ -60,6 +61,32 @@ struct PlayView: View {
         .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.15), value: model.notice)
 
+        // Playing: the status label (non-default states only) and the practice pill at the bottom
+        // left, the Undo chip at the bottom right for 10 s after a retry. Rewind / fast-forward held
+        // during play: the tape strip instead (read-only).
+        if st.hasSession && !st.paused && !model.quickMenu.isOpen {
+            Group {
+                if st.rewinding || st.fastForward {
+                    TapeStripReadOnly()
+                        .frame(width: min(l.landscape ? max(picture.width, game.width - 16) : game.width - 16, 640))
+                } else {
+                    HStack(alignment: .bottom) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            TapeStatusLabelIOS()
+                            if st.practicing { PracticePill().allowsHitTesting(false) }
+                        }
+                        Spacer(minLength: 8)
+                        if st.canUndo { UndoChipIOS() }
+                    }
+                    .frame(width: game.width - 16)
+                }
+            }
+            .padding(.bottom, 8)
+            .frame(width: game.width, height: game.height, alignment: .bottom)
+            .offset(x: game.minX, y: game.minY)
+            .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
+            .transition(.opacity)
+        }
         // Paused: the seek bar over the bottom of the game area (its bottom edge 8 pt above the
         // area's; it grows upwards). The resume countdown is not paused: the bar goes for it.
         if st.hasSession && st.paused && !model.quickMenu.isOpen {
@@ -106,22 +133,15 @@ struct PlayView: View {
     }
 }
 
-/// REC / REPLAY / PRACTICE, slow, fast-forward, rewind, flash reduction.
+/// Display states only (flash reduction). The tape's state (Playback, Rewind, Slow, End of tape,
+/// Practice) is the bottom-left status label (TapeStatusLabelIOS); there is no REC badge.
 struct StatusBadgesIOS: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
         let st = model.status
         HStack(spacing: 6) {
-            if st.hasSession {
-                if st.practicing { badge(String(localized: "Practicing"), .orange) }
-                else if st.recording { badge("● REC", .red) }
-                else { badge("▶ REPLAY", .blue) }
-                if st.slow != .normal { badge(st.slow == .half ? "1/2" : "1/4", .purple) }
-                if st.rewinding { badge("◀◀", .white.opacity(0.4)) }
-                if st.fastForward { badge("▶▶", .white.opacity(0.4)) }
-                if st.flashActive && model.showFlashIndicator { badge("⚡︎", .yellow.opacity(0.7)) }
-            }
+            if st.hasSession && st.flashActive && model.showFlashIndicator { badge("⚡︎", .yellow.opacity(0.7)) }
         }
     }
 

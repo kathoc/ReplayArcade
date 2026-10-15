@@ -231,6 +231,16 @@
         }
       }
     },
+    "Details": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "詳細"
+          }
+        }
+      }
+    },
     "Export": {
       "localizations": {
         "ja": {
@@ -251,12 +261,12 @@
         }
       }
     },
-    "Export a video": {
+    "Make a video": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "動画を書き出す"
+            "value": "動画にする"
           }
         }
       }
@@ -306,7 +316,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "無料：遊ぶ、巻き戻し、早送り、練習、現在のセッションのリプレイ。このテストビルドでは何も販売していません。「アンロック」はこの端末で購入を擬似的に再現するだけです。"
+            "value": "無料：プレイ、巻き戻し、早送り、練習、現在のセッションのリプレイ。このテストビルドでは何も販売していません。「アンロック」はこの端末で購入を擬似的に再現するだけです。"
           }
         }
       }
@@ -431,16 +441,6 @@
         }
       }
     },
-    "Keep recording": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "録画を続ける"
-          }
-        }
-      }
-    },
     "Keep the previous session (ROM: %@) as a project in the Projects folder? If you don’t keep it, it is discarded.": {
       "localizations": {
         "ja": {
@@ -461,12 +461,12 @@
         }
       }
     },
-    "Keep watching the replay": {
+    "Keep watching the tape": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "見返しを続ける"
+            "value": "再生を続ける"
           }
         }
       }
@@ -596,7 +596,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "遊ぶ"
+            "value": "プレイ"
           }
         }
       }
@@ -606,7 +606,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "遊ぶ（新しい記録）"
+            "value": "プレイ（新しい記録）"
           }
         }
       }
@@ -871,16 +871,6 @@
         }
       }
     },
-    "The whole active take (%@) is exported.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "現在のテイク全体（%@）を書き出します。"
-          }
-        }
-      }
-    },
     "Touch Controller": {
       "localizations": {
         "ja": {
@@ -971,16 +961,6 @@
         }
       }
     },
-    "Watch the replay from the start": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最初から見返す"
-          }
-        }
-      }
-    },
     "What each unlock adds (purchases are stubbed in this build)": {
       "localizations": {
         "ja": {
@@ -996,7 +976,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "「記録」なしでも遊ぶ・巻き戻し・練習ができ、現在のセッションは別のゲームを始めるまで残ります。「記録」をアンロックすると記録をプロジェクトとして残せます。"
+            "value": "「記録」なしでもプレイ・巻き戻し・練習ができ、現在のセッションは別のゲームを始めるまで残ります。「記録」をアンロックすると記録をプロジェクトとして残せます。"
           }
         }
       }

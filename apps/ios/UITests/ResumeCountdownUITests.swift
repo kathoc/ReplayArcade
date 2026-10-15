@@ -71,14 +71,14 @@ final class ResumeCountdownUITests: XCTestCase {
 
     // MARK: tests
 
-    /// Resume is a labelled button that names what it goes on with; it counts down, then plays.
+    /// Play is a labelled button (no "record" wording: docs/design/VTR_UX.md); it counts down, then plays.
     func testResumeCountsDownThenPlays() throws {
         startPlay()
         pause()
         let resume = el("seekResume")
         XCTAssertTrue(resume.isHittable)
-        XCTAssertEqual(resume.label, "Resume")
-        XCTAssertTrue(app.staticTexts["Keep recording"].exists, "Resume says it keeps recording")
+        XCTAssertEqual(resume.label, "Continue", "paused at the end of the tape: Continue")
+        XCTAssertFalse(app.staticTexts["Keep recording"].exists, "Play never says recording")
         XCTAssertGreaterThanOrEqual(resume.frame.height, 44)
         for id in ["seekStepBack", "seekStepForward", "seekSetA", "seekSetB"] {
             XCTAssertFalse(el(id).label.isEmpty, "\(id) has a label")
