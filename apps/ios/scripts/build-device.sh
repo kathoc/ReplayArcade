@@ -71,7 +71,8 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 for dev in d.get("result", {}).get("devices", []):
     hw = dev.get("hardwareProperties", {})
-    if hw.get("platform") == "iOS" and hw.get("reality") == "physical" \
+    # Xcode 27 devicectl: no "reality" key for a real device (simulators say "simulated").
+    if hw.get("platform") == "iOS" and hw.get("reality", "physical") in ("physical", None) \
             and dev.get("connectionProperties", {}).get("pairingState") == "paired":
         print(hw.get("udid", "")); break
 PY

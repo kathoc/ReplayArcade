@@ -74,7 +74,7 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(g.dpad.midY, (clip.minY + 6 + g.system!.minY - 4) / 2, accuracy: 0.01)
         XCTAssertEqual(g.frame, CGRect(x: 0, y: 0, width: 390, height: 844))
         XCTAssertEqual(portrait.gameArea.width, 390)
-        XCTAssertLessThanOrEqual(portrait.gameArea.maxY + TouchLayout.subbarHeight, clip.minY + 0.01)
+        XCTAssertLessThanOrEqual(portrait.gameArea.maxY + TouchLayout.transportHeight + 2 * TouchLayout.transportMargin, clip.minY + 0.01)
     }
 
     /// Browser measurements at 844 x 390 (.bb-side); D-pad × 1.1.
@@ -94,7 +94,9 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(g.start.midX, 729.28125 + 85.421875 / 2, accuracy: 0.01)
         // ReplayNES: the picture sits between the columns, centred.
         XCTAssertEqual(landscape.gameArea.midX, 422, accuracy: 0.01)
-        XCTAssertEqual(landscape.gameArea.height, 390)
+        // Its height ends above the transport row (whose bottom is on the SELECT / START line).
+        XCTAssertEqual(landscape.gameArea.minY, 0)
+        XCTAssertEqual(landscape.gameArea.maxY, 390 - 8 - TouchLayout.transportHeight - TouchLayout.transportMargin, accuracy: 0.01)
     }
 
     func testSafeAreasMoveTheControlsIn() {
@@ -121,6 +123,16 @@ final class TouchLayoutTests: XCTestCase {
                 let pills = l.extras.filter { $0.style != .round }
                 var boxes: [(String, CGRect)] = [("dpad", l.pad.dpad), ("face", l.pad.face), ("select", l.select), ("start", l.start)]
                 boxes += pills.map { ("\($0.kind)", $0.frame) }
+                // Every pill's 44 pt touch area stays on screen and off the D-pad, A / B and SELECT / START.
+                for p in pills {
+                    XCTAssertGreaterThanOrEqual(p.hitFrame.width, 44 - 0.01, "\(p.kind) (\(name))")
+                    XCTAssertGreaterThanOrEqual(p.hitFrame.height, 44 - 0.01, "\(p.kind) (\(name))")
+                    XCTAssertTrue(screen.contains(p.hitFrame), "\(p.kind) touch area off screen (\(name))")
+                    for (n, r) in [("dpad", l.pad.dpad), ("select", l.select), ("start", l.start), ("a", Self.disc(l.pad.a, l.faceButton)), ("b", Self.disc(l.pad.b, l.faceButton))] {
+                        XCTAssertFalse(p.hitFrame.intersects(r), "\(p.kind) touch area overlaps \(n) (\(name))")
+                    }
+                    for q in pills where q.kind != p.kind { XCTAssertFalse(p.hitFrame.intersects(q.hitFrame), "\(p.kind) / \(q.kind) touch areas (\(name))") }
+                }
                 for (n, r) in boxes + rounds.map({ ("\($0.kind)", $0.frame) }) {
                     XCTAssertTrue(screen.contains(r), "\(n) \(r) off \(screen) (\(name))")
                 }
@@ -134,9 +146,10 @@ final class TouchLayoutTests: XCTestCase {
                     }
                 }
                 let kinds = l.extras.map(\.kind)
-                for b in [TouchButton.l2, .stepBack, .l, .r, .stepForward, .r2, .menu] {
+                for b in [TouchButton.l2, .stepBack, .stepForward, .r2, .menu] {
                     XCTAssertTrue(kinds.contains(.button(b)), "\(b) (\(name))")
                 }
+                XCTAssertEqual(l.extras.filter(\.isTransport).count, 4, name)
                 XCTAssertTrue(kinds.contains(.ways))
                 XCTAssertEqual(kinds.contains(.button(.turboA)), o.showAABB)
                 XCTAssertEqual(kinds.contains(.button(.turboB)), o.showAABB)
@@ -208,27 +221,61 @@ final class TouchLayoutTests: XCTestCase {
         }
     }
 
-    /// L2 / R2: larger icon pills (⏪ / ⏩); the frame step pills right inside them.
-    func testRewindFastForwardAndFrameStepZones() {
+    /// The transport row right under the picture: ⏪ ◀| |▶ ⏩ left to right, Rewind / Fast-forward
+    /// large, the frame steps half as wide, every button at least 44 pt, centred, clear of the
+    /// picture. No L / R.
+    func testTransportRowUnderThePicture() {
+        for o in [TouchLayout.Options(), Self.css, TouchLayout.Options(dpadSize: 210)] {
+            for (name, l) in Self.layouts(o) {
+                let row = l.extras.filter(\.isTransport)
+                XCTAssertEqual(row.map(\.kind), [.button(.l2), .button(.stepBack), .button(.stepForward), .button(.r2)], name)
+                XCTAssertEqual(row.map(\.style), [.icon("backward.fill"), .icon("backward.frame.fill"), .icon("forward.frame.fill"), .icon("forward.fill")])
+                let rw = row[0].frame, sb = row[1].frame, sf = row[2].frame, ff = row[3].frame
+                XCTAssertEqual(rw.size, ff.size, name)
+                XCTAssertEqual(sb.size, sf.size, name)
+                XCTAssertEqual(sb.width, rw.width / 2, accuracy: 0.01, "steps half as wide (\(name))")
+                XCTAssertGreaterThanOrEqual(sb.width, 44 - 0.01, name)
+                XCTAssertEqual(rw.height, TouchLayout.transportHeight)
+                for (a, b) in zip(row.dropLast(), row.dropFirst()) {
+                    XCTAssertEqual(a.frame.midY, b.frame.midY, accuracy: 0.01, name)
+                    XCTAssertEqual(b.frame.minX - a.frame.maxX, TouchLayout.transportGap, accuracy: 0.01, name)
+                }
+                XCTAssertEqual((rw.minX + ff.maxX) / 2, l.size.width / 2, accuracy: 0.01, "centred (\(name))")
+                // Directly under the picture, never over it.
+                let game = l.gameArea
+                XCTAssertEqual(rw.minY, game.maxY + TouchLayout.transportMargin, accuracy: 0.01, name)
+                for e in row { XCTAssertFalse(e.hitFrame.intersects(game), "\(e.kind) over the picture (\(name))") }
+                if !l.landscape {
+                    let fit = ((l.size.width - 2 * TouchLayout.subbarPadX - 3 * TouchLayout.transportGap) / 3 / 2).rounded(.down) * 2
+                    XCTAssertEqual(rw.width, min(TouchLayout.transportWide, fit), name)
+                    XCTAssertGreaterThanOrEqual(rw.width, 110, "large (\(name))")
+                    XCTAssertLessThanOrEqual(l.pad.dpadClip!.minY, rw.maxY + TouchLayout.transportMargin + 0.01, name)
+                    XCTAssertGreaterThanOrEqual(l.pad.dpadClip!.minY, rw.maxY, name)
+                } else {
+                    XCTAssertEqual(rw.maxY, l.select.maxY, accuracy: 0.01, "on the SELECT / START line (\(name))")
+                    XCTAssertGreaterThan(rw.minX, l.select.maxX, name)
+                    XCTAssertLessThan(ff.maxX, l.start.minX, name)
+                }
+                XCTAssertNil(TouchButton.stepBack.inputID, "handled by the app (stepFrame)")
+                XCTAssertNil(TouchButton(rawValue: "l"), "no touch L")
+                XCTAssertNil(TouchButton(rawValue: "r"), "no touch R")
+            }
+        }
+    }
+
+    /// 8-WAY and MENU: portrait at the ends of the SELECT / START row, landscape in the side columns.
+    func testWaysAndMenuPlaces() {
         for (name, l) in Self.layouts() {
-            let l2 = l.extra(.l2)!, r2 = l.extra(.r2)!, sb = l.extra(.stepBack)!, sf = l.extra(.stepForward)!, lp = l.extra(.l)!, rp = l.extra(.r)!
-            XCTAssertEqual(l2.style, .icon("backward.fill"))
-            XCTAssertEqual(r2.style, .icon("forward.fill"))
-            XCTAssertEqual(sb.style, .icon("backward.frame"))
-            XCTAssertEqual(sf.style, .icon("forward.frame"))
-            XCTAssertGreaterThan(l2.frame.height, lp.frame.height, name)
-            XCTAssertGreaterThan(l2.frame.width, lp.frame.width, name)
-            XCTAssertEqual(r2.frame.size, l2.frame.size)
-            // ◀| just inside L2 (toward the centre), |▶ just inside R2.
-            XCTAssertEqual(sb.frame.midY, l2.frame.midY, accuracy: 0.01)
-            XCTAssertGreaterThan(sb.frame.minX, l2.frame.maxX, name)
-            XCTAssertLessThan(sb.frame.minX - l2.frame.maxX, 7, name)
-            XCTAssertLessThan(sb.frame.maxX, lp.frame.minX, name)
-            XCTAssertLessThan(sf.frame.maxX, r2.frame.minX, name)
-            XCTAssertLessThan(r2.frame.minX - sf.frame.maxX, 7, name)
-            XCTAssertGreaterThan(sf.frame.minX, rp.frame.maxX, name)
-            XCTAssertGreaterThanOrEqual(sb.frame.width, 0.6 * TouchLayout.stepIconWidth - 0.01, name)
-            XCTAssertNil(TouchButton.stepBack.inputID, "handled by the app (stepFrame)")
+            let ways = l.extras.first { $0.kind == .ways }!.frame, menu = l.extra(.menu)!.frame
+            if l.landscape {
+                XCTAssertLessThan(ways.maxX, l.gameArea.minX, name)
+                XCTAssertGreaterThan(menu.minX, l.gameArea.maxX, name)
+            } else {
+                XCTAssertEqual(ways.midY, l.select.midY, accuracy: 0.01, name)
+                XCTAssertEqual(menu.midY, l.start.midY, accuracy: 0.01, name)
+                XCTAssertLessThan(ways.maxX, l.select.minX, name)
+                XCTAssertGreaterThan(menu.minX, l.start.maxX, name)
+            }
         }
     }
 

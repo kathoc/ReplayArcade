@@ -7,7 +7,7 @@
 //   -openMenu <page>          open the Quick Menu at a page (top, retry, practice, display, ...) after 2 s
 //   -debugUnlockAll NO        free mode (the prototype switch off)
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
-//   -holdTouch <button>       press an on-screen button at 1 s (e.g. r = pause) to check touch input
+//   -holdTouch <button>       press an on-screen button at 2 s for 0.3 s (e.g. l2 = rewind) to check touch input
 //   -setResumeCountdown NO    store Settings › Controls › Controls Details › Resume Countdown (YES / NO) before the start
 //   -setDefaults k:v,k:v      store settings in the app's domain before the start (YES / NO, numbers, text)
 //   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")

@@ -114,8 +114,9 @@ final class GameLayerView: UIView {
 }
 
 /// Game view + touch controls in one UIKit container that lays both out from its own safe area:
-/// the ported NESTERM gamepad (TouchControlsView) and the ReplayNES extras row (TouchExtrasView,
-/// on top: its pills win the hit test like NESTERM's z-index 3 switches).
+/// the ported NESTERM gamepad (TouchControlsView) and the ReplayNES extras (TouchExtrasView, on
+/// top: its pills win the hit test like NESTERM's z-index 3 switches). A touch on no control falls
+/// through to this view: a tap on the game area is `onPictureTap` (pause).
 final class PlaySurfaceView: UIView {
     let game: GameLayerView
     let controls = TouchControlsView()
@@ -130,6 +131,9 @@ final class PlaySurfaceView: UIView {
     }
     /// Main thread, after each layout change: where things are (for the SwiftUI overlays).
     var onLayout: ((TouchLayout) -> Void)?
+    /// A tap (down and up within 30 pt, under 0.5 s) on the game area that no control took.
+    var onPictureTap: (() -> Void)?
+    private var tapStart: [ObjectIdentifier: (CGPoint, TimeInterval)] = [:]
     private var lastLayout: TouchLayout?
     /// TestHooks -logTouch: an accessibility element for the UI tests (ReplayNESUITests): its label
     /// is where the controls are, its value every press / release edge so far.
@@ -181,9 +185,10 @@ final class PlaySurfaceView: UIView {
             "game": [l.gameArea.minX, l.gameArea.minY, l.gameArea.width, l.gameArea.height],
         ]
         for (k, b) in [("aa", TouchButton.turboA), ("bb", .turboB), ("l2", .l2), ("r2", .r2), ("stepBack", .stepBack), ("stepForward", .stepForward),
-                      ("menu", .menu), ("l", .l), ("r", .r)] {
-            if let e = l.extra(b) { pts[k] = [e.frame.midX, e.frame.midY] }
+                      ("menu", .menu)] {
+            if let e = l.extra(b) { pts[k] = [e.frame.midX, e.frame.midY, e.frame.width, e.frame.height] }
         }
+        if let w = l.extras.first(where: { $0.kind == .ways }) { pts["ways"] = [w.frame.midX, w.frame.midY, w.frame.width, w.frame.height] }
         if let d = try? JSONSerialization.data(withJSONObject: pts.mapValues { $0.map(Double.init) }), let s = String(data: d, encoding: .utf8) {
             probe.accessibilityLabel = s
         }
@@ -192,6 +197,24 @@ final class PlaySurfaceView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for t in touches where game.frame.contains(t.location(in: self)) {
+            tapStart[ObjectIdentifier(t)] = (t.location(in: self), t.timestamp)
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for t in touches {
+            guard let (p, at) = tapStart.removeValue(forKey: ObjectIdentifier(t)) else { continue }
+            let q = t.location(in: self)
+            if hypot(q.x - p.x, q.y - p.y) < 30, t.timestamp - at < 0.5, game.frame.contains(q) { onPictureTap?() }
+        }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for t in touches { tapStart.removeValue(forKey: ObjectIdentifier(t)) }
+    }
 
     override func safeAreaInsetsDidChange() {
         super.safeAreaInsetsDidChange()
@@ -244,6 +267,7 @@ struct PlaySurface: UIViewRepresentable {
             model?.touchButtons(pressed: pressed, released: released)
         }
         v.extras.onToggleWays = { [weak model] in model?.toggleTouchWays() }
+        v.onPictureTap = { [weak model] in model?.pictureTapped() }
         v.onLayout = { [weak model] l in if model?.playLayout != l { model?.playLayout = l } }
         update(v)
         return v

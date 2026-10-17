@@ -87,13 +87,16 @@ Ways to get ROMs there:
   centred between the control columns (never under them). Adaptive D-pad (it follows your thumb; 8-way or 4-way per game:
   the 8-WAY pill), A / B as one pad (between them = both; holding one and rolling the thumb onto
   the other taps it; a second finger while one is held presses the other), SELECT / START
-  (between them = both), AA / BB up-left of A / B (turbo A / B). Extra pills: ⏪ L2 rewind (hold),
-  ◀︎| / |▶︎ one frame back / forward (pauses first while playing), L slow motion, MENU, R pause,
-  ⏩ R2 fast-forward through what was recorded (hold). D-pad size and follow, opacity, AA / BB,
+  (between them = both), AA / BB up-left of A / B (turbo A / B). Right under the picture the
+  transport row: ⏪ rewind (hold; released while playing: 3, 2, 1, then play), ◀︎| / |▶︎ one frame
+  back / forward (pauses first while playing; hold to repeat), ⏩ fast-forward through what was
+  recorded (hold). A tap on the picture pauses. 8-WAY and MENU: beside SELECT / START (portrait),
+  in the side columns (landscape). No L / R on screen. D-pad size and follow, opacity, AA / BB,
   vibration: Quick Menu › Settings › Controls › Touch Controls; screen orientation (Auto /
   Portrait / Landscape): Settings › Display › Picture Shape.
-- **Paused:** the seek bar - drag to scrub (replays, never records), step one frame (also L / R
-  and D-pad ← / →), set A / B of a section at the playhead, practice it, ▶ resumes.
+- **Paused:** the seek bar - drag to scrub (replays, never records), step one frame (also the
+  transport row and D-pad ← / →), slow motion ½ (tortoise), set A / B of a section at the playhead,
+  practice it, ▶ resumes.
 - **Game controllers** (MFi, Xbox, PlayStation, Switch Pro / Joy-Con): same bindings and rules as
   the Mac (L+R opens the Quick Menu, east confirms by default, L2 / R2 rewind / fast-forward,
   paused D-pad steps). The touch controls hide while one is connected (setting).
@@ -202,7 +205,7 @@ to `Library/Caches/display-log.txt`; read it from the iPhone with
 `xcrun devicectl device copy from --device <udid> --domain-type appDataContainer --domain-identifier <bundle id> --source Library/Caches/display-log.txt --destination display-log.txt`.
 
 Launch arguments for checks (`Sources/Support/TestHooks.swift`): `-autoplayTestROM YES`,
-`-openMenu <page>`, `-pauseAfter <s>`, `-resumeAfter <s>`, `-setResumeCountdown YES|NO`, `-holdTouch r`, `-orientation landscape`, `-rotateCycle <s>`,
+`-openMenu <page>`, `-pauseAfter <s>`, `-resumeAfter <s>`, `-setResumeCountdown YES|NO`, `-holdTouch l2`, `-orientation landscape`, `-rotateCycle <s>`,
 `-orientationLock 0|1|2`,
 `-debugUnlockAll NO`, `-touchHideWithPad NO`, `-showLatency YES`, `-pacingProbe <s>` (writes
 `Library/Caches/pacing.json` in the app container), `-displayFault <list>`, `-displayStress <s>`
@@ -307,12 +310,15 @@ apps/ios/scripts/build-device.sh --install        # 2 回目以降は値を覚�
   （docs/TOUCH_PORT.md）。縦持ちは上に画面・下に操作ボタン、横持ちは中央に画面・左右にボタン。
   親指に追従する十字キー（ゲームごとに 8 方向 / 4 方向：8-WAY ボタン）、A / B は一体のパッド
   （間を押すと両方、片方を押したまま親指を転がすともう片方をタップ、押している間の 2 本目の指は
-  もう片方）、SELECT / START（間で両方）。追加ボタン：L2 巻き戻し（長押し）、L スロー、MENU、
-  R 一時停止、R2 録画済み区間の早送り（長押し）、◀︎| / |▶︎ 1コマ戻る／進む（再生中は一時停止してから）、
+  もう片方）、SELECT / START（間で両方）。画面のすぐ下に操作列：⏪ 巻き戻し（長押し。プレイ中に
+  離すと 3, 2, 1 のあと再開）、◀︎| / |▶︎ コマ戻し／コマ送り（再生中は一時停止してから。長押しで連続）、
+  ⏩ 録画済み区間の早送り（長押し）。画面をタップすると一時停止。8-WAY と MENU は縦持ちでは
+  SELECT / START の両脇、横持ちでは左右の列。画面上に L / R はありません。
   A / B の左斜め上に AA / BB（連射 A / B）。十字キーの大きさと追従・不透明度・AA / BB・振動：
   クイックメニュー › 設定 › 操作 › タッチ操作。画面の向き（自動／縦／横）：設定 › 画面 › 画面の形。
 - **一時停止中：** シークバー。ドラッグで移動（再生のみで記録しません）、1 フレーム送り／戻し
-  （L / R、十字キー ← / → でも）、再生位置に区間の A / B を設定、その区間を練習、▶ で再開。
+  （操作列、十字キー ← / → でも）、スロー ½（カメ）、再生位置に区間の A / B を設定、その区間を練習、
+  ▶ で再開。
 - **ゲームコントローラ**（MFi、Xbox、PlayStation、Switch Pro / Joy-Con）：Mac と同じ割り当てと
   ルール（L+R でクイックメニュー、既定は右ボタンで決定、L2 / R2 で巻き戻し／早送り、一時停止中の
   十字キーでコマ送り）。接続中は画面のボタンを隠します（設定で変更可）。

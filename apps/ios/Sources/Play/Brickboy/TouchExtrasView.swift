@@ -1,5 +1,5 @@
-// The ReplayNES buttons NESTERM's controller has no equivalent for - L2 (rewind, ⏪), frame step
-// back / forward, L (slow), MENU (Quick Menu), R (pause), R2 (fast-forward, ⏩) and AA / BB (turbo
+// The ReplayNES buttons NESTERM's controller has no equivalent for - the transport row under the
+// picture (rewind ⏪, frame step back / forward, fast-forward ⏩), MENU (Quick Menu) and AA / BB (turbo
 // A / B up-left of A / B) - plus NESTERM's own 4/8-way switch (#ways-switch). A separate view on top of
 // the ported gamepad, so the gamepad itself stays exactly Brickboy's: the pills in the style of
 // NESTERM's sub bar switches (.bb-mode-switch / .bb-turbo-switch: pill, 1 px --bb-line border, dim
@@ -7,7 +7,9 @@
 // in the .gp-round style of A / B. Being on top, AA / BB take the touchdowns in the part of
 // .gp-face's padding they cover; a touch that began on the face stays with the face (its roll
 // logic is unchanged). Buttons are held while the finger stays down (UIKit keeps the touch with the
-// control it began on); the ways switch toggles on release inside it, as a click does.
+// control it began on); the ways switch toggles on release inside it, as a click does. Pills take
+// touches in their 44 pt touch area (TouchExtra.hitFrame). The buttons are accessibility elements
+// (VoiceOver, UI tests: identifiers "touch.<button>").
 // SPDX-License-Identifier: GPL-2.0-or-later
 import QuartzCore
 import UIKit
@@ -20,9 +22,9 @@ final class TouchExtrasView: UIView {
     var haptics = true
     var controlOpacity: CGFloat = 1 { didSet { if controlOpacity != oldValue { layer.opacity = Float(controlOpacity) } } }
     var extras: [TouchExtra] = [] {
-        didSet { if extras != oldValue { releaseAll(); rebuild() } }
+        didSet { if extras != oldValue { releaseAll(); rebuild(); accessibility = nil } }
     }
-    var ways = 8 { didSet { if ways != oldValue { restyle() } } }
+    var ways = 8 { didSet { if ways != oldValue { restyle(); accessibility = nil } } }
 
     private var held: [ObjectIdentifier: Int] = [:] // touch → index into extras
     /// Per extra: the body and its foreground (a CATextLayer label, or a symbol drawn as a mask).
@@ -113,9 +115,9 @@ final class TouchExtrasView: UIView {
                                   tracking: TouchLayout.switchTracking, color: BBColor.textDim, centre: centre, scale: scale)
             case .icon(let name):
                 body.borderWidth = TouchLayout.switchBorder
-                // L2 / R2 a size larger than the frame-step glyphs.
-                let big = e.frame.height > TouchLayout.switchSize("L").height + 0.5
-                fg = Self.symbol(name, pointSize: big ? 15 : 11, centre: centre, scale: scale)
+                // Rewind / fast-forward a size larger than the frame-step glyphs.
+                let big = e.kind == .button(.l2) || e.kind == .button(.r2)
+                fg = Self.symbol(name, pointSize: big ? 20 : 17, centre: centre, scale: scale)
             case .round:
                 // .gp-round (A / B) with a smaller label.
                 fg = BBDraw.label(TouchLayout.label(e.kind, ways: ways), size: TouchLayout.turboFont, weight: .bold,
@@ -145,6 +147,66 @@ final class TouchExtrasView: UIView {
         fg.mask = mask
         fg.backgroundColor = BBColor.textDim.cgColor
         return fg
+    }
+
+    // MARK: accessibility
+
+    private var accessibility: [UIAccessibilityElement]?
+
+    /// The VoiceOver name of an extra (nil: not an accessibility element).
+    static func accessibilityName(_ k: TouchExtra.Kind) -> String? {
+        switch k {
+        case .ways: return L("D-pad Directions")
+        case .button(let b):
+            switch b {
+            case .l2: return String(localized: "Rewind")
+            case .r2: return String(localized: "Fast-forward")
+            case .stepBack: return L("Frame Back")
+            case .stepForward: return L("Frame Forward")
+            case .menu: return String(localized: "Menu")
+            default: return nil
+            }
+        }
+    }
+
+    override var accessibilityElements: [Any]? {
+        get {
+            if isHidden { return [] }
+            if let a = accessibility { return a }
+            let a: [UIAccessibilityElement] = extras.indices.compactMap { i in
+                let e = extras[i]
+                guard let name = Self.accessibilityName(e.kind) else { return nil }
+                let el = ExtraElement(accessibilityContainer: self)
+                el.accessibilityLabel = name
+                el.accessibilityTraits = .button
+                el.accessibilityFrameInContainerSpace = e.frame
+                switch e.kind {
+                case .ways: el.accessibilityIdentifier = "touch.ways"; el.accessibilityValue = TouchLayout.label(e.kind, ways: ways)
+                case .button(let b): el.accessibilityIdentifier = "touch.\(b.rawValue)"
+                }
+                el.activate = { [weak self] in self?.activate(i) }
+                return el
+            }
+            accessibility = a
+            return a
+        }
+        set { }
+    }
+
+    /// VoiceOver double tap: a press and release (the ways switch toggles).
+    private func activate(_ i: Int) {
+        guard extras.indices.contains(i) else { return }
+        switch extras[i].kind {
+        case .ways: onToggleWays?()
+        case .button(let b):
+            onChange?([b], [])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.onChange?([], [b]) }
+        }
+    }
+
+    private final class ExtraElement: UIAccessibilityElement {
+        var activate: (() -> Void)?
+        override func accessibilityActivate() -> Bool { activate?(); return activate != nil }
     }
 
     private static func setColor(_ fg: CALayer, _ c: UIColor) {

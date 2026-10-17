@@ -5,8 +5,8 @@
 // top-left; UIFont only measures the pill labels), unit-tested in BrickboyTouchTests.
 //
 // Portions derived from Brickboy / NESTERM web/styles.css, Copyright 2026 Katsuya Hokamura,
-// Apache-2.0 (apps/ios/ThirdParty/brickboy/LICENSE). The ReplayNES extras row (L2 / L / MENU / R /
-// R2 / turbo) and TouchButton / TouchBindings are ReplayNES's own.
+// Apache-2.0 (apps/ios/ThirdParty/brickboy/LICENSE). The ReplayNES extras (the transport row under
+// the picture, MENU, turbo) and TouchButton / TouchBindings are ReplayNES's own.
 // SPDX-License-Identifier: Apache-2.0 AND GPL-2.0-or-later
 import CoreGraphics
 import Foundation
@@ -18,10 +18,14 @@ enum TouchButton: String, CaseIterable, Hashable {
     case up, down, left, right
     case a, b, turboA, turboB
     case select, start
-    case l, r, l2, r2
+    /// Rewind / fast-forward (the transport row's large buttons): bound like a controller's L2 / R2
+    /// (hold to wind; on release the resume countdown, docs/design/VTR_UX.md). The ids keep their
+    /// old names ("touch:l2" / "touch:r2") so saved bindings stay valid.
+    case l2, r2
     case menu
     /// Frame step back / forward (ReplayNES): handled by the app like the desktop's Step Back /
-    /// Frame Advance keys (AppModel.touchButtons → stepFrame: pauses, then steps one frame).
+    /// Frame Advance keys (AppModel.touchButtons → stepFrame: pauses, then steps one frame; held:
+    /// repeats after 400 ms, every 50 ms, as a controller's paused L / R).
     case stepBack, stepForward
 
     /// The engine input id ("touch:dpad.up"), nil for buttons handled by the app.
@@ -52,7 +56,8 @@ enum TouchButton: String, CaseIterable, Hashable {
 }
 
 /// Default bindings of the touch ids: the same actions as a controller's (frontend core
-/// defaults: L2 rewind, R2 fast-forward, L slow, R pause; turbo A / B).
+/// defaults: L2 rewind, R2 fast-forward; turbo A / B). There is no touch L / R: pause is a tap on
+/// the picture, slow motion is on the seek bar, the frame steps are app buttons.
 enum TouchBindings {
     static let defaults: [(input: String, action: String)] = [
         ("touch:dpad.up", "p1.up"), ("touch:dpad.down", "p1.down"),
@@ -60,7 +65,6 @@ enum TouchBindings {
         ("touch:a", "p1.a"), ("touch:b", "p1.b"),
         ("touch:turboA", "p1.turbo_a"), ("touch:turboB", "p1.turbo_b"),
         ("touch:select", "p1.select"), ("touch:start", "p1.start"),
-        ("touch:l", "hk.slow"), ("touch:r", "hk.pause"),
         ("touch:l2", "hk.rewind"), ("touch:r2", "hk.fast_forward"),
     ]
 
@@ -95,12 +99,27 @@ struct TouchExtra: Equatable {
     let frame: CGRect
     var style: Style = .pill
 
-    /// Touchdown test: a pill's box; a round's disc grown by TouchLayout.turboSlop.
+    /// Touchdown test: a pill's box grown to the 44 pt minimum (`hitFrame`); a round's disc grown
+    /// by TouchLayout.turboSlop.
     func hit(_ p: CGPoint) -> Bool {
         if style == .round {
             return hypot(p.x - frame.midX, p.y - frame.midY) <= frame.width / 2 + TouchLayout.turboSlop
         }
-        return frame.contains(p)
+        return hitFrame.contains(p)
+    }
+
+    /// A pill's touch area: its box, grown about its centre to at least TouchLayout.minTarget in
+    /// each direction (Apple's 44 x 44 pt). A round's: its square plus the slop.
+    var hitFrame: CGRect {
+        if style == .round { return frame.insetBy(dx: -TouchLayout.turboSlop, dy: -TouchLayout.turboSlop) }
+        let m = TouchLayout.minTarget
+        return frame.insetBy(dx: -max(0, (m - frame.width) / 2), dy: -max(0, (m - frame.height) / 2))
+    }
+
+    /// One of the transport row's buttons (under the picture).
+    var isTransport: Bool {
+        guard case .button(let b) = kind else { return false }
+        return TouchLayout.transportOrder.contains(b)
     }
 }
 
@@ -149,11 +168,9 @@ struct TouchLayout: Equatable {
     static let switchPadX: CGFloat = 10
     static let switchPadY: CGFloat = 5
     static let switchBorder: CGFloat = 1
-    // .bb-subbar { gap: 6px; min-height: 34px; padding: 0 8px 4px }
+    // .bb-subbar { min-height: 34px; padding: 0 8px } (its row holds the taller transport row).
     static let subbarHeight: CGFloat = 34
     static let subbarPadX: CGFloat = 8
-    static let subbarPadBottom: CGFloat = 4
-    static let subbarGap: CGFloat = 6
     // .gp-face { --gp-gap: 2px; --gp-tilt: .4502 }
     static let faceGap: CGFloat = 2
     static let faceTilt: CGFloat = 0.4502
@@ -166,9 +183,17 @@ struct TouchLayout: Equatable {
     static let turboGap: CGFloat = 8
     static let turboSlop: CGFloat = 4
     static let turboFont: CGFloat = 15
-    /// L2 (rewind) / R2 (fast-forward): larger icon pills; the frame step pills next to them.
-    static let bigIcon = CGSize(width: 46, height: 30)
-    static let stepIconWidth: CGFloat = 32
+    /// Apple's minimum touch target (points): every pill's touch area is at least this.
+    static let minTarget: CGFloat = 44
+    /// The transport row under the picture, left to right: Rewind, Step Back, Step Forward,
+    /// Fast-forward. Rewind / Fast-forward are `transportWide` wide (narrower only when the row
+    /// does not fit), the steps half that, never under `minTarget`; all `transportHeight` tall.
+    static let transportOrder: [TouchButton] = [.l2, .stepBack, .stepForward, .r2]
+    static let transportHeight: CGFloat = 44
+    static let transportWide: CGFloat = 112
+    static let transportGap: CGFloat = 8
+    /// Space between the transport row and the picture / the gamepad (portrait).
+    static let transportMargin: CGFloat = 4
     /// Landscape: clear space between the picture and the control columns.
     static let pictureMargin: CGFloat = 8
 
@@ -203,10 +228,8 @@ struct TouchLayout: Equatable {
         case .ways: return ways == 4 ? "4-WAY" : "8-WAY"
         case .button(let b):
             switch b {
-            case .l2: return "L2"
-            case .l: return "L"
-            case .r: return "R"
-            case .r2: return "R2"
+            case .l2: return "◀◀"
+            case .r2: return "▶▶"
             case .menu: return "MENU"
             case .turboA: return "AA"
             case .turboB: return "BB"
@@ -217,34 +240,35 @@ struct TouchLayout: Equatable {
         }
     }
 
-    /// How an extras-row control is drawn: L2 / R2 and the frame steps are SF Symbol pills.
+    /// How an extra is drawn: the transport buttons are SF Symbol pills, AA / BB rounds.
     static func style(_ k: TouchExtra.Kind) -> TouchExtra.Style {
         guard case .button(let b) = k else { return .pill }
         switch b {
         case .l2: return .icon("backward.fill")
         case .r2: return .icon("forward.fill")
-        case .stepBack: return .icon("backward.frame")
-        case .stepForward: return .icon("forward.frame")
+        case .stepBack: return .icon("backward.frame.fill")
+        case .stepForward: return .icon("forward.frame.fill")
         case .turboA, .turboB: return .round
         default: return .pill
         }
     }
 
-    /// An extras-row control's size: text pills from their label, icon pills fixed.
-    static func extraSize(_ k: TouchExtra.Kind, ways: Int) -> CGSize {
-        if case .button(let b) = k {
-            switch b {
-            case .l2, .r2: return bigIcon
-            case .stepBack, .stepForward: return CGSize(width: stepIconWidth, height: switchSize("L").height)
-            default: break
-            }
+    /// The transport row (Rewind, Step Back, Step Forward, Fast-forward) centred on `midX` with its
+    /// bottom at `bottom`, at most `width` wide: Rewind / Fast-forward `transportWide` (less when
+    /// that does not fit, down to `2 × minTarget`), the steps half as wide.
+    static func transport(midX: CGFloat, bottom: CGFloat, width: CGFloat) -> [TouchExtra] {
+        let g = transportGap
+        // Whole points, even (the steps are exactly half).
+        let wide = (min(transportWide, max(2 * minTarget, (width - 3 * g) / 3)) / 2).rounded(.down) * 2
+        let widths = transportOrder.map { $0 == .l2 || $0 == .r2 ? wide : wide / 2 }
+        var x = midX - (widths.reduce(0, +) + 3 * g) / 2
+        var out: [TouchExtra] = []
+        for (b, w) in zip(transportOrder, widths) {
+            let k = TouchExtra.Kind.button(b)
+            out.append(TouchExtra(kind: k, frame: CGRect(x: x, y: bottom - transportHeight, width: w, height: transportHeight), style: style(k)))
+            x += w + g
         }
-        return switchSize(label(k, ways: ways))
-    }
-
-    private static func isIcon(_ k: TouchExtra.Kind) -> Bool {
-        if case .icon = style(k) { return true }
-        return false
+        return out
     }
 
     /// AA / BB up-left of A / B: diameter and the distance from the A (B) centre to the AA (BB)
@@ -298,27 +322,10 @@ struct TouchLayout: Equatable {
         min(max(row.midY, top + above), row.maxY - below)
     }
 
-    private static func size(_ k: TouchExtra.Kind, ways: Int, iconScale: CGFloat) -> CGSize {
-        var s = extraSize(k, ways: ways)
-        if isIcon(k) { s.width *= iconScale }
-        return s
-    }
-
-    /// Lays `kinds` out left to right from `x`, vertically centred on `midY`.
-    private static func row(_ kinds: [TouchExtra.Kind], x: CGFloat, midY: CGFloat, ways: Int,
-                            gap: CGFloat = subbarGap, iconScale: CGFloat = 1) -> [TouchExtra] {
-        var out: [TouchExtra] = []
-        var cx = x
-        for k in kinds {
-            let s = size(k, ways: ways, iconScale: iconScale)
-            out.append(TouchExtra(kind: k, frame: CGRect(x: cx, y: midY - s.height / 2, width: s.width, height: s.height), style: style(k)))
-            cx += s.width + gap
-        }
-        return out
-    }
-
-    private static func rowWidth(_ kinds: [TouchExtra.Kind], ways: Int, gap: CGFloat = subbarGap, iconScale: CGFloat = 1) -> CGFloat {
-        kinds.isEmpty ? 0 : kinds.map { size($0, ways: ways, iconScale: iconScale).width }.reduce(0, +) + gap * CGFloat(kinds.count - 1)
+    /// A text pill (8-WAY, MENU) of the .bb-mode-switch style at x, vertically centred on `midY`.
+    private static func pill(_ k: TouchExtra.Kind, x: CGFloat, midY: CGFloat, ways: Int) -> TouchExtra {
+        let s = switchSize(label(k, ways: ways))
+        return TouchExtra(kind: k, frame: CGRect(x: x, y: midY - s.height / 2, width: s.width, height: s.height), style: style(k))
     }
 
     /// The A/B pad: `.gp-face` box (padding included) at (x, y) and the centres of the rounds.
@@ -343,29 +350,10 @@ struct TouchLayout: Equatable {
         let gameH = (W / pictureAspect).rounded()
         let game = CGRect(x: 0, y: safe.top, width: W, height: gameH)
 
-        // .bb-subbar under the picture: the extras row.
-        let subbar = CGRect(x: 0, y: game.maxY, width: W, height: subbarHeight)
-        let midY = subbar.minY + (subbarHeight - subbarPadBottom) / 2
-        let left: [TouchExtra.Kind] = [.ways]
-        // L2 ◀| L MENU R |▶ R2: the frame steps just inside the rewind / fast-forward buttons.
-        let centre: [TouchExtra.Kind] = [.button(.l2), .button(.stepBack), .button(.l), .button(.menu),
-                                         .button(.r), .button(.stepForward), .button(.r2)]
-        var extras = row(left, x: subbarPadX, midY: midY, ways: o.ways)
-        // The middle group is centred like .bb-grid-caption (flex: 1 1 auto; text-align: center)
-        // between the side items.
-        let lo = (extras.last?.frame.maxX ?? subbarPadX) + subbarGap
-        let hi = W - subbarPadX
-        // Narrow screens (SE / mini class): the gaps shrink to 2 pt, then the icon pills narrow.
-        var gap = subbarGap, iconScale: CGFloat = 1
-        if rowWidth(centre, ways: o.ways) > hi - lo {
-            let bare = rowWidth(centre, ways: o.ways, gap: 0)
-            gap = max(2, min(subbarGap, (hi - lo - bare) / CGFloat(centre.count - 1)))
-            let icons = centre.filter(isIcon).map { extraSize($0, ways: o.ways).width }.reduce(0, +)
-            let over = rowWidth(centre, ways: o.ways, gap: gap) - (hi - lo)
-            if over > 0 { iconScale = max(0.6, (icons - over) / icons) }
-        }
-        let cw = rowWidth(centre, ways: o.ways, gap: gap, iconScale: iconScale)
-        extras += row(centre, x: min(max(lo, (W - cw) / 2), max(lo, hi - cw)), midY: midY, ways: o.ways, gap: gap, iconScale: iconScale)
+        // Where NESTERM has its sub bar (.bb-subbar): the transport row right under the picture
+        // (ReplayNES): ⏪ ◀| |▶ ⏩, centred.
+        let subbar = CGRect(x: 0, y: game.maxY, width: W, height: transportHeight + 2 * transportMargin)
+        var extras = transport(midX: W / 2, bottom: subbar.maxY - transportMargin, width: W - 2 * subbarPadX)
 
         // #app:not(.bb-side) > .bb-root > .bb-gamepad { flex: 1 1 auto;
         //   grid-template-rows: minmax(0, 1fr) auto; padding: 6px 12px calc(6px + safe-bottom);
@@ -404,6 +392,11 @@ struct TouchLayout: Equatable {
         let px = row2.minX + (row2.width - total) / 2
         let select = CGRect(x: px, y: row2.minY + 4, width: sel.width, height: sel.height)
         let start = CGRect(x: select.maxX + 22, y: row2.minY + 4, width: sta.width, height: sta.height)
+        // 8-WAY and MENU at the ends of the SELECT / START row (ReplayNES: the sub bar holds the
+        // transport row).
+        extras.append(pill(.ways, x: row2.minX, midY: select.midY, ways: o.ways))
+        let menuW = switchSize(label(.button(.menu), ways: o.ways)).width
+        extras.append(pill(.button(.menu), x: row2.maxX - menuW, midY: select.midY, ways: o.ways))
 
         var g = TouchGamepad.Geometry()
         g.viewport = size
@@ -435,7 +428,7 @@ struct TouchLayout: Equatable {
         let rightCol = CGRect(x: content.maxX - col, y: 0, width: col, height: H)
 
         // Row 1 (info / icons, margin-top: safe-top): the extras row, in .bb-quick's padding (4px).
-        let pillH = switchSize("L").height
+        let pillH = switchSize("MENU").height
         let row1H = safe.top + 4 + pillH + 4
         // Row 2 (ways / repeat): the switches.
         let row2 = CGRect(x: 0, y: row1H, width: W, height: pillH)
@@ -445,20 +438,12 @@ struct TouchLayout: Equatable {
         let row3 = CGRect(x: 0, y: row2.maxY, width: W, height: max(0, H - row2.maxY - row4H))
 
         let ways = o.ways
-        // L2 ◀| L  ·  R |▶ R2 (the frame steps inside the rewind / fast-forward buttons); MENU moves
-        // to row 2 (NESTERM's repeat switch place) to keep row 1 inside the column.
-        let r1Left: [TouchExtra.Kind] = [.button(.l2), .button(.stepBack), .button(.l)]
-        let r1Right: [TouchExtra.Kind] = [.button(.r), .button(.stepForward), .button(.r2)]
-        let r2Right: [TouchExtra.Kind] = [.button(.menu)]
-        let r1Mid = safe.top + 4 + pillH / 2
-        func centred(_ k: [TouchExtra.Kind], in c: CGRect, midY: CGFloat) -> [TouchExtra] {
-            row(k, x: c.midX - rowWidth(k, ways: ways) / 2, midY: midY, ways: ways)
+        func centred(_ k: TouchExtra.Kind, in c: CGRect, midY: CGFloat) -> TouchExtra {
+            pill(k, x: c.midX - switchSize(label(k, ways: ways)).width / 2, midY: midY, ways: ways)
         }
-        var extras = centred(r1Left, in: leftCol, midY: r1Mid)
-        extras += centred(r1Right, in: rightCol, midY: r1Mid)
-        // #ways-switch / #turbo-switch { justify-self: center; align-self: center }.
-        extras += centred([.ways], in: leftCol, midY: row2.midY)
-        extras += centred(r2Right, in: rightCol, midY: row2.midY)
+        // #ways-switch / #turbo-switch { justify-self: center; align-self: center }; MENU in
+        // NESTERM's repeat switch place. Row 1 stays empty (the transport is under the picture).
+        var extras = [centred(.ways, in: leftCol, midY: row2.midY), centred(.button(.menu), in: rightCol, midY: row2.midY)]
 
         // .gp-face { --gp-btn: min(19vw, 78px); padding: 48px 16px }; justify-self: end; align-self: center.
         let btn = min(0.19 * W, 78)
@@ -493,11 +478,17 @@ struct TouchLayout: Equatable {
 
         // The picture fits between the control columns (ReplayNES; NESTERM draws the controls over
         // a full-screen picture): symmetric about the screen's centre, `pictureMargin` clear of the
-        // nearest visible control (D-pad, A / B / AA / BB discs, pills).
+        // nearest visible control (D-pad, A / B / AA / BB discs, pills), above the transport row.
         let leftEdge = ([dpad.maxX, select.maxX] + extras.filter { $0.frame.midX < W / 2 }.map(\.frame.maxX)).max()!
         let rightEdge = ([f.b.x - btn / 2, f.a.x - btn / 2, start.minX] + extras.filter { $0.frame.midX >= W / 2 }.map(\.frame.minX)).min()!
         let half = max(0, min(W / 2 - leftEdge, rightEdge - W / 2) - pictureMargin)
-        let game = CGRect(x: W / 2 - half, y: 0, width: 2 * half, height: H)
+        // The transport row under the picture, its bottom on the SELECT / START pills' line, between
+        // them (it may be wider than a narrow picture).
+        let row = transport(midX: W / 2, bottom: pillBottom,
+                            width: min(max(2 * half, 3 * 2 * minTarget + 3 * transportGap),
+                                       2 * (min(W / 2 - select.maxX, start.minX - W / 2) - pictureMargin)))
+        extras.insert(contentsOf: row, at: 0)
+        let game = CGRect(x: W / 2 - half, y: 0, width: 2 * half, height: max(0, (row.first?.frame.minY ?? H) - transportMargin))
 
         var g = TouchGamepad.Geometry()
         g.viewport = size

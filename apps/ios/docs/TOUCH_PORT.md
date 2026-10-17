@@ -76,11 +76,12 @@ buttons), wired in `Sources/Play/GameView.swift` (`PlaySurfaceView`).
   16.7 ms frame reach the game as one press there, not two.
 - **A/B autofire** (`setAutofire`, 500 ms then 33 ms, `gp-ring`): ReplayNES has turbo buttons bound
   to the core's `p1.turbo_a/b` instead: **AA / BB** (below).
-- **Extras row** (`TouchExtrasView`): L2 (rewind), L (slow / paused: step back), MENU, R (pause /
-  step), R2 (fast-forward) and the frame steps have no NESTERM equivalent; they sit where NESTERM
-  has its sub bar (portrait, between the picture and the pad) and its top-bar / switch rows
-  (landscape, rows 1–2 of the side columns), in the `.bb-mode-switch` style. The `8-WAY` switch is
-  NESTERM's.
+- **Extras** (`TouchExtrasView`): the transport row (rewind, frame step back / forward,
+  fast-forward) and MENU have no NESTERM equivalent. The transport row sits right under the picture
+  (portrait: where NESTERM has its sub bar; landscape: under the picture between the columns, on the
+  SELECT / START line); MENU and NESTERM's `8-WAY` switch sit at the ends of the SELECT / START row
+  (portrait) or in the side columns' switch row (landscape), in the `.bb-mode-switch` style. There
+  is no touch L / R: pause is a tap on the picture, slow motion the seek bar's tortoise toggle.
 
 ### Changes after testing on an iPhone 17 (deliberate, ReplayNES)
 
@@ -91,13 +92,14 @@ buttons), wired in `Sources/Play/GameView.swift` (`PlaySurfaceView`).
 | AA / BB up-left of A / B | `.gp-round` look, diameter `0.72 × --gp-btn`, label 15 pt bold; BB up-left of B and AA up-left of A by the same offset, perpendicular to the B → A axis (`turboDirection`; a row parallel to A / B, like a Pro Controller's Y / X over B / A), at distance (btn + s) / 2 + 8 (`turboMetrics`, discs 8 pt apart). Portrait: the offset turns toward straight up (same distance) only as far as needed to keep BB 8 pt clear of the D-pad (SE class). Landscape: the face first moves right into its own 16 px padding (A stays ≥ 8 pt from the screen edge; the face box is clipped to the screen), then the offset turns up as needed so BB never reaches past B's CSS place - the picture keeps its width (`turboOffset`). Bound to `touch:turboA/B` → `p1.turbo_a/b`; Quick Menu › Touch Controls › Turbo Buttons (on by default, key `touchAABB`) | the user found AA / BB straight above A / B unnatural; up-left is where a Pro Controller has X / Y |
 | AA / BB touches | drawn and hit-tested by `TouchExtrasView` (above the gamepad): disc + 4 pt; the zones never reach the A / B discs (≥ 4 pt clear), they only take the part of `.gp-face`'s padding they cover. A touch that begins on the face stays with the face, so `faceButtonsAt` / `rollTap` are unchanged; a touch on AA / BB is held until lifted (no sliding between AA / BB / A / B) | keep the ported A/B logic intact |
 | Face position | the A/B midpoint is the row's middle, moved down only as far as needed for AA / BB to stay inside the row (`faceMid`; SE portrait) | SE-class heights |
-| L2 / R2 | larger pills (46 × 30) with SF Symbols `backward.fill` / `forward.fill` instead of text | the user's request |
-| Frame step ◀︎| / |▶︎ | `backward.frame` / `forward.frame` pills (32 wide) just inside L2 / R2 (portrait: `8-WAY · ⏪ ◀︎| L MENU R |▶︎ ⏩`; landscape row 1: `⏪ ◀︎| L` and `R |▶︎ ⏩`, MENU moves to row 2 right, NESTERM's repeat-switch place). One frame back / forward per press, also while playing: the press pauses, then steps - the desktop's Step Back / Frame Advance keys (`EmulationController.stepFrame`); handled by the app (`TouchButton.stepBack/.stepForward`, no input id). Narrow screens: the row's gaps shrink to 2 pt, then the icon pills narrow (≥ 60 %) | step without the pause-first dance |
+| Transport row | right under the picture, centred: Rewind `backward.fill` (112 × 44), Step Back `backward.frame.fill`, Step Forward `forward.frame.fill` (half as wide), Fast-forward `forward.fill`, 8 pt apart (`TouchLayout.transport`; narrower only if the row does not fit, never under 44 pt). Portrait: the sub bar row (4 pt above and below); landscape: the game area ends 4 pt above it, its bottom on the SELECT / START line. Rewind / Fast-forward are `touch:l2` / `touch:r2` (bound to `hk.rewind` / `hk.fast_forward` like a controller's L2 / R2: hold to wind, released while playing → resume countdown). The steps are app buttons (`TouchButton.stepBack/.stepForward`, no input id): a tap pauses (also cancelling the resume countdown) and steps one frame; held, they repeat after 400 ms every 50 ms (`AppModel.startStepRepeat`, the chord detector's paused L / R timing). VoiceOver labels 巻き戻し / コマ戻し / コマ送り / 早送り (`touch.<button>` identifiers) | the user's request: no L / R labels (meaningless on a touch screen), large rewind / fast-forward under the picture |
+| No L / R | removed (`touch:l` / `touch:r` are no longer default bindings). Pause: a tap on the picture that no control takes (`PlaySurfaceView.onPictureTap`, while playing). Slow ½: the seek bar's tortoise toggle (`seekSlow`). Paused frame steps: the transport row, the seek bar's ◀︎| / |▶︎, the D-pad ← / → (setting) | |
+| All pills | touch area at least 44 × 44 pt about the pill (`TouchExtra.hitFrame`), clear of the D-pad, A / B and SELECT / START | Apple's minimum target |
 | Landscape picture | the game view is the space between the control columns: symmetric about the screen's centre, 8 pt clear of the nearest visible control (D-pad, A / B / AA / BB discs, pills); the renderer scales the picture into it (NESTERM draws the controls over a full-screen picture). The pad's frame (`Geometry.frame`, used by `setHome`'s clamp) ends at the picture, so the home cannot follow the thumb over it. The side columns show `--bb-bg` | no control over the picture on iPhone 17 / 17 Pro Max / SE (`testLandscapePictureBetweenTheControls`) |
 | Rotation | the play screen is sized from the screen (GeometryReader), never from the published layout (it made the SwiftUI stack the union of both orientations, 874 × 874, which the surface then kept); the D-pad layer's transform is reset before its frame is set; on an orientation change the held controls are released and the learned home restarts at the natural place (NESTERM re-clamps it: `relayout`) | layout broke after turning the iPhone |
 | Orientation setting | Settings › Display › Picture Shape › Orientation: Auto / Portrait / Landscape (`OrientationLock`: app delegate `supportedInterfaceOrientationsFor` + `requestGeometryUpdate`, key `orientationLock`); Picture Shape is now linked from Display on iPhone too (8:7, Hide Edges moved there as on the Mac) | iPhone only |
 - **Top bar / sub bar caption** are not drawn (ReplayNES has the Quick Menu); in portrait the picture
-  starts at the safe area and the sub bar row holds the extras.
+  starts at the safe area and the sub bar row holds the transport row.
 - **Picture**: ReplayNES's renderer (integer / fill scale, 8:7, CRT) instead of NESTERM's ASCII view;
   in landscape it sits between the control columns (above), not under them.
 - **Opacity** setting kept (default 100 %; NESTERM draws opaque).
@@ -117,8 +119,9 @@ buttons), wired in `Sources/Play/GameView.swift` (`PlaySurfaceView`).
 - `Tests/TouchControlsTests.swift`: layout vs the CSS measured in the browser (portrait 390 × 844,
   landscape 844 × 390, safe areas; AA / BB off, D-pad × 1.1), the deliberate changes above on
   iPhone 17 / 17 Pro Max / SE in both orientations (D-pad size and A/B-midpoint centre, AA / BB
-  up-left position and zones, no picture width lost to them, L2 / R2 / step zones, landscape picture clear of every control, everything on screen and
-  apart), the pure helpers, NESTERM's `controller-check.mjs` expectations on the iPhone layout,
+  up-left position and zones, no picture width lost to them, the transport row under the picture,
+  8-WAY / MENU places, 44 pt touch areas, landscape picture clear of every control, everything on
+  screen and apart), the pure helpers, NESTERM's `controller-check.mjs` expectations on the iPhone layout,
   bindings. The goldens are unaffected (they carry their own recorded geometry).
 - `UITests/TouchGestureUITests.swift` (scheme `ReplayNESTouchUI`): synthesised multi-touch paths on
   the running app (D-pad slide + diagonal, B→A slide, two-finger latch, roll tap, START+SELECT) in

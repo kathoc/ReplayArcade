@@ -108,8 +108,11 @@ final class TapAuditUITests: XCTestCase {
     }
 
     private func pause() {
-        tapPoint(pt("r"))
-        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "R pauses: the seek bar shows")
+        // No touch R: a tap on the picture pauses (its upper part: the status label / Undo chip sit
+        // at the bottom of the game area).
+        let g = geo["game"]!
+        tapPoint(CGPoint(x: g[0] + g[2] / 2, y: g[1] + g[3] * 0.3))
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "a tap on the picture pauses: the seek bar shows")
     }
 
     // MARK: library
@@ -247,7 +250,11 @@ final class TapAuditUITests: XCTestCase {
         tap("seekStepForward"); tap("seekStepForward")
         tap("seekSetB")
         tap("seekPractice")
-        XCTAssertTrue(app.staticTexts["Practicing"].waitForExistence(timeout: 5), "Practice starts (and plays)")
+        // The practice pill names the section ("2. Section 2"; "Practicing" without a slot).
+        let pill = app.staticTexts.matching(NSPredicate(format: "label == 'Practicing' OR label BEGINSWITH '2. '")).firstMatch
+        XCTAssertTrue(pill.waitForExistence(timeout: 5), "Practice starts (and plays)")
+        // After its countdown (a tap on the picture during it would end practice).
+        waitFor(6, "the practice countdown ends") { !el("resumeCountdown").exists }
         Thread.sleep(forTimeInterval: 1)
         pause()
         XCTAssertTrue(el("seekStopPractice").waitForExistence(timeout: 5), "paused while practicing: Stop Practicing")
@@ -261,6 +268,107 @@ final class TapAuditUITests: XCTestCase {
         tapPoint(pt("stepBack"))
         waitFor(3, "◀︎| reaches the app") { probeEdges().count > before.count }
         XCTAssertTrue(el("seekBar").waitForExistence(timeout: 3), "◀︎| pauses")
+    }
+
+    // MARK: transport row
+
+    /// "mm:ss.cc" → seconds.
+    private func secs(_ tc: String) -> Double {
+        let p = tc.split(separator: ":")
+        guard p.count == 2, let m = Double(p[0]), let s = Double(p[1]) else { return -1 }
+        return m * 60 + s
+    }
+
+    func testTransportRow() throws { try transportRow() }
+
+    func testTransportRowLandscape() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        try transportRow()
+    }
+
+    /// The row under the picture: ⏪ ◀| |▶ ⏩ (no L / R), labelled, ≥ 44 pt, right under the picture
+    /// and clear of the D-pad / A / B; a tap on a step pauses and steps one frame, a hold repeats;
+    /// rewind held winds back and plays on when released; 8-WAY and MENU still work, the
+    /// picture tap pauses, the seek bar's slow toggle switches.
+    private func transportRow() throws {
+        startPlay()
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertNil(geo["l"], "no touch L"); XCTAssertNil(geo["r"], "no touch R")
+        let ids = ["touch.l2", "touch.stepBack", "touch.stepForward", "touch.r2"]
+        let labels = ["Rewind", "Frame Back", "Frame Forward", "Fast-forward"]
+        let game = geo["game"]!
+        var lastMaxX = -1.0
+        for (id, label) in zip(ids, labels) {
+            let e = el(id)
+            XCTAssertTrue(e.waitForExistence(timeout: 5), id)
+            XCTAssertEqual(e.label, label)
+            XCTAssertTrue(e.isHittable, "\(id) hittable")
+            let f = e.frame
+            XCTAssertGreaterThanOrEqual(f.width, 44, id); XCTAssertGreaterThanOrEqual(f.height, 44, id)
+            XCTAssertGreaterThan(f.minX, lastMaxX, "\(id): left to right")
+            lastMaxX = f.maxX
+            XCTAssertGreaterThanOrEqual(f.minY, game[1] + game[3] - 0.5, "\(id) under the picture")
+            XCTAssertLessThanOrEqual(f.minY, game[1] + game[3] + 8, "\(id) right under the picture")
+        }
+        XCTAssertEqual(el("touch.stepBack").frame.width * 2, el("touch.l2").frame.width, accuracy: 0.5, "steps half as wide")
+        // Probe frames: the row is clear of the D-pad and the A / B discs.
+        let d = geo["dpad"]!, dpad = CGRect(x: d[0] - d[2] / 2, y: d[1] - d[2] / 2, width: d[2], height: d[2])
+        for id in ids { XCTAssertFalse(el(id).frame.intersects(dpad), "\(id) over the D-pad") }
+
+        // Picture tap pauses; the seek bar's step and the row's step agree.
+        pause()
+        let time = el("seekTime")
+        var t = secs(time.label)
+        el("touch.stepBack").tap()
+        waitFor(3, "◀| steps back") { secs(time.label) < t }
+        t = secs(time.label)
+        el("touch.stepForward").tap()
+        waitFor(3, "|▶ steps forward") { secs(time.label) > t }
+        // Held: repeats (400 ms, then every 50 ms): well over one frame in 1.5 s.
+        t = secs(time.label)
+        el("touch.stepBack").press(forDuration: 1.5)
+        waitFor(3, "◀| held repeats") { t - secs(time.label) > 10.0 / 60 }
+        XCTAssertTrue(el("seekBar").exists, "still paused")
+        // Slow toggle on the seek bar.
+        let slow = el("seekSlow")
+        XCTAssertTrue(slow.isHittable)
+        let v0 = slow.value as? String
+        slow.tap()
+        waitFor(3, "slow on") { (slow.value as? String) != v0 }
+        slow.tap()
+        waitFor(3, "slow off") { (slow.value as? String) == v0 }
+        // A tap on |▶ while playing pauses and steps.
+        tap("seekResume")
+        gone(el("seekBar"), "▶ resumes")
+        Thread.sleep(forTimeInterval: 1)
+        el("touch.stepForward").tap()
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 3), "|▶ while playing pauses")
+        // Rewind held while playing: winds back; released, play goes on (countdown off here).
+        tap("seekResume")
+        gone(el("seekBar"), "▶ resumes")
+        Thread.sleep(forTimeInterval: 2)
+        let before = probeEdges()
+        el("touch.l2").press(forDuration: 1.2)
+        waitFor(3, "rewind edges") { probeEdges().count > before.count && probeEdges().hasSuffix("l2-") }
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertFalse(el("seekBar").exists, "released: playing again")
+        let ff = probeEdges()
+        el("touch.r2").press(forDuration: 0.6)
+        waitFor(3, "fast-forward edges") { probeEdges().count > ff.count && probeEdges().hasSuffix("r2-") }
+        // 8-WAY toggles (and back).
+        let ways = el("touch.ways")
+        XCTAssertTrue(ways.isHittable)
+        let w0 = ways.value as? String
+        ways.tap()
+        waitFor(3, "ways toggles") { (el("touch.ways").value as? String) != w0 }
+        el("touch.ways").tap()
+        waitFor(3, "ways back") { (el("touch.ways").value as? String) == w0 }
+        // MENU (accessibility element and pill).
+        el("touch.menu").tap()
+        XCTAssertTrue(menuPanel.waitForExistence(timeout: 5), "MENU opens the Quick Menu")
+        tap("qmClose")
+        gone(menuPanel, "✕ closes the menu")
     }
 
     // MARK: Quick Menu

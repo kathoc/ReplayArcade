@@ -356,7 +356,10 @@ final class AppModel: ObservableObject {
             return c.label(String(id[id.index(after: colon)...]))
         }
         guard let id = config.bindings.first(where: { $0.action == action && $0.input.hasPrefix("touch:") })?.input else { return nil }
-        return String(id.dropFirst("touch:".count)).uppercased()
+        // The touch buttons as drawn: the transport row's ◀◀ / ▶▶ (no L2 / R2 label on screen).
+        let name = String(id.dropFirst("touch:".count))
+        if let b = TouchButton(rawValue: name) { return TouchLayout.label(.button(b), ways: 8) }
+        return name.uppercased()
     }
 
     func showError(_ title: String, _ message: String) {
@@ -459,14 +462,15 @@ final class AppModel: ObservableObject {
         for b in pressed {
             if b == .menu { quickMenu.open(); continue }
             // Frame step buttons: as the desktop's Step Back / Frame Advance keys (EmulationController
-            // stepFrame): playing, the press pauses and steps; paused, it steps. Never game input.
+            // stepFrame): playing (also during the resume countdown, which the pause cancels), the
+            // press pauses and steps; paused, it steps. Held: repeats as a controller's paused L / R.
+            // Never game input.
             if b == .stepBack || b == .stepForward {
-                if st.hasSession && !quickMenu.isOpen && !showLibrary { stepFrame(b == .stepBack ? -1 : 1) }
+                if st.hasSession && !quickMenu.isOpen && !showLibrary { startStepRepeat(b) }
                 continue
             }
-            // Paused: L / R step one frame, the D-pad ← / → too (setting), never game input.
+            // Paused: the D-pad ← / → step one frame (setting), never game input.
             if pausedInPlay {
-                if b == .l || b == .r { stepFrame(b == .l ? -1 : 1); touchRouted.insert(b); continue }
                 if dpadStepWhenPaused && (b == .left || b == .right) {
                     let dir = b == .left ? -1 : 1
                     emu.perform { e in e.pausedStep(dir, down: true) }
@@ -481,6 +485,10 @@ final class AppModel: ObservableObject {
             }
         }
         for b in released {
+            if b == .stepBack || b == .stepForward {
+                if stepRepeatButton == b { stopStepRepeat() }
+                continue
+            }
             if touchRouted.remove(b) != nil {
                 if b == .left || b == .right {
                     let dir = b == .left ? -1 : 1
@@ -492,11 +500,49 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The touch frame step held down (main thread): one step at the press, then after
+    /// `stepRepeatDelay` one every `stepRepeatInterval` (the shared chord detector's paused L / R
+    /// repeat: docs/design/UI_REDESIGN.md) until it is released.
+    private var stepRepeatButton: TouchButton?
+    private var stepRepeatTimer: Timer?
+    static let stepRepeatDelay = 0.4, stepRepeatInterval = 0.05
+
+    private func startStepRepeat(_ b: TouchButton) {
+        stopStepRepeat()
+        let dir = b == .stepBack ? -1 : 1
+        stepFrame(dir)
+        stepRepeatButton = b
+        let t = Timer(fire: Date().addingTimeInterval(Self.stepRepeatDelay), interval: Self.stepRepeatInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let st = self.status
+            guard st.hasSession, !self.quickMenu.isOpen, !self.showLibrary else { self.stopStepRepeat(); return }
+            self.stepFrame(dir)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        stepRepeatTimer = t
+    }
+
+    private func stopStepRepeat() {
+        stepRepeatTimer?.invalidate()
+        stepRepeatTimer = nil
+        stepRepeatButton = nil
+    }
+
+    /// A tap on the picture (not on a control) while the game plays: pause (the seek bar shows).
+    /// During the resume countdown the countdown's own tap catcher is on top (PlayView).
+    func pictureTapped() {
+        let st = status
+        guard st.hasSession, !st.paused, !quickMenu.isOpen, !showLibrary, !resumeCountdownShown else { return }
+        if Self.logTouch { NSLog("ReplayNES touch: picture tap") }
+        setPaused(true)
+    }
+
     /// TestHooks -logTouch: every touch press / release edge in the system log.
     private static let logTouch = UserDefaults.standard.bool(forKey: "logTouch")
 
     /// Everything the touch controls held is released (menu opened, app in the background).
     func releaseTouch() {
+        stopStepRepeat()
         rn_input_release_prefix(input.handle, "touch:")
         for b in touchRouted where b == .left || b == .right {
             let dir = b == .left ? -1 : 1

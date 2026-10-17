@@ -990,6 +990,36 @@
           }
         }
       }
+    },
+    "Frame Back": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コマ戻し"
+          }
+        }
+      }
+    },
+    "Frame Forward": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コマ送り"
+          }
+        }
+      }
+    },
+    "Slow Motion": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スロー再生"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -5,7 +5,8 @@
 // buttons (drag = scrub: paused, muted, never records; the part ahead of the cursor dimmed), then the
 // selected A/B section's tools (slot, Set A / Set B at the playhead - shared TimelineActions - and
 // Practice). With a controller connected a hint line names its buttons (cancel = Play, L / R = Step,
-// L2 / R2 = Rewind / Fast-forward), as on the desktop. The controller's marker workflow (SeekMarkers,
+// L2 / R2 = Rewind / Fast-forward), as on the desktop. Next to Play the slow-motion toggle (½ speed,
+// the controller's L; touch has no L). The controller's marker workflow (SeekMarkers,
 // shared) keeps working: its markers are drawn. Playback (watching the tape): Quick Menu › Retry.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
@@ -21,6 +22,7 @@ struct SeekBarPanel: View {
         VStack(spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
                 resumeButton(st)
+                slowButton(st)
                 Spacer(minLength: 4)
                 VStack(alignment: .trailing, spacing: 4) {
                     TapeStatusLabelIOS()
@@ -113,6 +115,20 @@ struct SeekBarPanel: View {
         .accessibilityLabel(title)
         .accessibilityHint(mode ?? "")
         .accessibilityIdentifier("seekResume")
+    }
+
+    /// Slow motion (½ ↔ normal, the Slow hotkey's toggle) for the play that follows: lit while on.
+    private func slowButton(_ st: EmuStatus) -> some View {
+        let on = st.slow != .normal
+        return Button { model.toggleSlow() } label: {
+            Image(systemName: on ? "tortoise.fill" : "tortoise").font(.system(size: 17, weight: .semibold))
+                .frame(width: 46, height: 46)
+                .foregroundStyle(on ? Color.black : Color.white)
+                .background(on ? Color.green.opacity(0.85) : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .accessibilityLabel(L("Slow Motion"))
+        .accessibilityValue(on ? st.slow.label : String(localized: "Off"))
+        .accessibilityIdentifier("seekSlow")
     }
 
     /// What Play goes on with (nil: plain play on the tape). docs/design/VTR_UX.md: never "record".

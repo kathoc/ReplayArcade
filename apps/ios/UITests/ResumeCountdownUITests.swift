@@ -60,8 +60,11 @@ final class ResumeCountdownUITests: XCTestCase {
     }
 
     private func pause() {
-        tapPoint(pt("r"))
-        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "R pauses: the seek bar shows")
+        // No touch R: a tap on the picture pauses (its upper part: the status label / Undo chip sit
+        // at the bottom of the game area).
+        let g = geo["game"]!
+        tapPoint(CGPoint(x: g[0] + g[2] / 2, y: g[1] + g[3] * 0.3))
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "a tap on the picture pauses: the seek bar shows")
     }
 
     private func shot(_ name: String) {
@@ -139,6 +142,43 @@ final class ResumeCountdownUITests: XCTestCase {
         XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 3), "✕ resumes: a new countdown")
         el("countdownCancel").tap()
         XCTAssertTrue(el("seekBar").waitForExistence(timeout: 3), "✕ on the countdown: paused")
+    }
+
+    /// The transport row during the countdown is transport, not game input: a frame step pauses
+    /// (cancels the countdown) and steps; rewind held winds (released: the countdown again).
+    func testTransportDuringCountdown() throws {
+        startPlay()
+        pause()
+        let t0 = el("seekTime").label
+        el("seekResume").tap()
+        XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 2))
+        el("touch.stepForward").tap()
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 2), "|▶ during the countdown: paused")
+        XCTAssertFalse(el("resumeCountdown").exists)
+        XCTAssertNotEqual(el("seekTime").label, t0)
+        Thread.sleep(forTimeInterval: 3.5)
+        XCTAssertTrue(el("seekBar").exists, "still paused")
+        el("seekResume").tap()
+        XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 2))
+        // Rewind held during the countdown takes over (the countdown stops while it winds); the
+        // interrupted resume still counts as play, so its release counts down again
+        // (EmulationController: rewindStartedPaused), as a controller's L2 does.
+        let edges = (el("touchProbe").value as? String) ?? ""
+        el("touch.l2").press(forDuration: 0.8)
+        waitFor(3, "rewind edges") { ((el("touchProbe").value as? String) ?? "").count > edges.count }
+        XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 2), "released: the countdown again")
+        el("countdownCancel").tap()
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 2), "✕: paused")
+    }
+
+    /// Rewind held while playing: released, the resume countdown runs, then play (VTR_UX.md).
+    func testRewindReleaseCountsDown() throws {
+        startPlay()
+        Thread.sleep(forTimeInterval: 2)
+        el("touch.l2").press(forDuration: 1)
+        XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 2), "released: the countdown")
+        waitFor(5, "the countdown ends") { !el("resumeCountdown").exists }
+        XCTAssertFalse(el("seekBar").exists, "playing")
     }
 
     func testCountdownOffResumesAtOnce() throws {
