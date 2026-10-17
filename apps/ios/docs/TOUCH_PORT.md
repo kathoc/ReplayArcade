@@ -7,7 +7,7 @@ function. Source read: NESTERM `web/brickboy/input.mjs` (1774 lines), `buttons.m
 `web/styles.css`, `web/index.html`, `web/app.mjs`, plus `scripts/controller-check.mjs` and
 `docs/controller-port-spec.md` from the NESTERM repository. Licence and provenance:
 `../ThirdParty/brickboy/` (Apache-2.0, © 2026 Katsuya Hokamura), `../NOTICE`, and in the app
-under Quick Menu › Settings › System › About › Touch Controller.
+under Quick Menu › Settings › System › ReplayNES Version › Touch Controller.
 
 Files: `Sources/Play/Brickboy/TouchGamepad.swift` (logic), `TouchLayout.swift` (geometry from the
 CSS), `TouchControlsView.swift` (drawing + UITouch), `TouchExtrasView.swift` (ReplayNES's extra

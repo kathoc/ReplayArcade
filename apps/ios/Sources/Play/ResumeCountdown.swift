@@ -19,7 +19,9 @@ final class CoreResumeCountdown: ResumeCountdownDriver {
     init(emu: EmulationController) { self.emu = emu }
 
     func resume() { emu?.perform { e in e.resume() } }
-    func abort() { emu?.perform { e in e.abortCountdown() } }
+    /// A pause cancels the resume countdown (EmulationController.paused). The practice countdown has
+    /// no cancel (its NES buttons are game input); the catcher is not shown for it.
+    func abort() { emu?.perform { e in e.paused = true } }
     func isCounting(_ st: EmuStatus) -> Bool {
         ResumeCountdownStatus.counting(paused: st.paused, countdown: st.countdown, practicing: st.practicing,
                                        practiceLooping: st.practiceLooping)

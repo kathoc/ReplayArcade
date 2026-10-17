@@ -6,11 +6,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
-/// The status label; nothing when there is nothing to say (normal play).
+/// The status label; nothing when there is nothing to say (normal play). Practicing, it is the
+/// "■ Stop Practice" button (tap; Y on a controller), then the rest of the label (as on the Mac).
 struct TapeStatusLabelIOS: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
+        if model.status.hasSession && model.status.practicing {
+            HStack(spacing: 8) {
+                TapeChipIOS(title: String(localized: "■ Stop Practice")) { model.practiceStop() }
+                    .accessibilityIdentifier("stopPracticeChip")
+                let rest = model.status.tapeLabelBesidePractice
+                if !rest.isEmpty { TapeLabelTextIOS(text: rest) }
+            }
+        } else {
+            label
+        }
+    }
+
+    @ViewBuilder private var label: some View {
         let base = model.status.hasSession ? model.status.tapeLabel : ""
         if let job = model.exportJob, !job.finished {
             ExportProgressLabelIOS(job: job, base: base)
@@ -57,11 +71,7 @@ struct TapeChipIOS: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Text(verbatim: title).font(.system(size: 14, weight: .semibold))
-                if let glyph {
-                    Text(verbatim: glyph).font(.system(size: 11, weight: .bold, design: .rounded))
-                        .padding(.horizontal, 5).frame(minWidth: 20, minHeight: 20)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.16)))
-                }
+                if let glyph { KeyCapIOS(glyph) }
             }
             .foregroundStyle(Color.white.opacity(0.95))
             .padding(.leading, 12).padding(.trailing, glyph == nil ? 12 : 6)

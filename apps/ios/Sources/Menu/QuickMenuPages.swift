@@ -2,7 +2,8 @@
 // (apps/macos/Sources/App/QuickMenu/QuickMenuPages.swift; structure: Core/QuickMenuModel.swift,
 // shared), with the iPhone's differences:
 //  - Share: Make Video only (no Syphon stream); Settings › Controls › "Keyboard" is the touch
-//    controls page here; System › Updates is "Unlocks" (the paid features, prototype switch);
+//    controls page here; System › Unlocks opens the Unlocks sheet (paid features, prototype switch)
+//    and System › ReplayNES Version shows the version only (no updater on iPhone);
 //  - paid features show a lock and open Unlocks when locked (FeatureGate);
 //  - renames are SwiftUI prompts; Save As is folded into Save (projects are named automatically).
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -60,7 +61,6 @@ extension QMPage {
     var iosTitle: String {
         switch self {
         case .bindings: return L("Touch Controls")
-        case .updates: return L("Unlocks")
         default: return title
         }
     }
@@ -85,7 +85,6 @@ enum QuickMenuPages {
         case .controlsDetail: return QMContent(items: controlsDetail(m))
         case .sound: return QMContent(items: sound(m))
         case .system: return QMContent(items: system(m, menu))
-        case .updates: return QMContent(items: unlocks(m))
         case .about: return QMContent(items: about(m))
         case .game: return QMContent(items: game(m, menu))
         case .reset: return QMContent(items: reset(m, menu))
@@ -454,27 +453,12 @@ enum QuickMenuPages {
                    String(localized: "Show input and display latency over the game"), m.showLatency) { m.showLatency = $0 },
             toggle("flashBadge", "bolt.badge.checkmark", String(localized: "Flash Notice"),
                    String(localized: "Show a badge while flashing is being reduced"), m.showFlashIndicator) { m.showFlashIndicator = $0 },
-            link("updates", "lock.open", L("Unlocks"), L("Recording, MP4 export and CRT (test build: all unlocked)"), .updates),
-            link("about", "info.circle", String(localized: "About"), String(localized: "Version and licenses"), .about),
+            // Unlocks: the sheet (the debug switch, each paid feature); no updater on iPhone, so the
+            // ReplayNES Version page (shared .about, which merges Updates on the Mac) shows the version only.
+            QMItem(id: "unlocks", icon: "lock.open", title: L("Unlocks"), detail: L("Recording, MP4 export and CRT (test build: all unlocked)"),
+                   confirm: { m.showUnlocks = true }, verb: String(localized: "Open")),
+            link("about", "info.circle", String(localized: "ReplayNES Version"), L("Version and licenses"), .about),
         ]
-    }
-
-    /// System › Unlocks (in place of macOS Updates): the paid features and the prototype switch.
-    private static func unlocks(_ m: AppModel) -> [QMItem] {
-        let e = m.entitlements
-        var items = [
-            toggle("debugUnlockAll", "hammer", L("Unlock Everything (Test)"),
-                   L("Prototype switch: every paid feature works without a purchase"), e.debugUnlockAll) { e.debugUnlockAll = $0 },
-        ]
-        for f in PaidFeature.allCases {
-            let on = e.isUnlocked(f)
-            items.append(QMItem(id: "unlock.\(f.rawValue)", icon: Unlocks.icon(f), title: Unlocks.title(f), detail: Unlocks.summary(f),
-                                value: .text(on ? L("Unlocked") : L("Locked")),
-                                confirm: on ? nil : { m.showUnlocks = true }, verb: L("Unlocks…")))
-        }
-        items.append(QMItem(id: "unlockSheet", icon: "cart", title: L("Unlocks…"), detail: L("What each unlock adds (purchases are stubbed in this build)"),
-                            confirm: { m.showUnlocks = true }, verb: String(localized: "Open")))
-        return items
     }
 
     private static func about(_ m: AppModel) -> [QMItem] {

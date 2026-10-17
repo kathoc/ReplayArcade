@@ -152,18 +152,23 @@ struct SeekBarPanel: View {
     }
 
     /// The controller's buttons on the bar (as the desktop's hint row): cancel = Play, L R = Step,
-    /// L2 R2 = Rewind / Fast-forward.
+    /// practicing Y = Stop Practicing, L2 R2 = Rewind / Fast-forward. Face buttons are drawn as the
+    /// position glyph (FaceGlyph). The last hint goes when the row does not fit.
     private func padHints(_ pad: ControllerInfo) -> some View {
-        let south = UserDefaults.standard.bool(forKey: "southConfirm")
-        let back = pad.label(String(cString: rnf_ui_cancel_element(south ? 1 : 0)))
+        let back = FaceGlyph.token(String(cString: rnf_ui_cancel_element(FaceGlyph.southConfirm ? 1 : 0)))
         let ps = pad.family == .playStation
         let rw = model.controlName(for: "hk.rewind") ?? "L2", ff = model.controlName(for: "hk.fast_forward") ?? "R2"
-        return HStack(spacing: 14) {
-            hint([back], Self.playTitle(clock.status))
-            hint([ps ? "L1" : "L", ps ? "R1" : "R"], String(localized: "Step"))
-            hint([rw, ff], String(localized: "Rewind") + " / " + String(localized: "Fast-forward"))
-            Spacer(minLength: 0)
+        let st = clock.status
+        let row = { (wind: Bool) in
+            HStack(spacing: 12) {
+                hint([back], Self.playTitle(st))
+                hint([ps ? "L1" : "L", ps ? "R1" : "R"], String(localized: "Step"))
+                if st.practicing { hint([FaceGlyph.token("face.north")], String(localized: "Stop Practicing")) }
+                if wind { hint([rw, ff], String(localized: "Rewind") + " / " + String(localized: "Fast-forward")) }
+                Spacer(minLength: 0)
+            }
         }
+        return ViewThatFits(in: .horizontal) { row(true); row(false) }
         .frame(height: 20)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("seekHints")
@@ -171,12 +176,7 @@ struct SeekBarPanel: View {
 
     private func hint(_ keys: [String], _ verb: String) -> some View {
         HStack(spacing: 4) {
-            ForEach(Array(keys.enumerated()), id: \.offset) { _, k in
-                Text(verbatim: k).font(.system(size: 11, weight: .bold, design: .rounded))
-                    .padding(.horizontal, 5).frame(minWidth: 20, minHeight: 20)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.16)))
-                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.22), lineWidth: 1))
-            }
+            ForEach(Array(keys.enumerated()), id: \.offset) { _, k in KeyCapIOS(k) }
             Text(verbatim: verb).font(.system(size: 12)).foregroundStyle(.white.opacity(0.75)).padding(.leading, 2)
         }
         .fixedSize()

@@ -213,6 +213,7 @@ final class AppModel: ObservableObject {
         inputConfig = input.config
         emu.onStatus = { [weak self] st in
             guard let self else { return }
+            if self.status.practicing != st.practicing { self.input.setPracticing(st.practicing) }
             if self.status != st { self.status = st; self.clock.status = st }
         }
         emu.onStructure = { [weak self] st in
@@ -242,9 +243,13 @@ final class AppModel: ObservableObject {
             self.flash(String(localized: "Paused because \(name) was disconnected"))
         }
         input.onPausedStep = { [weak emu] dir, down in emu?.perform { e in e.pausedStep(dir, down: down) } }
-        // The cancel tap during a countdown: the resume countdown goes back to paused, the practice
-        // one ends practice.
-        input.onCountdownCancel = { [weak emu] in emu?.perform { e in e.abortCountdown() } }
+        // Y while practicing (playing, paused, countdown): stop practice (shared InputManager).
+        input.onPracticeStop = { [weak self] in
+            guard let self, self.status.practicing, !self.quickMenu.isOpen, !self.showLibrary else { return }
+            self.practiceStop()
+        }
+        // Pad 1's shoulder gestures in play (L / R + START pause, L held + R / R held + L step).
+        input.onPauseGesture = { [weak self] dir in self?.markers.pauseGesture(dir) }
         quickMenu.model = self
         // The screens read quickMenu.isOpen through this model (RootView / LibraryView / PlayView /
         // PlaySurface): without this, opening or closing the menu redrew nothing unless the game's
@@ -344,16 +349,18 @@ final class AppModel: ObservableObject {
 
     private func showCoach(_ tip: rnf_coach_tip, shown: UInt32) {
         UserDefaults.standard.set(Int(shown), forKey: "coachShown")
-        flash(CoachTips.text(tip, rewindControl: controlName(for: "hk.rewind")), duration: 5)
+        flash(CoachTips.text(tip, rewindControl: controlName(for: "hk.rewind").map(FaceGlyph.plain)), duration: 5)
     }
 
     /// The name of the control bound to `action`: pad 1's button as printed on the connected
-    /// controller, else the touch button ("L2"); nil when unbound.
+    /// controller (a face button: its FaceGlyph token, drawn by KeyCapIOS), else the touch button as
+    /// drawn ("◀◀"); nil when unbound.
     func controlName(for action: String) -> String? {
         let config = inputConfig
         if let c = input.controllerMonitor.controllers.min(by: { $0.slot < $1.slot }),
            let id = InputCatalog.boundInput(config, action: action, pad: true), let colon = id.firstIndex(of: ":") {
-            return c.label(String(id[id.index(after: colon)...]))
+            let element = String(id[id.index(after: colon)...])
+            return FaceGlyph.token(forElement: element) ?? c.label(element)
         }
         guard let id = config.bindings.first(where: { $0.action == action && $0.input.hasPrefix("touch:") })?.input else { return nil }
         // The touch buttons as drawn: the transport row's ◀◀ / ▶▶ (no L2 / R2 label on screen).
