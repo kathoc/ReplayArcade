@@ -22,8 +22,8 @@ packages:
     exactVersion: 2.10.0
 settings:
   base:
-    MARKETING_VERSION: "0.6.1"
-    CURRENT_PROJECT_VERSION: "13"
+    MARKETING_VERSION: "0.6.2"
+    CURRENT_PROJECT_VERSION: "14"
     SWIFT_VERSION: "5.0"
     ARCHS: arm64
     ONLY_ACTIVE_ARCH: NO
@@ -42,7 +42,7 @@ settings:
       - "$(RN_ENGINE_BUILD_DIR)"
       - "$(RN_ENGINE_BUILD_DIR)/engine"
       - "$(RN_ENGINE_BUILD_DIR)/frontend"
-    OTHER_LDFLAGS: ["-lreplaynes_frontend", "-lreplaynes_engine", "-lnestopia_core", "-lc++"]
+    OTHER_LDFLAGS: ["-lreplaynes_frontend", "-lreplaynes_engine", "-lreplaynes_extra", "-lnestopia_core", "-lc++"]
     GCC_C_LANGUAGE_STANDARD: c11
 
 aggregateTargets:
@@ -55,6 +55,7 @@ aggregateTargets:
           - "$(RN_ENGINE_BUILD_DIR)/engine/libreplaynes_engine.a"
           - "$(RN_ENGINE_BUILD_DIR)/frontend/libreplaynes_frontend.a"
           - "$(RN_ENGINE_BUILD_DIR)/libnestopia_core.a"
+          - "$(RN_ENGINE_BUILD_DIR)/libreplaynes_extra.a"
 
 targets:
 

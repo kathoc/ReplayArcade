@@ -329,7 +329,7 @@ int App::run(const AppOptions& opt) {
   input_->onSeekInput = [this](InputRouter::SeekInput in, bool down) { ui_->seekInput(int(in), down); };
   input_->onMarkerHold = [this](int dir, bool down) { ui_->markerHold(dir, down); };
   input_->onPausedShoulder = [this](int dir) { ui_->pausedShoulder(dir); };
-  input_->onPauseGesture = [this](int dir) { ui_->pauseGesture(dir); };
+  input_->onPauseGesture = [this](int dir, bool repeat) { ui_->pauseGesture(dir, repeat); };
   input_->onUiShoulder = [this](int dir) { ui_->shoulder(dir); };
   ui_->onLanguage = [this](const std::string& l) { pendingLanguage_ = l; };
   input_->onDisconnect = [this](const std::string& name) {
@@ -345,6 +345,7 @@ int App::run(const AppOptions& opt) {
     });
   };
   ui_->onSettingsChanged = [this] {
+    app_->selectedCore = settings_.core;
     settings_.save(paths_.settingsFile());
     applySettings();
     if (updates_ && !updates_->ownsDialogs()) updates_->setAutoCheck(settings_.checkForUpdates);
@@ -384,6 +385,7 @@ int App::run(const AppOptions& opt) {
   library_->refresh();
   app_->setupSessionPersistence(true);
   if (!app_->persistSessions()) ui_->notice(TR("Another ReplayNES is running: this one doesn’t resume or keep sessions"));
+  app_->selectedCore = settings_.core;
   app_->startup(opt.rom, opt.resume && opt.rom.empty());
   std::unique_ptr<Script> script;
   if (!opt.script.empty()) {

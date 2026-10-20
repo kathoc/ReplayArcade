@@ -1061,9 +1061,16 @@ TEST_CASE("emulation: CRT reception - no signal at frame 0, power-on and reset, 
   CHECK_EQ(emu.signal().receptionStep, RNF_CRT_POWER_ON_FRAMES - 1);
   emu.tick();
   CHECK_EQ(emu.signal().receptionStep, RNF_CRT_RECEPTION_NORMAL);
-  CHECK(pushedIsGame());  // the hiss has faded out: the game's sound as is
-  // A reset shows the transition again.
+  CHECK(pushedIsGame());  // the hiss is gone: the game's sound as is
+  // A reset: no snow, its own brief disturbance (RX-PWR-4), no hiss; then normal.
   emu.requestEvent(RN_EV_SOFT_RESET);
+  emu.tick();
+  CHECK_EQ(emu.signal().receptionStep, RNF_CRT_RESET_STEP0);
+  CHECK(pushedIsGame());  // no hiss on a reset
+  tickN(emu, RNF_CRT_RESET_FRAMES);
+  CHECK_EQ(emu.signal().receptionStep, RNF_CRT_RECEPTION_NORMAL);
+  // A power cycle goes through the snow again.
+  emu.requestEvent(RN_EV_POWER_CYCLE);
   emu.tick();
   CHECK_EQ(emu.signal().receptionStep, 0);
   tickN(emu, RNF_CRT_POWER_ON_FRAMES);
@@ -2509,4 +2516,100 @@ TEST_CASE("export: MP4 retime of a long take (27:53, 100577 frames): 64-bit medi
   const std::string mv = findBox(out, "mvhd");
   CHECK_EQ(rd(mv, 16), audio48k);
   CHECK(out.find(audio) != std::string::npos);
+}
+
+TEST_CASE("core preference preserves unknown ids and applies only to new sessions") {
+  CHECK_EQ(Settings::parse("").core, std::string("nestopia"));
+  Settings preferences;
+  preferences.core = "replaynescore";
+  CHECK_EQ(Settings::parse(preferences.serialize()).core, preferences.core);
+  CHECK_EQ(Settings::parse("core=future-core\n").core, std::string("future-core"));
+  World w(tmpDir("core-selection"));
+  std::string rom = testRom(w.root + "/roms");
+  w.app->tryRom(rom);
+  REQUIRE(w.emu->session());
+  CHECK_EQ(rn_session_core_kind(w.emu->session()), RN_CORE_NESTOPIA);
+  rn_session* previous = w.emu->session();
+  w.app->selectedCore = "future-core";
+  w.app->tryRom(rom);
+  CHECK_EQ(w.emu->session(), previous);
+  CHECK_EQ(rn_session_core_kind(w.emu->session()), RN_CORE_NESTOPIA);
+}
+
+TEST_CASE("development core is a nonpersistent live session in the desktop controller") {
+  if (!rn_core_available(RN_CORE_REPLAYNESCORE)) return;
+  World w(tmpDir("live-core"));
+  // Synthetic owned fixture: SEI; JMP $8001. No APU or rendering writes.
+  std::vector<uint8_t> rom(16 + 16384 + 8192, 0);
+  rom[0]='N'; rom[1]='E'; rom[2]='S'; rom[3]=0x1a; rom[4]=1; rom[5]=1;
+  rom[16]=0x78; rom[17]=0x4c; rom[18]=1; rom[19]=0x80;
+  for (size_t i=0; i<3; ++i) { rom[16+0x3ffa+i*2]=0; rom[16+0x3ffb+i*2]=0x80; }
+  const auto path = w.root + "/live.nes";
+  { std::ofstream f(path, std::ios::binary); f.write(reinterpret_cast<const char*>(rom.data()), rom.size()); }
+  w.app->selectedCore = "replaynescore";
+  w.app->tryRom(path);
+  REQUIRE(w.emu->session());
+  CHECK(w.emu->live());
+  CHECK_FALSE(w.emu->status().recording);
+  CHECK_FALSE(w.emu->status().paused);
+  CHECK_EQ(std::string(rn_session_project_dir(w.emu->session())), "");
+  CHECK_FALSE(fs::exists(w.paths.tempProject()));
+  tickN(*w.emu, 2);
+  CHECK_EQ(rn_frame(w.emu->session()), uint64_t(2));
+  CHECK_EQ(rn_take_length(w.emu->session()), uint64_t(0));
+  // The core produces real PCM (silent here: no APU writes), and Live play delivers it like any other mode.
+  CHECK(w.audio.samples > 0);
+  w.emu->toggleRecord();
+  w.emu->startPractice(-1);
+  w.emu->seek(0);
+  CHECK_EQ(rn_frame(w.emu->session()), uint64_t(2));
+  CHECK_EQ(rn_get_mode(w.emu->session()), RN_MODE_LIVE);
+  w.app->save();
+  w.app->saveAs();
+  w.app->persistNow();
+  CHECK_FALSE(fs::exists(w.paths.tempProject()));
+  w.app->selectedCore = "nestopia";
+  CHECK_EQ(rn_session_core_kind(w.emu->session()), RN_CORE_REPLAYNESCORE);
+  w.app->closeProject();
+  CHECK_FALSE(w.emu->session());
+  w.app->tryRom(path);
+  REQUIRE(w.emu->session());
+  CHECK_EQ(rn_session_core_kind(w.emu->session()), RN_CORE_NESTOPIA);
+}
+
+TEST_CASE("pad 1 follow gesture: in play L held + R pauses and R held + L toggles slow; paused they step") {
+  World w(tmpDir("follow-gesture"));
+  w.app->tryRom(testRom(w.root + "/roms"));
+  REQUIRE(w.emu->session());
+  REQUIRE(!w.emu->paused());
+  tickN(*w.emu, 3);
+  rn_session* s = w.emu->session();
+  // R held + L in play: slow 1/2 (still playing); the hold's repeats neither step nor pause.
+  w.emu->followGesture(-1, false);
+  tickN(*w.emu, 1);
+  CHECK_FALSE(w.emu->paused());
+  CHECK_EQ(w.emu->status().slow, 2);
+  w.emu->followGesture(-1, true);
+  CHECK_FALSE(w.emu->paused());
+  w.emu->followGesture(-1, false);  // again: back to normal speed
+  tickN(*w.emu, 1);
+  CHECK_EQ(w.emu->status().slow, 1);
+  // L held + R in play: pause (the seek bar), no frame step - also not from the hold's repeats.
+  w.emu->followGesture(1, false);
+  CHECK(w.emu->paused());
+  const uint64_t at = rn_frame(s);
+  w.emu->followGesture(1, true);
+  tickN(*w.emu, 2);
+  CHECK_EQ(rn_frame(s), at);
+  // Paused: a new follow press steps (forward / back), and its repeats step too.
+  w.emu->followGesture(1, false);
+  tickN(*w.emu, 1);
+  CHECK_EQ(rn_frame(s), at + 1);
+  w.emu->followGesture(1, true);
+  tickN(*w.emu, 1);
+  CHECK_EQ(rn_frame(s), at + 2);
+  w.emu->followGesture(-1, false);
+  CHECK_EQ(rn_frame(s), at + 1);
+  CHECK(w.emu->paused());
+  CHECK_EQ(w.emu->status().slow, 1);  // a paused step never changes the speed
 }
