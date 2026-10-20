@@ -249,7 +249,7 @@ final class AppModel: ObservableObject {
             self.practiceStop()
         }
         // Pad 1's shoulder gestures in play (L / R + START pause, L held + R / R held + L step).
-        input.onPauseGesture = { [weak self] dir in self?.markers.pauseGesture(dir) }
+        input.onPauseGesture = { [weak self] dir, repeated in self?.markers.pauseGesture(dir, repeated: repeated) }
         quickMenu.model = self
         // The screens read quickMenu.isOpen through this model (RootView / LibraryView / PlayView /
         // PlaySurface): without this, opening or closing the menu redrew nothing unless the game's
@@ -398,6 +398,13 @@ final class AppModel: ObservableObject {
         emu.perform { e in
             guard let s = e.session else { return }
             e.stepFrame(dir, s)
+        }
+    }
+    /// L held + R / R held + L (EmulationController.followGesture: in play pause / slow 1/2, paused a step).
+    func followGesture(_ dir: Int, repeated: Bool) {
+        emu.perform { e in
+            guard let s = e.session else { return }
+            e.followGesture(dir, repeated: repeated, s)
         }
     }
     func toggleSlow() { emu.perform { e in e.slow = e.slow.toggled } }
