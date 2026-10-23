@@ -38,6 +38,12 @@ struct LibraryView: View {
                                         .accessibilityAddTraits(.isButton)
                                         .onTapGesture { model.playFromLibrary(rom) }
                                         .contextMenu { cardMenu(rom) }
+                                        .onAppear {  // no picture yet: the ROM's frame 300, made in the background
+                                            guard ThumbnailStore.image(romSHA: rom.sha256) == nil else { return }
+                                            ThumbnailStore.requestRomPicture(path: rom.url.path, sha: rom.sha256) { [library] in
+                                                library.objectWillChange.send()
+                                            }
+                                        }
                                 }
                             }
                             .onAppear { focus.columns = columns }
@@ -45,8 +51,14 @@ struct LibraryView: View {
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 72)  // the last row clears the fade below
                 }
+                // Which way it goes: the grid fades out at the bottom edge (a row cut there reads as
+                // "more below") and the scroll indicator flashes when the library appears.
+                .scrollIndicatorsFlash(onAppear: true)
+                .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.88),
+                                             .init(color: .black.opacity(0.15), location: 1)],
+                                     startPoint: .top, endPoint: .bottom))
             }
             .background(Color.black.ignoresSafeArea())
             .navigationTitle("ReplayNES")
