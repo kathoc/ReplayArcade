@@ -32,13 +32,15 @@ struct LibraryView: View {
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: columns), spacing: 14) {
                                 ForEach(Array(games.enumerated()), id: \.element.id) { i, rom in
                                     GameCard(rom: rom, favorite: library.isFavorite(rom), projects: library.projects(for: rom).count,
-                                             focused: focus.index == i && !model.controllers.isEmpty)
+                                             focused: focus.index == i && !model.controllers.isEmpty,
+                                             picture: ThumbnailStore.image(romSHA: rom.sha256))
                                         .accessibilityElement(children: .combine)
                                         .accessibilityIdentifier("gameCard.\(rom.relativePath)")
                                         .accessibilityAddTraits(.isButton)
                                         .onTapGesture { model.playFromLibrary(rom) }
                                         .contextMenu { cardMenu(rom) }
-                                        .onAppear {  // no picture yet: the ROM's frame 300, made in the background
+                                        .task(id: rom.sha256) {  // no picture yet: the ROM's frame 300, made in the background
+                                            // (by SHA: a card can appear before its ROM is hashed)
                                             guard ThumbnailStore.image(romSHA: rom.sha256) == nil else { return }
                                             ThumbnailStore.requestRomPicture(path: rom.url.path, sha: rom.sha256) { [library] in
                                                 library.objectWillChange.send()
@@ -219,12 +221,14 @@ struct GameCard: View {
     let favorite: Bool
     let projects: Int
     let focused: Bool
+    /// The ROM's picture, read by the list (an input: a picture made in the background redraws the card).
+    var picture: CGImage? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .topTrailing) {
                 Group {
-                    if let img = ThumbnailStore.image(romSHA: rom.sha256) {
+                    if let img = picture {
                         Image(decorative: img, scale: 1).resizable().interpolation(.none)
                     } else {
                         ZStack {
