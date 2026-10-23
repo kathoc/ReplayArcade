@@ -27,12 +27,15 @@ enum TouchButton: String, CaseIterable, Hashable {
     /// Frame Advance keys (AppModel.touchButtons → stepFrame: pauses, then steps one frame; held:
     /// repeats after 400 ms, every 50 ms, as a controller's paused L / R).
     case stepBack, stepForward
+    /// Slow motion (ReplayNES, portrait: under the middle of the frame steps): handled by the app,
+    /// toggles normal ⇔ 1/2 at the press (the desktop's / controller's hk.slow, R held + L).
+    case slow
 
     /// The engine input id ("touch:dpad.up"), nil for buttons handled by the app.
     var inputID: String? {
         switch self {
         case .up, .down, .left, .right: return "touch:dpad.\(rawValue)"
-        case .menu, .stepBack, .stepForward: return nil
+        case .menu, .stepBack, .stepForward, .slow: return nil
         default: return "touch:\(rawValue)"
         }
     }
@@ -174,6 +177,16 @@ struct TouchLayout: Equatable {
     // .gp-face { --gp-gap: 2px; --gp-tilt: .4502 }
     static let faceGap: CGFloat = 2
     static let faceTilt: CGFloat = 0.4502
+    /// B sits this fraction of the button diameter further right than the CSS puts it (ReplayNES,
+    /// 2026-10-23): A and B a little closer, B (and BB) further from the D-pad, which a thumb on B
+    /// used to brush. TOUCH_PORT.md, Deviations.
+    static let bTowardA: CGFloat = 0.12
+    /// AA / BB at 11 o'clock of A / B (30° left of straight up; ReplayNES, 2026-10-23). Was
+    /// perpendicular to the B → A axis (about 10:30), which put BB too close to the D-pad.
+    static let turboAngle: CGFloat = 30
+    /// The slow-motion button (portrait): its box under the middle of the transport row.
+    static let slowSize = CGSize(width: 44, height: 32)
+    static let slowGap: CGFloat = 4
 
     // ReplayNES deviations from the CSS (apps/ios/docs/TOUCH_PORT.md, Deviations).
     /// The D-pad is drawn 10 % larger than --bb-dpad / the portrait clamp give.
@@ -248,6 +261,7 @@ struct TouchLayout: Equatable {
         case .r2: return .icon("forward.fill")
         case .stepBack: return .icon("backward.frame.fill")
         case .stepForward: return .icon("forward.frame.fill")
+        case .slow: return .icon("tortoise.fill")
         case .turboA, .turboB: return .round
         default: return .pill
         }
@@ -278,13 +292,12 @@ struct TouchLayout: Equatable {
         return (s, (btn + s) / 2 + turboGap)
     }
 
-    /// The direction from A (B) to AA (BB): perpendicular to the B → A axis, up and to the left,
-    /// so AA / BB form a row parallel to A / B (a Pro Controller's X / Y over A / B, with the A/B
-    /// tilt). Unit vector, screen coordinates (y down).
+    /// The direction from A (B) to AA (BB): 11 o'clock, `turboAngle` left of straight up. Unit
+    /// vector, screen coordinates (y down). (`btn` kept for the callers; the angle does not depend
+    /// on it.)
     static func turboDirection(btn: CGFloat) -> CGVector {
-        let dx = btn + faceGap, dy = 2 * (btn + faceGap) * faceTilt   // B → A: (dx, -dy)
-        let n = hypot(dx, dy)
-        return CGVector(dx: -dy / n, dy: -dx / n)
+        let r = turboAngle * .pi / 180
+        return CGVector(dx: -sin(r), dy: -cos(r))
     }
 
     /// The offset from A (B) to AA (BB): `turboDirection` × `step`, turned toward straight up (same
@@ -335,7 +348,7 @@ struct TouchLayout: Equatable {
         let w = 2 * padX + 2 * btn + faceGap
         let h = btn + 2 * padY
         let box = CGRect(x: x, y: midY - h / 2, width: w, height: h)
-        let b = CGPoint(x: x + padX + btn / 2, y: midY + off)
+        let b = CGPoint(x: x + padX + btn / 2 + bTowardA * btn, y: midY + off)
         let a = CGPoint(x: x + padX + btn + faceGap + btn / 2, y: midY - off)
         return (box, a, b)
     }
@@ -379,13 +392,20 @@ struct TouchLayout: Equatable {
         // centred on the A/B midpoint (ReplayNES).
         let d = (min(o.dpadSize, max(112, H * 0.24)) * dpadScale).rounded()
         // AA / BB up-left of A / B, BB kept `turboGap` clear of the D-pad (narrow screens).
-        let tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 4 + btn / 2, y: 0), minLeft: pi + 2 + d + turboGap)
+        let tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 4 + btn / 2 + bTowardA * btn, y: 0), minLeft: pi + 2 + d + turboGap)
         let below = btn / 2 + off + 4
         let above = o.showAABB ? turboAbove(btn: btn, offset: tv) : below
         let m = faceMid(row: row1, top: row1.minY, above: above, below: below)
         let f = face(x: faceX, midY: m, btn: btn, padX: 4, padY: off + 4)
         let dpad = CGRect(x: pi + 2, y: m - d / 2, width: d, height: d)
         if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv) }
+        // Slow motion: under the middle of the frame steps (ReplayNES), only where its 44 pt touch
+        // area keeps clear of the D-pad, A / B and AA / BB (else no button: the seek bar has it).
+        let slow = TouchExtra(kind: .button(.slow), frame: CGRect(x: W / 2 - slowSize.width / 2, y: subbar.maxY + slowGap,
+                                                                  width: slowSize.width, height: slowSize.height), style: style(.button(.slow)))
+        let discs = [f.a, f.b].map { CGRect(x: $0.x - btn / 2, y: $0.y - btn / 2, width: btn, height: btn) }
+            + extras.filter { $0.style == .round }.map(\.hitFrame)
+        if !slow.hitFrame.intersects(dpad) && !discs.contains(where: { slow.hitFrame.intersects($0) }) { extras.append(slow) }
 
         // .gp-system { display: flex; justify-content: center; gap: 22px }.
         let total = sel.width + 22 + sta.width
@@ -454,11 +474,11 @@ struct TouchLayout: Equatable {
         // edge), then AA / BB turn toward straight up as far as needed.
         var tv = CGVector.zero
         if o.showAABB {
-            let bLeft = faceX + 16
+            let bLeft = faceX + 16 + bTowardA * btn
             let t = turboMetrics(btn: btn), u = turboDirection(btn: btn)
             let protrude = max(0, -(u.dx * t.step) + t.size / 2 - btn / 2)
             faceX += min(protrude, 16, 8 + safe.right)
-            tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 16 + btn / 2, y: 0), minLeft: bLeft)
+            tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 16 + btn / 2 + bTowardA * btn, y: 0), minLeft: bLeft)
         }
         let below = btn / 2 + 48
         let above = o.showAABB ? turboAbove(btn: btn, offset: tv) : below

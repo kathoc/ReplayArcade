@@ -163,6 +163,7 @@ final class TouchExtrasView: UIView {
             case .r2: return String(localized: "Fast-forward")
             case .stepBack: return L("Frame Back")
             case .stepForward: return L("Frame Forward")
+            case .slow: return L("Slow Motion")
             case .menu: return String(localized: "Menu")
             default: return nil
             }

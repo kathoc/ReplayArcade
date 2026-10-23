@@ -56,9 +56,12 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(g.face.width, 158.1875, accuracy: 0.05)
         XCTAssertEqual(g.face.height, 150.59375, accuracy: 0.05)
         XCTAssertEqual(portrait.faceButton, 74.1, accuracy: 0.05) // clamp(48, min(19vw, el-h * .13), 78)
-        XCTAssertEqual(g.a.x - g.b.x, 331.40625 - 255.3125, accuracy: 0.05)
+        // B sits bTowardA x the button further right than the CSS (A and B closer, B off the D-pad).
+        let abX = 331.40625 - 255.3125 - TouchLayout.bTowardA * portrait.faceButton
+        XCTAssertEqual(g.a.x - g.b.x, abX, accuracy: 0.05)
         XCTAssertEqual(g.a.y - g.b.y, 580.5522766113281 - 649.07275390625, accuracy: 0.05)
-        XCTAssertEqual(hypot(g.a.x - g.b.x, g.a.y - g.b.y), 102.3978251614086, accuracy: 0.05)
+        XCTAssertEqual(hypot(g.a.x - g.b.x, g.a.y - g.b.y), hypot(abX, 580.5522766113281 - 649.07275390625), accuracy: 0.05)
+        XCTAssertLessThan(hypot(g.a.x - g.b.x, g.a.y - g.b.y), 102.3978251614086, "A and B closer than the CSS")
         XCTAssertEqual(g.face.midY, g.dpad.midY, accuracy: 0.01, "both centred in the first grid row")
         XCTAssertEqual(g.system?.minX ?? 0, 17.546875, accuracy: 0.01)
         XCTAssertEqual(g.system?.width ?? 0, 354.90625, accuracy: 0.01)
@@ -83,7 +86,7 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(g.dpad, CGRect(x: 16, y: g.dpad.minY, width: 158, height: 158))
         XCTAssertEqual(g.face, CGRect(x: 654, y: g.face.minY, width: 190, height: 174))
         XCTAssertEqual(g.a.x, 789, accuracy: 0.01)
-        XCTAssertEqual(g.b.x, 709, accuracy: 0.01)
+        XCTAssertEqual(g.b.x, 709 + TouchLayout.bTowardA * landscape.faceButton, accuracy: 0.01)
         XCTAssertEqual(g.b.y - g.a.y, 241.5159912109375 - 169.4840087890625, accuracy: 0.01)
         XCTAssertEqual(g.face.midY, g.dpad.midY, accuracy: 0.01)
         XCTAssertNil(g.system, "display: contents: only the pills take touches")
@@ -190,8 +193,8 @@ final class TouchLayoutTests: XCTestCase {
             XCTAssertEqual(hypot(da.dx, da.dy), step, accuracy: 0.01, name)
             let u = TouchLayout.turboDirection(btn: l.faceButton)
             if abs(da.dx - u.dx * step) < 0.01 {
-                // Perpendicular to B → A.
-                XCTAssertEqual(da.dx * (g.a.x - g.b.x) + da.dy * (g.a.y - g.b.y), 0, accuracy: 0.5, "the A/B tilt (\(name))")
+                // 11 o'clock: turboAngle left of straight up.
+                XCTAssertEqual(atan2(-da.dx, -da.dy) * 180 / .pi, TouchLayout.turboAngle, accuracy: 0.01, "11 o'clock (\(name))")
             } else {
                 // Turned toward straight up only as far as the D-pad (portrait) / picture (landscape) needs.
                 XCTAssertGreaterThan(da.dx, u.dx * step, name)
@@ -219,6 +222,27 @@ final class TouchLayoutTests: XCTestCase {
                 XCTAssertEqual(TouchGamepad(press: { _, _ in }).with(g).regionAt(c), .face, name)
             }
         }
+    }
+
+    /// Portrait: the slow-motion button right under the middle of the frame steps, clear of the
+    /// transport row; landscape has none (the transport row is at the bottom edge).
+    func testSlowButtonUnderTheFrameSteps() {
+        for (name, l) in Self.layouts() {
+            let slow = l.extra(.slow)
+            if l.landscape { XCTAssertNil(slow, name); continue }
+            guard let slow else {
+                // Only a screen too small for it goes without (the seek bar has slow motion too).
+                XCTAssertTrue(name.hasPrefix("iPhone SE"), "no slow button (\(name))")
+                continue
+            }
+            let back = l.extra(.stepBack)!, forward = l.extra(.stepForward)!
+            XCTAssertEqual(slow.frame.midX, (back.frame.midX + forward.frame.midX) / 2, accuracy: 0.01, name)
+            XCTAssertEqual(slow.frame.minY, back.frame.maxY + TouchLayout.transportMargin + TouchLayout.slowGap, accuracy: 0.01, name)
+            XCTAssertFalse(slow.hitFrame.intersects(back.hitFrame), name)
+            XCTAssertEqual(slow.style, .icon("tortoise.fill"))
+            XCTAssertNil(TouchButton.slow.inputID, "handled by the app, never game input")
+        }
+        XCTAssertNotNil(phonePortrait.extra(.slow), "iPhone 17")
     }
 
     /// The transport row right under the picture: ⏪ ◀| |▶ ⏩ left to right, Rewind / Fast-forward

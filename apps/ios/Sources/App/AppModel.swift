@@ -475,6 +475,11 @@ final class AppModel: ObservableObject {
         let pausedInPlay = st.hasSession && st.paused && !quickMenu.isOpen && !showLibrary
         for b in pressed {
             if b == .menu { quickMenu.open(); continue }
+            // Slow motion: normal ⇔ 1/2 at the press (as a controller's R held + L in play).
+            if b == .slow {
+                if st.hasSession && !quickMenu.isOpen && !showLibrary { toggleSlow() }
+                continue
+            }
             // Frame step buttons: as the desktop's Step Back / Frame Advance keys (EmulationController
             // stepFrame): playing (also during the resume countdown, which the pause cancels), the
             // press pauses and steps; paused, it steps. Held: repeats as a controller's paused L / R.
@@ -499,6 +504,7 @@ final class AppModel: ObservableObject {
             }
         }
         for b in released {
+            if b == .slow { continue }
             if b == .stepBack || b == .stepForward {
                 if stepRepeatButton == b { stopStepRepeat() }
                 continue

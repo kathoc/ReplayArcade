@@ -65,6 +65,14 @@ buttons), wired in `Sources/Play/GameView.swift` (`PlaySurfaceView`).
 
 ## Deviations (and why)
 
+- **Thumb room on the right (2026-10-23, user report: BB sat so close to the D-pad that it was hit
+  by mistake):** B sits `bTowardA` (12 %) of the button diameter further right than the CSS (A and B
+  a little closer, B and BB further from the D-pad), and AA / BB are at **11 o'clock** of A / B
+  (`turboAngle` 30° left of straight up) instead of perpendicular to the B → A axis (about 10:30).
+- **Slow motion button (portrait, 2026-10-23):** a tortoise pill right under the middle of the frame
+  steps toggles normal ⇔ 1/2 (`TouchButton.slow`, handled by the app like the frame steps). Placed
+  only where its 44 pt touch area keeps clear of the D-pad, A / B and AA / BB (the iPhone SE size has
+  none; the seek bar has slow motion too). Landscape has none: the transport row is at the bottom edge.
 - **Not ported** (diagnostics of the web build): the debug overlay canvas, gesture / face-event
   recording and JSON export, `probe()`, `setTag` / frame samples, the optional button sound
   (`feedback` hook exists, unwired). The CSS **rotation** option (`setRotation`, `toElem` for ±90°):
