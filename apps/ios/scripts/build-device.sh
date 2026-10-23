@@ -82,9 +82,14 @@ rm -f "$DEVJSON"
 DEST="generic/platform=iOS"   # build generically (the device may be locked/not prepared for xcodebuild); install with devicectl
 if [ -n "$DEVICE" ]; then echo "==> iPhone: $DEVICE"; else echo "==> no paired iPhone found: build only"; fi
 
-DERIVED="$REPO/build/ios-device"
+# Build outputs: <repo>/build, or outside iCloud Drive when the checkout is in it (build-root.sh:
+# codesign refuses files with File Provider attributes). The engine follows (RN_ENGINE_BUILD_DIR).
+BUILD_ROOT="$("$HERE/scripts/build-root.sh" "$REPO")"
+echo "==> build outputs: $BUILD_ROOT"
+DERIVED="$BUILD_ROOT/ios-device"
 xcodebuild -project "$HERE/ReplayNES.xcodeproj" -scheme ReplayNES -configuration "$CONFIG" \
-  -destination "$DEST" -derivedDataPath "$DERIVED" -allowProvisioningUpdates build
+  -destination "$DEST" -derivedDataPath "$DERIVED" -allowProvisioningUpdates \
+  RN_ENGINE_BUILD_DIR="$BUILD_ROOT/ios-engine" build
 APP="$DERIVED/Build/Products/$CONFIG-iphoneos/ReplayNES.app"
 echo "==> built $APP"
 
