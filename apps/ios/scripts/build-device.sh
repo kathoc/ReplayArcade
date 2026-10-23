@@ -87,9 +87,19 @@ if [ -n "$DEVICE" ]; then echo "==> iPhone: $DEVICE"; else echo "==> no paired i
 BUILD_ROOT="$("$HERE/scripts/build-root.sh" "$REPO")"
 echo "==> build outputs: $BUILD_ROOT"
 DERIVED="$BUILD_ROOT/ios-device"
+# Build keychain (scripts/setup-build-keychain.sh): unlocked here, codesign signs from it, so the
+# build also works over ssh (the login keychain is locked there). Absent: the login keychain.
+SIGNKC=""
+BKC="$HOME/Library/Keychains/replaynes-build.keychain-db"
+BPASS="$HOME/.config/replaynes/build-keychain.pass"
+if [ -f "$BKC" ] && [ -f "$BPASS" ]; then
+  security unlock-keychain -p "$(cat "$BPASS")" "$BKC"
+  SIGNKC="$BKC"
+  echo "==> signing keychain: $BKC"
+fi
 xcodebuild -project "$HERE/ReplayNES.xcodeproj" -scheme ReplayNES -configuration "$CONFIG" \
   -destination "$DEST" -derivedDataPath "$DERIVED" -allowProvisioningUpdates \
-  RN_ENGINE_BUILD_DIR="$BUILD_ROOT/ios-engine" build
+  RN_ENGINE_BUILD_DIR="$BUILD_ROOT/ios-engine" ${SIGNKC:+"OTHER_CODE_SIGN_FLAGS=--keychain $SIGNKC"} build
 APP="$DERIVED/Build/Products/$CONFIG-iphoneos/ReplayNES.app"
 echo "==> built $APP"
 

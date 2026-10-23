@@ -40,6 +40,14 @@ apps/ios/scripts/build-device.sh --team ABCDE12345 --bundle-id io.github.<you>.r
 apps/ios/scripts/build-device.sh --install        # later runs remember the values
 ```
 
+**Over ssh** (signing from another machine): the login keychain is locked in an ssh session, so
+codesign fails (`errSecInternalComponent`). Run once in the Mac's Terminal
+`apps/ios/scripts/setup-build-keychain.sh`: it makes `~/Library/Keychains/replaynes-build.keychain-db`
+with only this team's Apple Development identity (random password in
+`~/.config/replaynes/build-keychain.pass`, mode 600) and lets codesign use it without a prompt;
+`build-device.sh` then unlocks it and signs from it. Anyone who can read the password file can sign
+as this team; `setup-build-keychain.sh --remove` deletes both.
+
 The team id is the `OU=` value of
 `security find-certificate -a -c "Apple Development" -p | openssl x509 -noout -subject`.
 
