@@ -27,6 +27,8 @@ struct BurnRomInfo {
 char* BurnDrvGetTextA(unsigned int i);
 int BurnDrvGetRomInfo(struct BurnRomInfo* pri, unsigned int i);
 int BurnDrvGetAspect(int* pnXAspect, int* pnYAspect);
+int BurnDrvGetIndex(char* szName);
+extern unsigned int nBurnDrvActive;
 }
 
 namespace rac {
@@ -398,7 +400,8 @@ class FbneoCore final : public rn::ICore {
     uint64_t gcd = std::gcd(num, den);
     media_.pixelAspectNum = uint32_t(num / (gcd ? gcd : 1));
     media_.pixelAspectDen = uint32_t(den / (gcd ? gcd : 1));
-    media_.rotation = h.rotation;
+    // libretro reports counter-clockwise quarter turns; MediaInfo counts clockwise ones.
+    media_.rotation = (4 - h.rotation) % 4;
     spf_ = h.samplesPerFrame;
     layout_ = h.layout;
     contentId_ = h.contentId;
@@ -517,6 +520,18 @@ int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) 
 }
 
 }  // namespace
+
+std::string contentIdForPath(const std::string& path) {
+  std::string name = std::filesystem::path(path).stem().string();
+  std::lock_guard<std::mutex> g(host().m);  // no frame runs while the driver selection is borrowed
+  int index = BurnDrvGetIndex(const_cast<char*>(name.c_str()));
+  if (index < 0) return {};
+  const unsigned saved = nBurnDrvActive;
+  nBurnDrvActive = unsigned(index);
+  std::string id = contentIdOfLoaded();
+  nBurnDrvActive = saved;
+  return id;
+}
 
 void registerFbneoCore(const FbneoSettings& settings) {
   {

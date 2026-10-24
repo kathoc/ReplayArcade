@@ -22,4 +22,9 @@ struct FbneoSettings {
 // Registers the core with ReplayNES's engine (rn::registerExternalCore). Call once at start-up.
 void registerFbneoCore(const FbneoSettings& settings = {});
 
+// The content id of an arcade set file (the file name is the set name), equal to what the core
+// reports once it has loaded that file; "" if FBNeo has no such set. Does not load the game, so a
+// library can identify its files cheaply.
+std::string contentIdForPath(const std::string& path);
+
 }  // namespace rac

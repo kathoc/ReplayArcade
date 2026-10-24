@@ -1,0 +1,17 @@
+#nesdb	1
+P	Q122741	Sega	セガ
+P	Q309996	Namco	ナムコ
+P	Q14428	Capcom	カプコン
+P	Q45700	Konami	コナミ
+G	x-aburner2	After Burner II	アフターバーナーII	アフターバーナーツー	Q122741	1987	shooter	JP	aburner2
+G	x-gforce2ja	Galaxy Force II	ギャラクシーフォースII	ギャラクシーフォースツー	Q122741	1988	shooter	JP	gforce2ja|gforce2
+G	x-sharrier	Space Harrier	スペースハリアー	スペースハリアー	Q122741	1985	shooter	JP	sharrier
+G	x-splatter	Splatterhouse	スプラッターハウス	スプラッターハウス	Q309996	1988	action	JP	splatter
+G	x-ordyneje	Ordyne	オーダイン	オーダイン	Q309996	1988	shooter	JP	ordyneje|ordyne
+G	x-dspirit	Dragon Spirit	ドラゴンスピリット	ドラゴンスピリット	Q309996	1987	shooter	JP	dspirit
+G	x-genpeitd	Genpei Toumaden	源平討魔伝	ゲンペイトウマデン	Q309996	1986	action	JP	genpeitd
+G	x-daimakai	Daimakaimura	大魔界村	ダイマカイムラ	Q14428	1988	action	JP	daimakai|ghouls
+G	x-gradius	Gradius	グラディウス	グラディウス	Q45700	1985	shooter	JP	gradius|nemesis
+G	x-gradius2	Gradius II: Gofer no Yabou	グラディウスII GOFERの野望	グラディウスツーゴーファーノヤボウ	Q45700	1988	shooter	JP	gradius2|vulcan
+G	x-salamand	Salamander	沙羅曼蛇	サラマンダ	Q45700	1986	shooter	JP	salamand
+G	x-aliens	Aliens	エイリアンズ	エイリアンズ	Q45700	1990	action	JP	aliens
