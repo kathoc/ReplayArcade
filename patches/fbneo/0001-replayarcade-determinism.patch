@@ -483,3 +483,17 @@ index 9e8983568..7650ad119 100644
  	pBurnDraw = bEnableVideo && !bSkipFrame ? pVidImage : NULL; // Set to NULL to skip frame rendering
  	pBurnSoundOut = bEmulateAudio ? pAudBuffer : NULL; // Set to NULL to skip sound rendering
  
+diff --git a/src/burner/libretro/retro_input.cpp b/src/burner/libretro/retro_input.cpp
+index ffc57cfb7..473cc103c 100644
+--- a/src/burner/libretro/retro_input.cpp
++++ b/src/burner/libretro/retro_input.cpp
+@@ -3520,6 +3520,9 @@ void InputInit()
+ 
+ 	// make sure everything is clean before processing this games's inputs
+ 	nSwitchCode = 0;
++	// ReplayArcade: map and describe every loaded game's inputs, not only the first one's
++	bControllersNeedRefresh = true;
++	bControllersSetOnce = false;
+ 	nAxisNum = 0;
+ 	UINT32 i, j, k;
+ 	for (i = 0; i < MAX_KEYBINDS; i++)

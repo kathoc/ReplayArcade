@@ -1,0 +1,46 @@
+# ReplayArcade for Steam Deck / Linux (Flatpak), built from ReplayNES's sources with ReplayArcade's
+# product profile. Use scripts/build-deck-flatpak.sh: it copies ReplayArcade and ReplayNES's tree
+# (third_party/replaynes) to the Deck and runs flatpak-builder there. Private build, not published.
+id: io.github.kathoc.ReplayArcade
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: replayarcade-linux
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Controllers: /dev/input and /dev/hidraw* (Steam Deck built-in controls), as ReplayNES.
+  - --device=all
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0
+  # ROM sets and projects: ~/Documents/ReplayArcade/{ROM,Projects}
+  - --filesystem=xdg-documents/ReplayArcade:create
+  - --filesystem=xdg-data/Trash:create
+  # "Add to Steam": shortcuts.vdf and grid artwork of each local Steam account, as ReplayNES.
+  - --filesystem=~/.local/share/Steam/userdata
+  - --filesystem=~/.local/share/Steam/logs:ro
+modules:
+  - name: replayarcade
+    buildsystem: cmake-ninja
+    subdir: third_party/replaynes/apps/linux
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DRNL_BUILD_TESTS=OFF
+      - -DRN_PRODUCT_FILE=/run/build/replayarcade/cmake/product.cmake
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - build
+          - build-linux-sdk
+          - .flatpak-builder
+          - dist
+      # ReplayNES's engine always links the Nestopia core (cmake/NestopiaCore.cmake checks the pin).
+      - type: git
+        url: https://github.com/0ldsk00l/nestopia.git
+        commit: 7b5c87d8dc3c817211545449683d1fcd897324ca
+        dest: third_party/replaynes/third_party/nestopia

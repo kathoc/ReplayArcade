@@ -165,6 +165,18 @@ void buildLayout(Host& h) {
     b.bit = uint8_t(id % 8);
     l.buttons.push_back(b);
   }
+  // Menus list buttons in layout order: per player, the numbered buttons, then coin and start,
+  // then the d-pad (retropad id order would put Button 2 after the d-pad). The record bits stay.
+  auto rank = [](const rn::InputLayout::Button& b) {
+    static const char* order[] = {"b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "coin", "start",
+                                  "service", "l3", "up", "down", "left", "right"};
+    std::string name = b.id.substr(b.id.find('.') + 1);
+    int i = 0;
+    while (i < 16 && name != order[i]) ++i;
+    return std::make_pair(b.id.substr(0, b.id.find('.')), i);
+  };
+  std::stable_sort(l.buttons.begin(), l.buttons.end(),
+                   [&](const rn::InputLayout::Button& a, const rn::InputLayout::Button& b) { return rank(a) < rank(b); });
   for (unsigned port = 0; port < kMaxPorts; ++port) {
     std::string pre = "p" + std::to_string(port + 1) + ".";
     auto has = [&](const std::string& id) {
