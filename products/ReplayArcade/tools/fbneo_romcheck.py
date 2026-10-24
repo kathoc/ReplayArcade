@@ -1,7 +1,11 @@
 # FBNeo のドライバ定義から必要 ROM の CRC を取り、ROM フォルダの zip（自身と親）と照合する。
+# 使い方: python3 -I fbneo_romcheck.py <FBNeo の src/burn/drv> <ROM フォルダ> <ゲーム...>
+# 関数 driver / roms は tools/make_romdir.py からも使う（load で FBNeo のドライバを読む）。
 import re, sys, zipfile, pathlib
-drvroot, romdir, *games = sys.argv[1:]
-src = {p: p.read_text(errors='ignore') for p in pathlib.Path(drvroot).rglob('d_*.cpp')}
+src = {}
+def load(drvroot):
+    src.clear()
+    src.update({p: p.read_text(errors='ignore') for p in pathlib.Path(drvroot).rglob('d_*.cpp')})
 def driver(name):
     for p, t in src.items():
         m = re.search(r'struct BurnDriver\w*\s+\w+\s*=\s*\{\s*"%s"\s*,\s*("?\w*"?|NULL)\s*,\s*("?\w*"?|NULL)\s*,(.*?)\};' % re.escape(name), t, re.S)
@@ -27,20 +31,26 @@ def roms(t, info):
             if 'NODUMP' in e.group(4) or 'BRF_OPT' in e.group(4) or int(e.group(3),16) == 0: continue
             out.append((e.group(1), int(e.group(2),0), int(e.group(3),16)))
     return out
-def zcrcs(names):
+def zcrcs(names, romdir):
     s = {}
     for n in filter(None, names):
         z = pathlib.Path(romdir, n + '.zip')
         if z.exists():
             for i in zipfile.ZipFile(z).infolist(): s[i.CRC] = z.name
     return s
-for g in games:
-    d = driver(g)
-    if not d: print(f'{g}: FBNeo にドライバなし'); continue
-    p, t, parent, bios, info = d
-    need = roms(t, info)
-    have = zcrcs([g, parent, bios])
-    miss = [r for r in need if r[2] not in have]
-    zips = [n for n in [g, parent, bios] if n and pathlib.Path(romdir, n+'.zip').exists()]
-    print(f'{g}: 必要 {len(need)} / 不足 {len(miss)}  (親={parent}, BIOS={bios}, zip={zips})')
-    for r in miss[:8]: print(f'    不足: {r[0]} crc={r[2]:08x}')
+def main():
+    drvroot, romdir, *games = sys.argv[1:]
+    load(drvroot)
+    for g in games:
+        d = driver(g)
+        if not d: print(f'{g}: FBNeo にドライバなし'); continue
+        p, t, parent, bios, info = d
+        need = roms(t, info)
+        have = zcrcs([g, parent, bios], romdir)
+        miss = [r for r in need if r[2] not in have]
+        zips = [n for n in [g, parent, bios] if n and pathlib.Path(romdir, n+'.zip').exists()]
+        print(f'{g}: 必要 {len(need)} / 不足 {len(miss)}  (親={parent}, BIOS={bios}, zip={zips})')
+        for r in miss[:8]: print(f'    不足: {r[0]} crc={r[2]:08x}')
+
+if __name__ == '__main__':
+    main()
