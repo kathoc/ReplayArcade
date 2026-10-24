@@ -1,0 +1,547 @@
+#include "core/FbneoCore.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <mutex>
+#include <numeric>
+#include <unistd.h>
+#include <vector>
+
+#include "core/ICore.h"
+#include "libretro.h"
+#include "util/Hash.h"
+
+// FBNeo's own driver API (C linkage in src/burn/burn.h), used for the content identity and the
+// pixel aspect; the libretro API covers everything else.
+extern "C" {
+struct BurnRomInfo {
+  char* szName;
+  unsigned int nLen;
+  unsigned int nCrc;
+  unsigned int nType;
+};
+char* BurnDrvGetTextA(unsigned int i);
+int BurnDrvGetRomInfo(struct BurnRomInfo* pri, unsigned int i);
+int BurnDrvGetAspect(int* pnXAspect, int* pnYAspect);
+}
+
+namespace rac {
+namespace {
+
+constexpr unsigned kDrvName = 0;             // DRV_NAME
+constexpr unsigned kRomNoDump = 1u << 28;    // BRF_NODUMP
+constexpr const char* kCompat = "fbneo-libretro@2b0c1c067+replayarcade-1";
+constexpr const char* kStateMagic = "fbneo";
+
+class FbneoCore;
+
+// The one real machine and the callbacks FBNeo calls.
+struct Host {
+  std::mutex m;
+  FbneoSettings settings;
+  bool initialised = false;
+  std::string loadedPath;            // content currently in FBNeo ("" = none)
+  std::string systemDir, saveDir;    // empty directories: no hiscore.dat, no NVRAM from earlier runs
+  std::string tempRoot;
+  unsigned loads = 0;
+  retro_system_av_info av{};
+  unsigned rotation = 0;
+  std::vector<uint8_t> powerOn;      // machine state right after loading, before any frame
+  rn::InputLayout layout;            // from FBNeo's input descriptors for the loaded content
+  struct AxisSource { unsigned port, index, id; size_t layoutByte; };
+  std::vector<AxisSource> axes;
+  std::string contentId;
+  uint32_t samplesPerFrame = 0;
+  FbneoCore* owner = nullptr;        // virtual machine whose state is in FBNeo now
+  // Per-frame I/O of the frame being run.
+  const rn::InputRecord* input = nullptr;
+  FbneoCore* target = nullptr;
+  bool collectDescriptors = false;
+  std::vector<retro_input_descriptor> descriptors;
+  std::vector<std::string> descriptorNames;
+};
+
+Host& host() {
+  static Host h;
+  return h;
+}
+
+std::string optionValue(const char* key) {
+  // Fixed by ReplayArcade (determinism and the engine's audio/video contract).
+  static const std::map<std::string, std::string> fixed = {
+      {"fbneo-hiscores", "disabled"},          // hiscore.dat injection is an outside input
+      {"fbneo-diagnostic-input", "None"},      // "hold start" would enter the service mode
+      {"fbneo-samplerate", "48000"},
+      {"fbneo-allow-depth-32", "enabled"},     // XRGB8888: the engine's BGRA without conversion
+      {"fbneo-force-60hz", "disabled"},
+      {"fbneo-lowpass-filter", "disabled"},
+      {"fbneo-frameskip-type", "No skipping"},
+  };
+  auto f = fixed.find(key);
+  if (f != fixed.end()) return f->second;
+  auto o = host().settings.options.find(key);
+  return o != host().settings.options.end() ? o->second : std::string();
+}
+
+bool environment(unsigned cmd, void* data);
+void videoRefresh(const void* data, unsigned w, unsigned h, size_t pitch);
+size_t audioBatch(const int16_t* data, size_t frames);
+void audioSample(int16_t l, int16_t r) {
+  int16_t s[2] = {l, r};
+  audioBatch(s, 1);
+}
+void inputPoll() {}
+int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id);
+
+// Retropad ids FBNeo maps arcade inputs to, and the action names ReplayArcade gives them.
+const char* buttonName(unsigned id) {
+  switch (id) {
+    case RETRO_DEVICE_ID_JOYPAD_UP: return "up";
+    case RETRO_DEVICE_ID_JOYPAD_DOWN: return "down";
+    case RETRO_DEVICE_ID_JOYPAD_LEFT: return "left";
+    case RETRO_DEVICE_ID_JOYPAD_RIGHT: return "right";
+    case RETRO_DEVICE_ID_JOYPAD_B: return "b1";
+    case RETRO_DEVICE_ID_JOYPAD_A: return "b2";
+    case RETRO_DEVICE_ID_JOYPAD_Y: return "b3";
+    case RETRO_DEVICE_ID_JOYPAD_X: return "b4";
+    case RETRO_DEVICE_ID_JOYPAD_L: return "b5";
+    case RETRO_DEVICE_ID_JOYPAD_R: return "b6";
+    case RETRO_DEVICE_ID_JOYPAD_L2: return "b7";
+    case RETRO_DEVICE_ID_JOYPAD_R2: return "b8";
+    case RETRO_DEVICE_ID_JOYPAD_SELECT: return "coin";
+    case RETRO_DEVICE_ID_JOYPAD_START: return "start";
+    case RETRO_DEVICE_ID_JOYPAD_L3: return "l3";
+    case RETRO_DEVICE_ID_JOYPAD_R3: return "service";
+  }
+  return nullptr;
+}
+
+// Record bytes of a port's 16 retropad bits: low byte, high byte (byte 2 is the events).
+size_t lowByte(unsigned port) { return port; }            // ports 0 and 1: bytes 0 and 1
+size_t highByte(unsigned port) { return 3 + port; }       // bytes 3 and 4
+constexpr unsigned kMaxPorts = 2;
+constexpr size_t kFirstAxisByte = 5;
+
+// Builds the layout from FBNeo's descriptors: one button per retropad id a game uses (labelled
+// with FBNeo's name for it), one axis per analog input. Fake-digital entries map to the d-pad.
+void buildLayout(Host& h) {
+  rn::InputLayout l;
+  l.name = "fbneo:" + std::string(BurnDrvGetTextA(kDrvName));
+  l.recordBytes = uint32_t(kFirstAxisByte);
+  h.axes.clear();
+  std::map<std::pair<unsigned, unsigned>, std::string> buttons;
+  for (size_t i = 0; i < h.descriptors.size(); ++i) {
+    const retro_input_descriptor& d = h.descriptors[i];
+    if (d.port >= kMaxPorts) continue;
+    if (d.device == RETRO_DEVICE_JOYPAD && buttonName(d.id)) {
+      auto key = std::make_pair(d.port, d.id);
+      if (!buttons.count(key)) buttons[key] = h.descriptorNames[i];
+    } else if (d.device == RETRO_DEVICE_ANALOG && d.index <= 1 && d.id <= 1) {
+      bool seen = false;
+      for (auto& a : h.axes) seen = seen || (a.port == d.port && a.index == d.index && a.id == d.id);
+      if (seen) continue;
+      std::string axisName = std::string(d.index == 0 ? "" : "r") + (d.id == 0 ? "x" : "y");
+      size_t byte = l.recordBytes;
+      l.recordBytes += 2;
+      l.axes.push_back({"p" + std::to_string(d.port + 1) + ".axis." + axisName, h.descriptorNames[i], uint16_t(byte)});
+      h.axes.push_back({d.port, d.index, d.id, byte});
+    }
+  }
+  for (auto& kv : buttons) {
+    unsigned port = kv.first.first, id = kv.first.second;
+    std::string label = kv.second;
+    if (label.find("Fake Digital") != std::string::npos || label.find("Fake Left Stick") != std::string::npos)
+      label.clear();  // the d-pad: the frontend names it
+    rn::InputLayout::Button b;
+    b.id = "p" + std::to_string(port + 1) + "." + buttonName(id);
+    b.label = label;
+    b.byte = uint16_t(id < 8 ? lowByte(port) : highByte(port));
+    b.bit = uint8_t(id % 8);
+    l.buttons.push_back(b);
+  }
+  for (unsigned port = 0; port < kMaxPorts; ++port) {
+    std::string pre = "p" + std::to_string(port + 1) + ".";
+    auto has = [&](const std::string& id) {
+      for (auto& b : l.buttons)
+        if (b.id == id) return true;
+      return false;
+    };
+    if (has(pre + "up") && has(pre + "down")) l.opposite.push_back({pre + "up", pre + "down"});
+    if (has(pre + "left") && has(pre + "right")) l.opposite.push_back({pre + "left", pre + "right"});
+  }
+  h.layout = l;
+}
+
+// Set name + the CRC of every ROM the driver needs (parent and BIOS included): the same for a set
+// repacked with other compression or merged / split differently.
+std::string contentIdOfLoaded() {
+  std::vector<uint32_t> crcs;
+  BurnRomInfo ri{};
+  for (unsigned i = 0; BurnDrvGetRomInfo(&ri, i) == 0; ++i) {
+    if (ri.nCrc && !(ri.nType & kRomNoDump)) crcs.push_back(ri.nCrc);
+    ri = BurnRomInfo{};
+  }
+  std::sort(crcs.begin(), crcs.end());
+  rn::Hasher64 h;
+  h.update(crcs.data(), crcs.size() * sizeof(uint32_t));
+  char hex[17];
+  std::snprintf(hex, sizeof hex, "%016llx", (unsigned long long)h.digest());
+  return std::string("fbneo:") + BurnDrvGetTextA(kDrvName) + ":" + hex;
+}
+
+class FbneoCore final : public rn::ICore {
+ public:
+  ~FbneoCore() override {
+    std::lock_guard<std::mutex> g(host().m);
+    if (host().owner == this) host().owner = nullptr;
+  }
+
+  rn::Status loadROM(const uint8_t*, size_t) override {
+    return rn::Error(rn::Err::UnsupportedFormat, "FinalBurn Neo loads arcade sets by path");
+  }
+
+  rn::Status loadContent(const std::string& path, const uint8_t*, size_t) override {
+    std::lock_guard<std::mutex> g(host().m);
+    RN_TRY(ensureLoaded(path));
+    path_ = path;
+    loaded_ = true;
+    frame_ = 0;
+    count_ = 0;
+    parked_ = host().powerOn;
+    if (host().owner == this) host().owner = nullptr;  // take it again from the power-on state
+    return take();
+  }
+
+  rn::Status powerCycle() override {
+    std::lock_guard<std::mutex> g(host().m);
+    if (!loaded_) return rn::Error(rn::Err::InvalidArg, "no content loaded");
+    RN_TRY(take());
+    if (!retro_unserialize(host().powerOn.data(), host().powerOn.size()))
+      return rn::Error(rn::Err::StateError, "power-on state did not load");
+    return rn::Status::Ok();
+  }
+
+  rn::Status softReset() override {
+    std::lock_guard<std::mutex> g(host().m);
+    if (!loaded_) return rn::Error(rn::Err::InvalidArg, "no content loaded");
+    RN_TRY(take());
+    retro_reset();
+    return rn::Status::Ok();
+  }
+
+  rn::Status stepFrame(uint8_t p1, uint8_t p2, bool render) override {
+    return stepInput(rn::InputRecord{p1, p2, 0}, render);
+  }
+
+  rn::Status stepInput(const rn::InputRecord& r, bool) override {
+    std::lock_guard<std::mutex> g(host().m);
+    if (!loaded_) return rn::Error(rn::Err::InvalidArg, "no content loaded");
+    RN_TRY(take());
+    Host& h = host();
+    h.input = &r;
+    h.target = this;
+    count_ = 0;
+    retro_run();
+    h.input = nullptr;
+    h.target = nullptr;
+    if (count_ != h.samplesPerFrame)
+      return rn::Error(rn::Err::Internal, "FinalBurn Neo produced " + std::to_string(count_) + " sample frames, expected " +
+                                              std::to_string(h.samplesPerFrame));
+    ++frame_;
+    return rn::Status::Ok();
+  }
+
+  uint64_t frameIndex() const override { return frame_; }
+  const uint32_t* video() const override { return video_.data(); }
+  const int16_t* audio(size_t* count) const override {
+    *count = count_;
+    return audio_.data();
+  }
+
+  rn::MediaInfo mediaInfo() const override { return media_; }
+  rn::VideoFrame videoFrame() const override { return rn::VideoFrame{video_.data(), width_, height_, width_}; }
+  uint64_t samplesBefore(uint64_t frame) const override { return frame * spf_; }
+  rn::InputLayout inputLayout() const override { return layout_; }
+  std::string contentId() const override { return contentId_; }
+
+  rn::Status saveState(std::vector<uint8_t>& out) override {
+    std::lock_guard<std::mutex> g(host().m);
+    if (!loaded_) return rn::Error(rn::Err::InvalidArg, "no content loaded");
+    std::vector<uint8_t> machine;
+    if (host().owner == this) {
+      RN_TRY(serializeInto(machine));
+    } else {
+      machine = parked_;
+    }
+    rn::stateenv::write(out, kCompat, frame_, machine.data(), machine.size());
+    return rn::Status::Ok();
+  }
+
+  rn::Status loadState(const uint8_t* data, size_t size) override {
+    std::lock_guard<std::mutex> g(host().m);
+    if (!loaded_) return rn::Error(rn::Err::InvalidArg, "no content loaded");
+    uint64_t frame;
+    const uint8_t* payload;
+    size_t n;
+    RN_TRY(rn::stateenv::read(data, size, kCompat, frame, payload, n));
+    if (n != host().powerOn.size()) return rn::Error(rn::Err::StateError, "state belongs to other content");
+    if (host().owner == this) {
+      if (!retro_unserialize(payload, n)) return rn::Error(rn::Err::StateError, "FinalBurn Neo refused the state");
+    } else {
+      parked_.assign(payload, payload + n);
+    }
+    frame_ = frame;
+    count_ = 0;
+    return rn::Status::Ok();
+  }
+
+  std::string compatId() const override { return kCompat; }
+  std::string buildId() const override { return std::string(kCompat) + " (" + kStateMagic + ")"; }
+  uint32_t stateFormatVersion() const override { return 1; }
+  rn::CoreKind kind() const override { return rn::CoreKind::External; }
+
+  // Called by the callbacks while this instance runs a frame (host mutex held).
+  void receiveVideo(const void* data, unsigned w, unsigned h, size_t pitch) {
+    if (!data) return;  // a duplicate frame: keep the last picture
+    width_ = std::min<unsigned>(w, media_.maxWidth);
+    height_ = std::min<unsigned>(h, media_.maxHeight);
+    for (unsigned y = 0; y < height_; ++y) {
+      const uint32_t* src = reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(data) + y * pitch);
+      uint32_t* dst = video_.data() + size_t(y) * width_;
+      for (unsigned x = 0; x < width_; ++x) dst[x] = src[x] | 0xFF000000u;
+    }
+  }
+  size_t receiveAudio(const int16_t* data, size_t frames) {
+    size_t room = audio_.size() / 2 - count_;
+    size_t n = std::min(frames, room);
+    std::memcpy(audio_.data() + count_ * 2, data, n * 2 * sizeof(int16_t));
+    count_ += n;
+    return frames;
+  }
+
+ private:
+  // Loads `path` into FBNeo if another content is there (host mutex held).
+  rn::Status ensureLoaded(const std::string& path) {
+    Host& h = host();
+    if (h.loadedPath == path) {
+      copyContentInfo();
+      return rn::Status::Ok();
+    }
+    if (h.owner) h.owner->park();
+    h.owner = nullptr;
+    if (!h.loadedPath.empty()) retro_unload_game();
+    h.loadedPath.clear();
+    // A fresh, empty save directory per load: NVRAM written at unload must not reach the next
+    // power-on (projects replay from power-on).
+    h.saveDir = h.tempRoot + "/save-" + std::to_string(++h.loads);
+    std::filesystem::create_directories(h.saveDir);
+    h.rotation = 0;  // set again by the driver while loading (RETRO_ENVIRONMENT_SET_ROTATION)
+    retro_game_info gi{};
+    gi.path = path.c_str();
+    if (!retro_load_game(&gi)) return rn::Error(rn::Err::RomInvalid, "FinalBurn Neo could not load '" + path + "'");
+    retro_get_system_av_info(&h.av);
+    // Power-on state first; then one frame to receive the input descriptors (FBNeo sends them
+    // on its first frame); then back to power-on.
+    size_t size = retro_serialize_size();
+    h.powerOn.assign(size, 0);
+    if (!size || !retro_serialize(h.powerOn.data(), size)) {
+      retro_unload_game();
+      return rn::Error(rn::Err::StateError, "FinalBurn Neo cannot save states for '" + path + "'");
+    }
+    h.descriptors.clear();
+    h.descriptorNames.clear();
+    h.collectDescriptors = true;
+    rn::InputRecord none;
+    h.input = &none;
+    h.target = nullptr;
+    retro_run();
+    h.input = nullptr;
+    h.collectDescriptors = false;
+    if (!retro_unserialize(h.powerOn.data(), size)) {
+      retro_unload_game();
+      return rn::Error(rn::Err::StateError, "FinalBurn Neo cannot restore its power-on state");
+    }
+    buildLayout(h);
+    rn::Status lv = h.layout.validate();
+    if (!lv.ok()) {
+      retro_unload_game();
+      return rn::Error(rn::Err::Internal, "input layout from FinalBurn Neo is invalid: " + lv.message);
+    }
+    h.contentId = contentIdOfLoaded();
+    h.samplesPerFrame = uint32_t(std::lround(h.av.timing.sample_rate / h.av.timing.fps));
+    h.loadedPath = path;
+    copyContentInfo();
+    return rn::Status::Ok();
+  }
+
+  void copyContentInfo() {
+    Host& h = host();
+    media_ = rn::MediaInfo{};
+    media_.maxWidth = std::max(h.av.geometry.max_width, h.av.geometry.base_width);
+    media_.maxHeight = std::max(h.av.geometry.max_height, h.av.geometry.base_height);
+    // FBNeo's frame rate is in hundredths of a hertz (59.63 Hz = 5963 / 100).
+    media_.fpsNum = uint64_t(std::llround(h.av.timing.fps * 100.0));
+    media_.fpsDen = 100;
+    media_.audioChannels = 2;
+    int ax = 4, ay = 3;
+    BurnDrvGetAspect(&ax, &ay);
+    // ax:ay is the shown (rotated) aspect; the pixel aspect describes an unrotated source pixel:
+    // shown aspect = w * p / hh unrotated, its inverse when turned a quarter.
+    unsigned w = h.av.geometry.base_width, hh = h.av.geometry.base_height;
+    bool vertical = h.rotation % 2 == 1;
+    uint64_t num = uint64_t(vertical ? ay : ax) * hh;
+    uint64_t den = uint64_t(vertical ? ax : ay) * w;
+    uint64_t gcd = std::gcd(num, den);
+    media_.pixelAspectNum = uint32_t(num / (gcd ? gcd : 1));
+    media_.pixelAspectDen = uint32_t(den / (gcd ? gcd : 1));
+    media_.rotation = h.rotation;
+    spf_ = h.samplesPerFrame;
+    layout_ = h.layout;
+    contentId_ = h.contentId;
+    video_.assign(size_t(media_.maxWidth) * media_.maxHeight, 0xFF000000u);
+    width_ = w;
+    height_ = hh;
+    audio_.assign(size_t(spf_ + 64) * 2, 0);
+  }
+
+  rn::Status serializeInto(std::vector<uint8_t>& out) {
+    out.assign(host().powerOn.size(), 0);
+    if (!retro_serialize(out.data(), out.size())) return rn::Error(rn::Err::StateError, "FinalBurn Neo could not save");
+    return rn::Status::Ok();
+  }
+
+  // Saves this instance's machine (it is giving FBNeo to another instance).
+  void park() {
+    if (!serializeInto(parked_).ok()) parked_ = host().powerOn;  // never seen in practice; keeps a valid state
+  }
+
+  // Makes FBNeo hold this instance's machine (host mutex held).
+  rn::Status take() {
+    Host& h = host();
+    if (h.owner == this) return rn::Status::Ok();
+    if (h.loadedPath != path_) RN_TRY(ensureLoaded(path_));
+    if (h.owner) h.owner->park();
+    h.owner = nullptr;
+    if (!retro_unserialize(parked_.data(), parked_.size()))
+      return rn::Error(rn::Err::StateError, "FinalBurn Neo refused this core's state");
+    h.owner = this;
+    return rn::Status::Ok();
+  }
+
+  std::string path_;
+  bool loaded_ = false;
+  uint64_t frame_ = 0;
+  std::vector<uint8_t> parked_;
+  rn::MediaInfo media_;
+  rn::InputLayout layout_;
+  std::string contentId_;
+  uint32_t spf_ = 0;
+  std::vector<uint32_t> video_;
+  unsigned width_ = 0, height_ = 0;
+  std::vector<int16_t> audio_;
+  size_t count_ = 0;
+};
+
+bool environment(unsigned cmd, void* data) {
+  Host& h = host();
+  switch (cmd) {
+    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *(const char**)data = h.systemDir.c_str(); return true;
+    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY: *(const char**)data = h.saveDir.c_str(); return true;
+    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: return *(const retro_pixel_format*)data == RETRO_PIXEL_FORMAT_XRGB8888;
+    case RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT:
+      if (data) *(int*)data = RETRO_SAVESTATE_CONTEXT_NORMAL;
+      return true;
+    case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
+      if (data) *(int*)data = 3;
+      return true;
+    case RETRO_ENVIRONMENT_SET_ROTATION: h.rotation = *(const unsigned*)data % 4; return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE: {
+      auto* v = (retro_variable*)data;
+      if (!v || !v->key) return false;
+      static thread_local std::string value;
+      value = optionValue(v->key);
+      if (value.empty()) return false;
+      v->value = value.c_str();
+      return true;
+    }
+    case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
+      if (h.collectDescriptors && data) {
+        for (auto* d = (const retro_input_descriptor*)data; d->description; ++d) {
+          h.descriptors.push_back(*d);
+          h.descriptorNames.push_back(d->description);
+        }
+      }
+      return true;
+    case RETRO_ENVIRONMENT_SET_GEOMETRY:
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+    case RETRO_ENVIRONMENT_SET_VARIABLES:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+    case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
+    case RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL:
+    case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
+      return true;
+  }
+  return false;
+}
+
+void videoRefresh(const void* data, unsigned w, unsigned h, size_t pitch) {
+  if (host().target) host().target->receiveVideo(data, w, h, pitch);
+}
+
+size_t audioBatch(const int16_t* data, size_t frames) {
+  return host().target ? host().target->receiveAudio(data, frames) : frames;
+}
+
+int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) {
+  const rn::InputRecord* r = host().input;
+  if (!r || port >= kMaxPorts) return 0;
+  if (device == RETRO_DEVICE_JOYPAD) {
+    unsigned bits = r->byte(lowByte(port)) | unsigned(r->byte(highByte(port))) << 8;
+    if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return int16_t(bits);
+    return id < 16 ? int16_t((bits >> id) & 1) : 0;
+  }
+  if (device == RETRO_DEVICE_ANALOG) {
+    for (auto& a : host().axes)
+      if (a.port == port && a.index == index && a.id == id)
+        return int16_t(r->byte(a.layoutByte) | r->byte(a.layoutByte + 1) << 8);
+  }
+  return 0;
+}
+
+}  // namespace
+
+void registerFbneoCore(const FbneoSettings& settings) {
+  {
+    std::lock_guard<std::mutex> g(host().m);
+    Host& h = host();
+    h.settings = settings;
+    if (!h.initialised) {
+      std::error_code ec;
+      std::string base = std::filesystem::temp_directory_path(ec).string();
+      h.tempRoot = base + "/replayarcade-fbneo-" + std::to_string(::getpid());
+      h.systemDir = h.tempRoot + "/system";
+      std::filesystem::create_directories(h.systemDir, ec);
+      retro_set_environment(environment);
+      retro_set_video_refresh(videoRefresh);
+      retro_set_audio_sample(audioSample);
+      retro_set_audio_sample_batch(audioBatch);
+      retro_set_input_poll(inputPoll);
+      retro_set_input_state(inputState);
+      retro_init();
+      h.initialised = true;
+    }
+  }
+  rn::registerExternalCore({"fbneo", kCompat,
+                            uint32_t(rn::CapAudio | rn::CapState | rn::CapSoftReset | rn::CapRecording),
+                            [] { return std::unique_ptr<rn::ICore>(new FbneoCore()); }});
+}
+
+}  // namespace rac

@@ -1,0 +1,15 @@
+# ReplayArcade's product profile for ReplayNES's sources (see ReplayNES cmake/Product.cmake).
+set(RN_PRODUCT_NAME "ReplayArcade")
+set(RN_PRODUCT_APP_ID "io.github.kathoc.ReplayArcade")
+set(RN_PRODUCT_EXECUTABLE "replayarcade-linux")
+set(RN_PRODUCT_DATA_DIR "ReplayArcade")
+set(RN_PRODUCT_ENV_PREFIX "REPLAYARCADE_")
+set(RN_PRODUCT_PROJECT_EXT ".arcrec")
+set(RN_PRODUCT_PROJECT_FORMAT "replayarcade-project")
+set(RN_PRODUCT_ROM_EXTS "zip")
+set(RN_PRODUCT_TEMP_PREFIX "replayarcade")
+set(RN_PRODUCT_L10N_OVERRIDES "")
+# Packaging files come in A2 (Deck build); until then the ReplayNES files stand in.
+set(RN_PRODUCT_LINUX_DESKTOP_FILE "${REPLAYNES_DIR}/apps/linux/flatpak/io.github.replaynes.ReplayNES.desktop")
+set(RN_PRODUCT_LINUX_METAINFO_FILE "${REPLAYNES_DIR}/apps/linux/flatpak/io.github.replaynes.ReplayNES.metainfo.xml")
+set(RN_PRODUCT_STEAM_ARTWORK_DIR "${REPLAYNES_DIR}/apps/linux/steam/artwork")
