@@ -24,3 +24,7 @@ if(REPLAYARCADE_BUILD_TESTS)
   add_test(NAME test_fbneo_core COMMAND test_fbneo_core)
   set_tests_properties(test_fbneo_core PROPERTIES TIMEOUT 1800)
 endif()
+
+# Rewind cost as the app sees it (tools/bench_rewind.cpp); not a test.
+add_executable(bench_rewind tools/bench_rewind.cpp)
+target_link_libraries(bench_rewind PRIVATE replayarcade_core)
