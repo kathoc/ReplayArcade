@@ -22,6 +22,8 @@ set(RN_PRODUCT_NES OFF)
 set(RN_PRODUCT_LIBRARY_PICTURE_FRAME 1800)
 # No flash reduction: it breaks up fast-scrolling arcade pictures (user decision 2026-10-24).
 set(RN_PRODUCT_FLASH_FILTER OFF)
+# No edge crop: it is for the NES on a TV; arcade pictures are shown whole (user decision 2026-10-24).
+set(RN_PRODUCT_OVERSCAN_CROP OFF)
 # Windows: the product's icon; no in-app updates (private, never published).
 set(RN_PRODUCT_WINDOWS_ICON "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/artwork/replayarcade.ico")
 set(RN_PRODUCT_UPDATES OFF)
