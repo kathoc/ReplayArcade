@@ -129,7 +129,13 @@ bool environment(unsigned cmd, void* data) {
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL:
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+      return true;
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
+      // PROBE_INPUTS=1: list what the game exposes (port, retropad id, label) and nothing else.
+      if (getenv("PROBE_INPUTS") && data)
+        for (auto* d = (const retro_input_descriptor*)data; d->description; d++)
+          printf("input port=%u device=%u index=%u id=%u label=%s\n", d->port, d->device, d->index, d->id, d->description);
+      return true;
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
     case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
     case RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL:
@@ -275,6 +281,11 @@ int main(int argc, char** argv) {
   }
   retro_system_av_info av{};
   core.get_system_av_info(&av);
+  if (getenv("PROBE_INPUTS")) {  // descriptors are sent on the first frame (RefreshControllers)
+    core.run();
+    fflush(stdout);
+    _Exit(0);
+  }
 
   // PROBE_SEEK=<frames>: the way ReplayNES uses a core. One straight run from power-on records every
   // frame (video, audio, state hash) and a checkpoint every 300 frames; then checkpoints are loaded in
