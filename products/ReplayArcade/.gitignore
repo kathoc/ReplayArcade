@@ -1,6 +1,7 @@
-build/
 *.o
 *.so
 __pycache__/
-build-linux-sdk/
+build-*/
 build-linux-sdk.*.log
+build-linux-sdk/
+build/
