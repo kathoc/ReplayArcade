@@ -1,0 +1,3 @@
+[submodule "fbneo-libretro"]
+	path = third_party/fbneo
+	url = https://github.com/libretro/FBNeo.git

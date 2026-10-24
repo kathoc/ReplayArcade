@@ -1,0 +1,485 @@
+diff --git a/src/burn/burn.cpp b/src/burn/burn.cpp
+index 3674759df..630711720 100644
+--- a/src/burn/burn.cpp
++++ b/src/burn/burn.cpp
+@@ -1814,11 +1814,9 @@ void BurnRandomSetSeed(UINT64 nSeed)
+ 
+ void BurnRandomInit()
+ { // for states & input recordings - init before emulation starts
+-	if (is_netgame_or_recording()) {
+-		BurnRandomSetSeed(0x303808909313ULL);
+-	} else {
+-		BurnRandomSetSeed(time(NULL));
+-	}
++	// ReplayArcade: every session is a recording (replays recompute from power-on), so always
++	// use the fixed seed upstream reserves for netplay and input recordings.
++	BurnRandomSetSeed(0x303808909313ULL);
+ }
+ 
+ // ----------------------------------------------------------------------------
+diff --git a/src/burn/drv/capcom/cps_mem.cpp b/src/burn/drv/capcom/cps_mem.cpp
+index 178756962..e4326eac0 100644
+--- a/src/burn/drv/capcom/cps_mem.cpp
++++ b/src/burn/drv/capcom/cps_mem.cpp
+@@ -567,6 +567,10 @@ INT32 CpsAreaScan(INT32 nAction, INT32 *pnMin)
+ 	if (CpsMemScanCallbackFunction) {
+ 		CpsMemScanCallbackFunction(nAction, pnMin);
+ 	}
++
++	// ReplayArcade: every CPS game needs the display state below (xmvsf3v3 scans it in CpsXmvSixScan);
++	// nothing actually rebuilds it after a load, so the first frame after a load drew stale colours.
++	if (!CpsXmvSixEnabled && CpsXmvVisualScan(nAction)) return 1;
+ 	
+ 	return 0;
+ }
+@@ -575,13 +579,14 @@ INT32 CpsAreaScan(INT32 nAction, INT32 *pnMin)
+ // 'four' registers, sprite lag buffers), so its states restore exactly, a paused redraw included
+ INT32 CpsXmvVisualScan(INT32 nAction)
+ {
+-	if (!CpsXmvSixEnabled || !(nAction & ACB_DRIVER_DATA)) return 0;
++	// ReplayArcade: for every CPS board, with the lengths CpsMemIndex() gives each layout
++	if (!(nAction & ACB_DRIVER_DATA)) return 0;
+ 
+ 	struct BurnArea ba;
+ 	memset(&ba, 0, sizeof(ba));
+ 	ba.Data = CpsSavePal;		ba.nLen = 0x2000;								ba.szName = "XMvsSF 3v3 latched palette";	BurnAcb(&ba);
+-	ba.Data = CpsSaveRegData;	ba.nLen = 0x100 * (MAX_RASTER + 1);				ba.szName = "XMvsSF 3v3 latched registers";	BurnAcb(&ba);
+-	ba.Data = CpsSaveFrgData;	ba.nLen = 0x20;									ba.szName = "XMvsSF 3v3 latched frg";		BurnAcb(&ba);
++	ba.Data = CpsSaveRegData;	ba.nLen = (Cps == 2) ? 0x100 * (MAX_RASTER + 1) : 0x100;	ba.szName = "XMvsSF 3v3 latched registers";	BurnAcb(&ba);
++	ba.Data = CpsSaveFrgData;	ba.nLen = (Cps == 2) ? 0x20 : 0x10;				ba.szName = "XMvsSF 3v3 latched frg";		BurnAcb(&ba);
+ 
+ 	if (CpsObjVisualScan(nAction)) return 1;
+ 
+diff --git a/src/burn/drv/capcom/cps_obj.cpp b/src/burn/drv/capcom/cps_obj.cpp
+index bf7dd8330..bcbcadae8 100644
+--- a/src/burn/drv/capcom/cps_obj.cpp
++++ b/src/burn/drv/capcom/cps_obj.cpp
+@@ -913,7 +913,7 @@ INT32 FcrashObjDraw(INT32 nLevelFrom,INT32 nLevelTo)
+ // each frame's Z values start above what's already in the buffer
+ INT32 CpsObjVisualScan(INT32 nAction)
+ {
+-	if (!CpsXmvSixEnabled || !(nAction & ACB_DRIVER_DATA)) return 0;
++	if (!(nAction & ACB_DRIVER_DATA)) return 0; // ReplayArcade: every CPS game, not only xmvsf3v3
+ 
+ 	struct BurnArea ba;
+ 	memset(&ba, 0, sizeof(ba));
+diff --git a/src/burn/drv/capcom/cps_pal.cpp b/src/burn/drv/capcom/cps_pal.cpp
+index 04e41b51b..ea4e13761 100644
+--- a/src/burn/drv/capcom/cps_pal.cpp
++++ b/src/burn/drv/capcom/cps_pal.cpp
+@@ -81,7 +81,7 @@ INT32 CpsPalUpdate(UINT8* pNewPal)
+ // overwrites it before reading it
+ INT32 CpsPalVisualScan(INT32 nAction)
+ {
+-	if (!CpsXmvSixEnabled || !(nAction & ACB_DRIVER_DATA)) return 0;
++	if (!(nAction & ACB_DRIVER_DATA)) return 0; // ReplayArcade: every CPS game, not only xmvsf3v3
+ 
+ 	struct BurnArea ba;
+ 	memset(&ba, 0, sizeof(ba));
+@@ -94,7 +94,7 @@ INT32 CpsPalVisualScan(INT32 nAction)
+ 
+ INT32 CpsPalConsumeRestoredCache()
+ {
+-	if (!CpsXmvSixEnabled || !CpsXmvPaletteRestored) return 0;
++	if (!CpsXmvPaletteRestored) return 0; // ReplayArcade: every CPS game restores CpsPal now
+ 
+ 	CpsXmvPaletteRestored = false;
+ 
+diff --git a/src/burn/drv/konami/k051960.cpp b/src/burn/drv/konami/k051960.cpp
+index 25d97c407..48d65834e 100644
+--- a/src/burn/drv/konami/k051960.cpp
++++ b/src/burn/drv/konami/k051960.cpp
+@@ -22,6 +22,9 @@ static UINT32 K051960RomExpMask;
+ static UINT8 blank_tile[0x100];
+ static INT32 nBpp = 0;
+ 
++// ReplayArcade: was a function-local static in K051937Read; games poll it, so it is machine state.
++static INT32 K051937Counter;
++
+ static INT32 nSpriteXOffset;
+ static INT32 nSpriteYOffset;
+ 
+@@ -289,6 +292,7 @@ void K051960GfxDecode(UINT8 *src, UINT8 *dst, INT32 len)
+ 
+ void K051960Init(UINT8* pRomSrc, UINT8* pRomSrcExp, UINT32 RomMask)
+ {
++	K051937Counter = 0;
+ 	nSpriteXOffset = nSpriteYOffset = 0;
+ 
+ 	K051960Ram = (UINT8*)BurnMalloc(0x400);
+@@ -351,6 +355,7 @@ void K051960Scan(INT32 nAction)
+ 		SCAN_VAR(K051960_nmi_enabled);
+ 		SCAN_VAR(K051960_spriteflip);
+ 		SCAN_VAR(K051960_shadow_config);
++		SCAN_VAR(K051937Counter);
+ 	}
+ }
+ 
+@@ -386,8 +391,7 @@ UINT8 K051937Read(UINT32 Offset)
+ 	{
+ 		if (Offset == 0)
+ 		{
+-			static INT32 counter;
+-			return (counter++) & 1;
++			return (K051937Counter++) & 1;
+ 		}
+ 
+ 		return 0;
+diff --git a/src/burn/drv/pre90s/d_namcos1.cpp b/src/burn/drv/pre90s/d_namcos1.cpp
+index f61183266..bb84025de 100644
+--- a/src/burn/drv/pre90s/d_namcos1.cpp
++++ b/src/burn/drv/pre90s/d_namcos1.cpp
+@@ -2062,6 +2062,7 @@ static INT32 DrvScan(INT32 nAction, INT32 *pnMin)
+ 		NamcoSoundScan(nAction, pnMin);
+ 		BurnYM2151Scan(nAction, pnMin);
+ 		M6809Close();
++		DACScan(nAction, pnMin); // ReplayArcade: the DAC was not part of the state
+ 
+ 		SCAN_VAR(bank_offsets);
+ 		SCAN_VAR(buffer_sprites);
+diff --git a/src/burn/drv/pre90s/d_namcos86.cpp b/src/burn/drv/pre90s/d_namcos86.cpp
+index 33d06ab19..e03bb1720 100644
+--- a/src/burn/drv/pre90s/d_namcos86.cpp
++++ b/src/burn/drv/pre90s/d_namcos86.cpp
+@@ -1694,6 +1694,7 @@ static INT32 DrvScan(INT32 nAction, INT32 *pnMin)
+ 
+ 		NamcoSoundScan(nAction, pnMin);
+ 		BurnYM2151Scan(nAction, pnMin);
++		if (has_pcm) stream.scan(nAction, pnMin); // ReplayArcade: 63701x resampler
+ 
+ 		SCAN_VAR(m_voices);
+ 		SCAN_VAR(buffer_sprites);
+diff --git a/src/burn/drv/pst90s/d_namcos2.cpp b/src/burn/drv/pst90s/d_namcos2.cpp
+index fe48ba2a5..b8130e8ad 100644
+--- a/src/burn/drv/pst90s/d_namcos2.cpp
++++ b/src/burn/drv/pst90s/d_namcos2.cpp
+@@ -3815,6 +3815,7 @@ static INT32 DrvScan(INT32 nAction, INT32 *pnMin)
+ 		SekScan(nAction);
+ 		m6805Scan(nAction);
+ 		M6809Scan(nAction);
++		SCAN_VAR(nvramcheck); // ReplayArcade: pending default-EEPROM fill on the first frame
+ 
+ 		BurnYM2151Scan(nAction, pnMin);
+ 		c140_scan(nAction, pnMin);
+diff --git a/src/burn/drv/sega/sys16_gfx.cpp b/src/burn/drv/sega/sys16_gfx.cpp
+index 2f7428162..dc88d09e4 100644
+--- a/src/burn/drv/sega/sys16_gfx.cpp
++++ b/src/burn/drv/sega/sys16_gfx.cpp
+@@ -3251,6 +3251,7 @@ INT32 System16BootlegRender()
+ {
+ 	if (!System16VideoEnable) {
+ 		BurnTransferClear();
++		BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 		return 0;
+ 	}
+ 
+@@ -3749,6 +3750,7 @@ INT32 HangonRender()
+ {
+ 	if (!System16VideoEnable) {
+ 		BurnTransferClear();
++		BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 		return 0;
+ 	}
+ 	
+@@ -3779,6 +3781,7 @@ INT32 HangonAltRender()
+ {
+ 	if (!System16VideoEnable) {
+ 		BurnTransferClear();
++		BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 		return 0;
+ 	}
+ 	
+@@ -3809,6 +3812,7 @@ INT32 OutrunRender()
+ {
+ 	if (!System16VideoEnable) {
+ 		BurnTransferClear();
++		BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 		return 0;
+ 	}
+ 
+@@ -3866,6 +3870,7 @@ INT32 XBoardRender()
+ {
+ 	if (!System16VideoEnable) {
+ 		BurnTransferClear();
++		BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 		return 0;
+ 	}
+ 
+@@ -3897,6 +3902,7 @@ INT32 YBoardRender()
+ {
+ 	if (!System16VideoEnable) {
+ 		BurnTransferClear();
++		BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 		return 0;
+ 	}
+ 	
+diff --git a/src/burn/drv/sega/sys16_run.cpp b/src/burn/drv/sega/sys16_run.cpp
+index 8aee7c118..32fd17f01 100644
+--- a/src/burn/drv/sega/sys16_run.cpp
++++ b/src/burn/drv/sega/sys16_run.cpp
+@@ -3734,6 +3734,12 @@ INT32 System16Scan(INT32 nAction,INT32 *pnMin)
+ 		ba.nLen	  = RamEnd-RamStart;
+ 		ba.szName = "All Ram";
+ 		BurnAcb(&ba);
++
++		// ReplayArcade: the Y-Board sprite framebuffer is erased only where the rotate RAM says so,
++		// so it carries pixels from earlier frames; it is machine state.
++		if ((BurnDrvGetHardwareCode() & HARDWARE_PUBLIC_MASK) == HARDWARE_SEGA_SYSTEMY && pTempDraw) {
++			ScanVar(pTempDraw, 512 * 512 * sizeof(UINT16), "YBoard sprite framebuffer");
++		}
+ 	}
+ 	
+ 	if (nAction & ACB_DRIVER_DATA) {
+diff --git a/src/burn/snd/ay8910.c b/src/burn/snd/ay8910.c
+index e2e156576..0f3538c45 100644
+--- a/src/burn/snd/ay8910.c
++++ b/src/burn/snd/ay8910.c
+@@ -1028,7 +1028,15 @@ void AY8910Scan(INT32 nAction, INT32* pnMin)
+ 		ba.nAddress = 0;
+ 		ba.szName	= szName;
+ 		BurnAcb(&ba);
++
++		SCAN_VAR(AYPSG[i].in_reset); // ReplayArcade: emulation state outside the scanned prefix
+ 	}
++
++	// ReplayArcade: the DC blocker is an IIR filter; its memory shapes every following sample.
++	SCAN_VAR(ay_lastin_r);
++	SCAN_VAR(ay_lastout_r);
++	SCAN_VAR(ay_lastin_l);
++	SCAN_VAR(ay_lastout_l);
+ }
+ 
+ #define AY8910_ADD_SOUND(route, output)												\
+diff --git a/src/burn/snd/burn_ym2151.cpp b/src/burn/snd/burn_ym2151.cpp
+index 1b5c22ac4..037f6e37b 100644
+--- a/src/burn/snd/burn_ym2151.cpp
++++ b/src/burn/snd/burn_ym2151.cpp
+@@ -374,6 +374,14 @@ void BurnYM2151Scan(INT32 nAction, INT32 *pnMin)
+ 
+ 	SCAN_VAR(nBurnCurrentYM2151Register);
+ 
++	// ReplayArcade: the resampler decides how many chip samples each frame renders, so it drives the
++	// chip's internal timers; scan it (and the interpolation carry-over) to keep determinism.
++	SCAN_VAR(nYM2151Position);
++	SCAN_VAR(nFractionalPosition);
++	for (INT32 i = 0; i < (bYM2151_MultiChip ? 4 : 2); i++) {
++		ScanVar(pBuffer + i * 4096, (4 + 16) * sizeof(INT16), "YM2151 resampler carry");
++	}
++
+ 	BurnYM2151Scan_int(nAction); // Scan the YM2151's internal registers
+ 
+ 	if (YM2151BurnTimer)
+diff --git a/src/burn/snd/c140.cpp b/src/burn/snd/c140.cpp
+index c6461c1ff..f08771d87 100644
+--- a/src/burn/snd/c140.cpp
++++ b/src/burn/snd/c140.cpp
+@@ -210,6 +210,7 @@ void c140_scan(INT32 nAction, INT32 *)
+ {
+ 	SCAN_VAR(m_REG);
+ 	SCAN_VAR(m_voi);
++	stream.scan(nAction, NULL); // ReplayArcade
+ 
+ 	if (nAction & ACB_WRITE && ~nAction & ACB_RUNAHEAD) {
+ 		memset(m_mixer_buffer_left, 0, 2 * sizeof(INT16) * m_sample_rate);
+diff --git a/src/burn/snd/dac.cpp b/src/burn/snd/dac.cpp
+index 167265837..90302d1f2 100644
+--- a/src/burn/snd/dac.cpp
++++ b/src/burn/snd/dac.cpp
+@@ -398,6 +398,12 @@ void DACScan(INT32 nAction, INT32 *pnMin)
+ 
+ 			SCAN_VAR(ptr->Output);
+ 			SCAN_VAR(ptr->Output2);
++			SCAN_VAR(ptr->nCurrentPosition); // ReplayArcade: mid-frame render position
+ 		}
++		// ReplayArcade: the DC blocker is an IIR filter; its memory shapes every following sample.
++		SCAN_VAR(dac_lastin_r);
++		SCAN_VAR(dac_lastout_r);
++		SCAN_VAR(dac_lastin_l);
++		SCAN_VAR(dac_lastout_l);
+ 	}
+ }
+diff --git a/src/burn/snd/fm.c b/src/burn/snd/fm.c
+index 0bbf884e1..c4f1b1394 100644
+--- a/src/burn/snd/fm.c
++++ b/src/burn/snd/fm.c
+@@ -2442,6 +2442,13 @@ static void YM2203_postload(void)
+ 
+ 	for(num=0;num<YM2203NumChips;num++)
+ 	{
++		/* ReplayArcade: rewriting the registers below marks every channel's phase step dirty (Incr=-1);
++		   the loaded Incr values already match the registers, so keep them and the loaded state equals
++		   the saved one byte for byte. */
++		INT32 incr[3][4];
++		int c, s;
++		for(c=0;c<3;c++) for(s=0;s<4;s++) incr[c][s] = FM2203[num].CH[c].SLOT[s].Incr;
++
+ 		/* prescaler */
+ 		OPNPrescaler_w(&FM2203[num].OPN,1,1);
+ 
+@@ -2464,6 +2471,8 @@ static void YM2203_postload(void)
+ 
+ 		/* channels */
+ 		/*FM_channel_postload(FM2203[num].CH,3);*/
++
++		for(c=0;c<3;c++) for(s=0;s<4;s++) FM2203[num].CH[c].SLOT[s].Incr = incr[c][s];
+ 	}
+ 	FM_IS_POSTLOADING = 0;
+ 	cur_chip = NULL;
+diff --git a/src/burn/snd/k051649.cpp b/src/burn/snd/k051649.cpp
+index 8704db1b5..d70533bec 100644
+--- a/src/burn/snd/k051649.cpp
++++ b/src/burn/snd/k051649.cpp
+@@ -303,6 +303,7 @@ void K051649Scan(INT32 nAction, INT32 *pnMin)
+ 
+ 		ScanVar(&Chips[i].channel_list, sizeof(Chips[i].channel_list), (char *)names[i]);
+ 		SCAN_VAR(Chips[i].test);
++		stream[i].scan(nAction, pnMin); // ReplayArcade
+ 	}
+ }
+ 
+diff --git a/src/burn/snd/stream.h b/src/burn/snd/stream.h
+index df9fbef07..278543c56 100644
+--- a/src/burn/snd/stream.h
++++ b/src/burn/snd/stream.h
+@@ -71,6 +71,21 @@ struct Stream {
+ 		nSampleSize = nFractionalPosition = 0;
+ 		stream_exit();
+ 	}
++	// ReplayArcade: the resampler position and the carried-over samples decide what the next frame
++	// renders, so they are machine state. Fixed size: render() carries in_buffer[-1 .. nPosition-1],
++	// i.e. soundbuf[0 .. nPosition], and nPosition is a handful of samples at a frame boundary.
++	void scan(INT32 nAction, INT32 * /*pnMin*/) {
++		if (!(nAction & ACB_DRIVER_DATA)) return;
++		SCAN_VAR(nFractionalPosition);
++		SCAN_VAR(nPosition);
++		SCAN_VAR(nSampleRateFrom);
++		SCAN_VAR(bRateChange);
++		SCAN_VAR(nNewRate);
++		for (INT32 ch = 0; ch < nChannels; ch++) {
++			ScanVar(soundbuf[ch], 32 * sizeof(INT16), (char*)"Stream carry-over");
++		}
++		if (nAction & ACB_WRITE) set_rate_internal(nSampleRateFrom);
++	}
+ 	INT32 samples_to_host(INT32 samples) {
+ 		return (INT32)((UINT64)nSampleSize_Otherway * samples) / (1 << 16);
+ 	}
+diff --git a/src/burn/snd/upd7759.cpp b/src/burn/snd/upd7759.cpp
+index 894d5df05..b80b90d7c 100644
+--- a/src/burn/snd/upd7759.cpp
++++ b/src/burn/snd/upd7759.cpp
+@@ -772,6 +772,16 @@ void UPD7759Scan(INT32 nAction, INT32 *pnMin)
+ 		SCAN_VAR(sChip->romoffset);
+ 		SCAN_VAR(sChip->volume);
+ 		SCAN_VAR(sChip->output_dir);
++
++		// ReplayArcade: the output path carries state between frames: the ring buffer is read one
++		// frame late, and the downsampler and both IIR filters remember earlier samples.
++		SCAN_VAR(sChip->start_delay);
++		SCAN_VAR(sChip->sample_counts);
++		SCAN_VAR(sChip->out_pos);
++		ScanVar(sChip->out_buf, out_buf_size * sizeof(INT16), (char*)"UPD7759 output ring");
++		SCAN_VAR(sChip->resamp.nFractionalPosition);
++		sChip->biquadL.scan();
++		sChip->biquadR.scan();
+ 	}
+ }
+ 
+diff --git a/src/burn/snd/vlm5030.cpp b/src/burn/snd/vlm5030.cpp
+index 1de6ca903..6ea9af52e 100644
+--- a/src/burn/snd/vlm5030.cpp
++++ b/src/burn/snd/vlm5030.cpp
+@@ -144,6 +144,7 @@ struct vlm5030_info
+ 	UINT32 (*pSyncCallback)(int samples_per_frame);
+ 	INT32 current_position;
+ 	INT32 fill_buffer_hack;
++	UINT32 noise_seed; // ReplayArcade: chip-local noise source instead of the C library's rand()
+ 	double gain[2];
+ 	INT32 output_dir[2];
+ 	INT32 bAdd;
+@@ -401,7 +402,8 @@ static void vlm5030_update(struct vlm5030_info *chip)
+ 			}
+ 			else if (chip->old_pitch <= 1)
+ 			{	/* generate unvoiced samples here */
+-				current_val = (rand()&1) ? chip->current_energy : -chip->current_energy;
++				chip->noise_seed = chip->noise_seed * 1103515245 + 12345;
++				current_val = ((chip->noise_seed >> 16) & 1) ? chip->current_energy : -chip->current_energy;
+ 			}
+ 			else
+ 			{
+@@ -506,7 +508,7 @@ static void vlm5030_reset(struct vlm5030_info *chip)
+ 	chip->current_position = 0;
+ 	chip->fill_buffer_hack = 0;
+ 
+-	srand (132);
++	chip->noise_seed = 132; // ReplayArcade: was srand(132), which reseeded the whole process
+ 
+ 	chip->phase = PH_RESET;
+ 	chip->address = 0;
+@@ -799,23 +801,6 @@ void vlm5030Update(INT32 nChip, INT16 *buf, INT32 samples)
+ 	memset (chip->output, 0, chip->samples_per_frame * sizeof(INT16));
+ }
+ 
+-static void vlm5030_restore_state(INT32 nChip)
+-{
+-	struct vlm5030_info *chip = &vlm5030_chips[nChip];
+-	INT32 i;
+-
+-	INT32 interp_effect = FR_SIZE - (chip->interp_count%FR_SIZE);
+-	/* restore parameter data */
+-	vlm5030_setup_parameter(chip, chip->parameter);
+-
+-	/* restore current energy,pitch & filter */
+-	chip->current_energy = chip->old_energy + (chip->target_energy - chip->old_energy) * interp_effect / FR_SIZE;
+-	if (chip->old_pitch > 1)
+-		chip->current_pitch = chip->old_pitch + (chip->target_pitch - chip->old_pitch) * interp_effect / FR_SIZE;
+-	for (i = 0; i <= 9 ; i++)
+-		chip->current_k[i] = chip->old_k[i] + (chip->target_k[i] - chip->old_k[i]) * interp_effect / FR_SIZE;
+-}
+-
+ void vlm5030Scan(INT32 nAction, INT32 *)
+ {
+ #if defined FBNEO_DEBUG
+@@ -846,7 +831,22 @@ void vlm5030Scan(INT32 nAction, INT32 *)
+ 			SCAN_VAR(chip->target_k);
+ 			SCAN_VAR(chip->x);
+ 
+-			vlm5030_restore_state(i);
++			// ReplayArcade: scan the running values instead of approximating them from old/target,
++			// and only touch the chip when loading (restore_state used to run on save too, changing
++			// the live chip every time a state was taken).
++			SCAN_VAR(chip->new_energy);
++			SCAN_VAR(chip->new_pitch);
++			SCAN_VAR(chip->new_k);
++			SCAN_VAR(chip->current_energy);
++			SCAN_VAR(chip->current_pitch);
++			SCAN_VAR(chip->current_k);
++			SCAN_VAR(chip->current_position);
++			SCAN_VAR(chip->fill_buffer_hack);
++			SCAN_VAR(chip->noise_seed);
++
++			if (nAction & ACB_WRITE) {
++				vlm5030_setup_parameter(chip, chip->parameter);
++			}
+ 		}
+ 	}
+ }
+diff --git a/src/burner/libretro/libretro.cpp b/src/burner/libretro/libretro.cpp
+index 9e8983568..7650ad119 100644
+--- a/src/burner/libretro/libretro.cpp
++++ b/src/burner/libretro/libretro.cpp
+@@ -1474,6 +1474,15 @@ void retro_run()
+ 		bUpdateAudioLatency = false;
+ 	}
+ 
++	// ReplayArcade: apply a pending resize (retro_get_system_av_info, which every frontend calls after
++	// loading) before the frame, so the frame is drawn into the right buffer and presented instead of
++	// being thrown away; a resize requested while the frame runs is still handled below.
++	if (bVidImageNeedRealloc)
++	{
++		bVidImageNeedRealloc = false;
++		VideoBufferInit();
++	}
++
+ 	pBurnDraw = bEnableVideo && !bSkipFrame ? pVidImage : NULL; // Set to NULL to skip frame rendering
+ 	pBurnSoundOut = bEmulateAudio ? pAudBuffer : NULL; // Set to NULL to skip sound rendering
+ 
