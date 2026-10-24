@@ -1,7 +1,11 @@
 # ReplayArcade's product profile for ReplayNES's sources (see ReplayNES cmake/Product.cmake).
 set(RN_PRODUCT_NAME "ReplayArcade")
 set(RN_PRODUCT_APP_ID "io.github.kathoc.ReplayArcade")
-set(RN_PRODUCT_EXECUTABLE "replayarcade-linux")
+if(WIN32)
+  set(RN_PRODUCT_EXECUTABLE "ReplayArcade")
+else()
+  set(RN_PRODUCT_EXECUTABLE "replayarcade-linux")
+endif()
 set(RN_PRODUCT_DATA_DIR "ReplayArcade")
 set(RN_PRODUCT_ENV_PREFIX "REPLAYARCADE_")
 set(RN_PRODUCT_PROJECT_EXT ".arcrec")
@@ -18,6 +22,9 @@ set(RN_PRODUCT_NES OFF)
 set(RN_PRODUCT_LIBRARY_PICTURE_FRAME 1800)
 # No flash reduction: it breaks up fast-scrolling arcade pictures (user decision 2026-10-24).
 set(RN_PRODUCT_FLASH_FILTER OFF)
+# Windows: the product's icon; no in-app updates (private, never published).
+set(RN_PRODUCT_WINDOWS_ICON "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/artwork/replayarcade.ico")
+set(RN_PRODUCT_UPDATES OFF)
 # Linux packaging (packaging/linux); the artwork is a placeholder until the final design.
 set(RN_PRODUCT_LINUX_DESKTOP_FILE "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/io.github.kathoc.ReplayArcade.desktop")
 set(RN_PRODUCT_LINUX_METAINFO_FILE "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/io.github.kathoc.ReplayArcade.metainfo.xml")

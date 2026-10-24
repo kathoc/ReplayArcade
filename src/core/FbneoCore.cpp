@@ -128,6 +128,16 @@ size_t highByte(unsigned port) { return 3 + port; }       // bytes 3 and 4
 constexpr unsigned kMaxPorts = 2;
 constexpr size_t kFirstAxisByte = 5;
 
+// FBNeo's libretro port splits paths at the platform's own separator only (extract_directory looks
+// for '\\' on Windows), while ReplayNES's paths may use '/' there: "C:\\ROM/gradius.zip" would make
+// it look for the ROMs in "C:\\". Paths handed to FBNeo use the native separator.
+std::string nativePath(std::string p) {
+#ifdef _WIN32
+  std::replace(p.begin(), p.end(), '/', '\\');
+#endif
+  return p;
+}
+
 // Builds the layout from FBNeo's descriptors: one button per retropad id a game uses (labelled
 // with FBNeo's name for it), one axis per analog input. Fake-digital entries map to the d-pad.
 void buildLayout(Host& h) {
@@ -351,11 +361,12 @@ class FbneoCore final : public rn::ICore {
     h.loadedPath.clear();
     // A fresh, empty save directory per load: NVRAM written at unload must not reach the next
     // power-on (projects replay from power-on).
-    h.saveDir = h.tempRoot + "/save-" + std::to_string(++h.loads);
+    h.saveDir = nativePath(h.tempRoot + "/save-" + std::to_string(++h.loads));
     std::filesystem::create_directories(h.saveDir);
     h.rotation = 0;  // set again by the driver while loading (RETRO_ENVIRONMENT_SET_ROTATION)
     retro_game_info gi{};
-    gi.path = path.c_str();
+    const std::string native = nativePath(path);
+    gi.path = native.c_str();
     if (!retro_load_game(&gi)) return rn::Error(rn::Err::RomInvalid, "FinalBurn Neo could not load '" + path + "'");
     retro_get_system_av_info(&h.av);
     // Power-on state first; then one frame to receive the input descriptors (FBNeo sends them
@@ -554,7 +565,7 @@ void registerFbneoCore(const FbneoSettings& settings) {
       std::error_code ec;
       std::string base = std::filesystem::temp_directory_path(ec).string();
       h.tempRoot = base + "/replayarcade-fbneo-" + std::to_string(::getpid());
-      h.systemDir = h.tempRoot + "/system";
+      h.systemDir = nativePath(h.tempRoot + "/system");
       std::filesystem::create_directories(h.systemDir, ec);
       retro_set_environment(environment);
       retro_set_video_refresh(videoRefresh);
