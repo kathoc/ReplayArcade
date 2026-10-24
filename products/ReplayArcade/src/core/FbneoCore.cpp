@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <mutex>
 #include <numeric>
+#include <random>
 #include <unistd.h>
 #include <vector>
 
@@ -65,6 +66,11 @@ struct Host {
   bool collectDescriptors = false;
   std::vector<retro_input_descriptor> descriptors;
   std::vector<std::string> descriptorNames;
+  // The temporary folders are this process's alone: removed at exit.
+  ~Host() {
+    std::error_code ec;
+    if (!tempRoot.empty()) std::filesystem::remove_all(tempRoot, ec);
+  }
 };
 
 Host& host() {
@@ -349,6 +355,14 @@ class FbneoCore final : public rn::ICore {
 
  private:
   // Loads `path` into FBNeo if another content is there (host mutex held).
+  // Unloads the content; its save directory (the NVRAM FBNeo writes at unload) goes with it, so
+  // nothing a game wrote can reach a later power-on.
+  static void unloadContent(Host& h) {
+    retro_unload_game();
+    std::error_code ec;
+    std::filesystem::remove_all(h.saveDir, ec);
+  }
+
   rn::Status ensureLoaded(const std::string& path) {
     Host& h = host();
     if (h.loadedPath == path) {
@@ -357,12 +371,17 @@ class FbneoCore final : public rn::ICore {
     }
     if (h.owner) h.owner->park();
     h.owner = nullptr;
-    if (!h.loadedPath.empty()) retro_unload_game();
+    if (!h.loadedPath.empty()) unloadContent(h);
     h.loadedPath.clear();
     // A fresh, empty save directory per load: NVRAM written at unload must not reach the next
-    // power-on (projects replay from power-on).
+    // power-on (projects replay from power-on). The temporary root is unique to this process, and
+    // an existing folder is emptied anyway.
     h.saveDir = nativePath(h.tempRoot + "/save-" + std::to_string(++h.loads));
-    std::filesystem::create_directories(h.saveDir);
+    {
+      std::error_code ec;
+      std::filesystem::remove_all(h.saveDir, ec);
+      std::filesystem::create_directories(h.saveDir, ec);
+    }
     h.rotation = 0;  // set again by the driver while loading (RETRO_ENVIRONMENT_SET_ROTATION)
     retro_game_info gi{};
     const std::string native = nativePath(path);
@@ -374,7 +393,7 @@ class FbneoCore final : public rn::ICore {
     size_t size = retro_serialize_size();
     h.powerOn.assign(size, 0);
     if (!size || !retro_serialize(h.powerOn.data(), size)) {
-      retro_unload_game();
+      unloadContent(h);
       return rn::Error(rn::Err::StateError, "FinalBurn Neo cannot save states for '" + path + "'");
     }
     h.descriptors.clear();
@@ -387,13 +406,13 @@ class FbneoCore final : public rn::ICore {
     h.input = nullptr;
     h.collectDescriptors = false;
     if (!retro_unserialize(h.powerOn.data(), size)) {
-      retro_unload_game();
+      unloadContent(h);
       return rn::Error(rn::Err::StateError, "FinalBurn Neo cannot restore its power-on state");
     }
     buildLayout(h);
     rn::Status lv = h.layout.validate();
     if (!lv.ok()) {
-      retro_unload_game();
+      unloadContent(h);
       return rn::Error(rn::Err::Internal, "input layout from FinalBurn Neo is invalid: " + lv.message);
     }
     h.contentId = contentIdOfLoaded();
@@ -564,7 +583,16 @@ void registerFbneoCore(const FbneoSettings& settings) {
     if (!h.initialised) {
       std::error_code ec;
       std::string base = std::filesystem::temp_directory_path(ec).string();
-      h.tempRoot = base + "/replayarcade-fbneo-" + std::to_string(::getpid());
+      // Unique per process: a folder name made of the process id alone was reused by later runs
+      // (Wine's small, recycled ids), and an earlier run's NVRAM files in it reached this run's games.
+      std::random_device rd;
+      for (int attempt = 0; attempt < 100 && h.tempRoot.empty(); ++attempt) {
+        char tag[32];
+        std::snprintf(tag, sizeof tag, "%08x%08x", unsigned(rd()), unsigned(rd()));
+        std::string candidate = base + "/replayarcade-fbneo-" + std::to_string(::getpid()) + "-" + tag;
+        if (std::filesystem::create_directory(candidate, ec)) h.tempRoot = candidate;
+      }
+      if (h.tempRoot.empty()) std::fprintf(stderr, "FinalBurn Neo: cannot create a temporary folder in %s\n", base.c_str());
       h.systemDir = nativePath(h.tempRoot + "/system");
       std::filesystem::create_directories(h.systemDir, ec);
       retro_set_environment(environment);
