@@ -100,6 +100,16 @@ void testGame(const std::string& romDir, const std::string& game, const std::str
     names += " " + b["id"].asString() + (b["label"].asString().empty() ? "" : "(" + b["label"].asString() + ")");
   for (auto& a : layout["axes"].items()) names += " " + a["id"].asString() + "(" + a["label"].asString() + ")";
   std::printf("    input:%s\n", names.c_str());
+  // Every target game has fire buttons, a start and a coin, also when it is not the first game
+  // this process loads (FBNeo maps a game's inputs on its first frame).
+  bool hasFire = false, hasStart = false, hasCoin = false;
+  for (auto& b : layout["buttons"].items()) {
+    std::string id = b["id"].asString();
+    hasFire = hasFire || id == "p1.b1";
+    hasStart = hasStart || id.find(".start") != std::string::npos;
+    hasCoin = hasCoin || id.find(".coin") != std::string::npos;
+  }
+  EXPECT(hasFire && hasStart && hasCoin, "layout has p1.b1, a start and a coin");
 
   // Every button gets a virtual key "t:<id>", its turbo "t:<id>.turbo"; axes follow a stick.
   rn_input* in = rn_input_new();
