@@ -246,6 +246,24 @@ void testGame(const std::string& romDir, const std::string& game, const std::str
   }
   rn_input_free(in);
   EXPECT(recorded.size() == kFrames, "recorded all frames");
+  // One value for the whole recording (pictures and sound of every frame), to compare builds and
+  // platforms: the same input must give the same value everywhere the recordings are meant to replay.
+  rn::Hasher64 digest;
+  for (const Frame& fr : recorded) {
+    digest.u64(fr.video);
+    digest.u64(fr.audio);
+  }
+  std::printf("    recording digest: %016llx\n", (unsigned long long)digest.digest());
+  // $REPLAYARCADE_FRAME_DUMP=<dir>: every frame's picture and sound hash, one line each, to find
+  // where two builds part.
+  if (const char* dump = std::getenv("REPLAYARCADE_FRAME_DUMP")) {
+    if (FILE* f = std::fopen((std::string(dump) + "/" + game + ".txt").c_str(), "w")) {
+      for (size_t i = 0; i < recorded.size(); ++i)
+        std::fprintf(f, "%zu %016llx %016llx\n", i, (unsigned long long)recorded[i].video,
+                     (unsigned long long)recorded[i].audio);
+      std::fclose(f);
+    }
+  }
   EXPECT(colours.size() > 4, "pictures have content (" + std::to_string(colours.size()) + " colours)");
 
   // Seek to checkpoints and arbitrary frames in a scrambled order and replay 120 frames from each.
@@ -314,7 +332,7 @@ int main() {
   std::istringstream games(list);
   for (std::string g; games >> g;) {
     testGame(roms, g, work);
-    testInputsAct(roms, g);
+    if (!std::getenv("REPLAYARCADE_SKIP_INPUT_CHECKS")) testInputsAct(roms, g);
   }
   std::printf("%s: %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
   return failures ? 1 : 0;

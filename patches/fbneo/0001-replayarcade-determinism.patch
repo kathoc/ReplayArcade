@@ -251,10 +251,20 @@ index e2e156576..0f3538c45 100644
  
  #define AY8910_ADD_SOUND(route, output)												\
 diff --git a/src/burn/snd/burn_ym2151.cpp b/src/burn/snd/burn_ym2151.cpp
-index 1b5c22ac4..037f6e37b 100644
+index 1b5c22ac4..a63e20952 100644
 --- a/src/burn/snd/burn_ym2151.cpp
 +++ b/src/burn/snd/burn_ym2151.cpp
-@@ -374,6 +374,14 @@ void BurnYM2151Scan(INT32 nAction, INT32 *pnMin)
+@@ -189,6 +189,9 @@ void BurnYM2151Reset()
+ 	if (YM2151BurnTimer)
+ 		BurnTimerReset();
+ 
++	// ReplayArcade: the register latch is a file static; a reset must not keep the last game's.
++	memset(nBurnCurrentYM2151Register, 0, sizeof(nBurnCurrentYM2151Register));
++
+ 	YM2151ResetChip(0);
+ }
+ 
+@@ -374,6 +377,14 @@ void BurnYM2151Scan(INT32 nAction, INT32 *pnMin)
  
  	SCAN_VAR(nBurnCurrentYM2151Register);
  
@@ -463,6 +473,21 @@ index 1de6ca903..6ea9af52e 100644
  		}
  	}
  }
+diff --git a/src/burn/snd/ym2151.c b/src/burn/snd/ym2151.c
+index 3b54c2552..0727e93f3 100644
+--- a/src/burn/snd/ym2151.c
++++ b/src/burn/snd/ym2151.c
+@@ -1777,6 +1777,10 @@ void YM2151ResetChip(int num)
+ 	int i;
+ 	YM2151 *chip = &YMPSG[num];
+ 
++	/* ReplayArcade: the per-sample work variables are file statics shared by every chip and every
++	   game; they are in the save state, so a reset clears them instead of keeping the last game's. */
++	memset(chanout, 0, sizeof(chanout));
++	m2 = c1 = c2 = mem = 0;
+ 
+ 	/* initialize hardware registers */
+ 	for (i=0; i<32; i++)
 diff --git a/src/burner/libretro/libretro.cpp b/src/burner/libretro/libretro.cpp
 index 9e8983568..7650ad119 100644
 --- a/src/burner/libretro/libretro.cpp
