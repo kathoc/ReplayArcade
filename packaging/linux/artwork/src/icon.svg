@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Placeholder icon for ReplayArcade (a cabinet screen with a rewind mark); final artwork later. -->
+  <rect x="32" y="32" width="448" height="448" rx="88" fill="#1b1033"/>
+  <rect x="96" y="104" width="320" height="236" rx="28" fill="#ff3d7f"/>
+  <path d="M300 160 L300 284 L212 222 Z M212 160 L212 284 L124 222 Z" fill="#1b1033"/>
+  <rect x="140" y="372" width="232" height="44" rx="22" fill="#ffd23f"/>
+  <circle cx="196" cy="394" r="12" fill="#1b1033"/>
+  <circle cx="316" cy="394" r="12" fill="#1b1033"/>
+</svg>

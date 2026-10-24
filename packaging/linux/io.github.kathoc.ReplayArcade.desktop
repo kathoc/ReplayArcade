@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ReplayArcade
+GenericName=Arcade recorder and player
+Comment=Record, rewind and replay arcade play with frame-exact timelines
+Comment[ja]=アーケードのプレイをフレーム単位で記録・巻き戻し・再生
+Exec=replayarcade-linux
+Icon=io.github.kathoc.ReplayArcade
+Terminal=false
+Categories=Game;Emulator;
+Keywords=arcade;emulator;TAS;replay;
+StartupWMClass=io.github.kathoc.ReplayArcade

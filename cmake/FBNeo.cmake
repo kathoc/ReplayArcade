@@ -1,7 +1,7 @@
 # FinalBurn Neo (libretro fork, third_party/fbneo) as a static library with ReplayArcade's patches.
 # The libretro Makefile builds in its own tree; STATIC_LINKING=1 leaves out libretro-common's file and
 # string helpers (a libretro frontend normally provides them), so they are compiled here.
-set(FBNEO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fbneo)
+set(FBNEO_DIR ${REPLAYARCADE_DIR}/third_party/fbneo)
 set(FBNEO_LIBRETRO_DIR ${FBNEO_DIR}/src/burner/libretro)
 set(FBNEO_ARCHIVE ${FBNEO_LIBRETRO_DIR}/fbneo_libretro_static.a)
 include(ProcessorCount)
@@ -12,9 +12,9 @@ endif()
 
 add_custom_command(
   OUTPUT ${FBNEO_ARCHIVE}
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/fbneo-patches.sh
+  COMMAND ${REPLAYARCADE_DIR}/scripts/fbneo-patches.sh
   COMMAND make -C ${FBNEO_LIBRETRO_DIR} STATIC_LINKING=1 TARGET=fbneo_libretro_static.a -j${FBNEO_JOBS}
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/patches/fbneo/0001-replayarcade-determinism.patch
+  DEPENDS ${REPLAYARCADE_DIR}/patches/fbneo/0001-replayarcade-determinism.patch
   COMMENT "Building FinalBurn Neo (libretro, static, patched)"
   VERBATIM)
 add_custom_target(fbneo_build DEPENDS ${FBNEO_ARCHIVE})

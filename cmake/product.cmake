@@ -9,7 +9,16 @@ set(RN_PRODUCT_PROJECT_FORMAT "replayarcade-project")
 set(RN_PRODUCT_ROM_EXTS "zip")
 set(RN_PRODUCT_TEMP_PREFIX "replayarcade")
 set(RN_PRODUCT_L10N_OVERRIDES "")
-# Packaging files come in A2 (Deck build); until then the ReplayNES files stand in.
-set(RN_PRODUCT_LINUX_DESKTOP_FILE "${REPLAYNES_DIR}/apps/linux/flatpak/io.github.replaynes.ReplayNES.desktop")
-set(RN_PRODUCT_LINUX_METAINFO_FILE "${REPLAYNES_DIR}/apps/linux/flatpak/io.github.replaynes.ReplayNES.metainfo.xml")
-set(RN_PRODUCT_STEAM_ARTWORK_DIR "${REPLAYNES_DIR}/apps/linux/steam/artwork")
+set(RN_PRODUCT_STARTUP_TARGET "replayarcade_startup")
+set(RN_PRODUCT_DEFAULT_CORE "external")
+set(RN_PRODUCT_GAMEDB "${CMAKE_CURRENT_LIST_DIR}/../data/arcadedb.tsv")
+set(RN_PRODUCT_NES OFF)
+# Linux packaging (packaging/linux); the artwork is a placeholder until the final design.
+set(RN_PRODUCT_LINUX_DESKTOP_FILE "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/io.github.kathoc.ReplayArcade.desktop")
+set(RN_PRODUCT_LINUX_METAINFO_FILE "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/io.github.kathoc.ReplayArcade.metainfo.xml")
+set(RN_PRODUCT_STEAM_ARTWORK_DIR "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/artwork")
+
+# ReplayArcade's targets (FBNeo, its core, the start-up hook): defined once per configure.
+if(NOT TARGET replayarcade_startup)
+  include(${CMAKE_CURRENT_LIST_DIR}/AppTargets.cmake)
+endif()

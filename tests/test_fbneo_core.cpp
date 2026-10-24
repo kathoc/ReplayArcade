@@ -83,6 +83,9 @@ void testGame(const std::string& romDir, const std::string& game, const std::str
   EXPECT(st == RN_OK, "session for " + game + ": " + rn_last_error());
   if (st != RN_OK) return;
 
+  EXPECT(rac::contentIdForPath(zip) == rn_session_rom_sha256(s),
+         "content id from the file name (" + rac::contentIdForPath(zip) + ") equals the loaded one (" +
+             rn_session_rom_sha256(s) + ")");
   rn_media_info m{};
   rn_session_media_info(s, &m);
   char* layoutJson = rn_session_input_layout_json(s);

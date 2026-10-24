@@ -14,12 +14,8 @@ set(REPLAYNES_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(REPLAYNES_BUILD_DESKTOP OFF CACHE BOOL "" FORCE)
 add_subdirectory(${REPLAYNES_DIR} replaynes)
 
-include(cmake/FBNeo.cmake)
-
-# The FinalBurn Neo core behind ReplayNES's ICore (registered as RN_CORE_EXTERNAL).
-add_library(replayarcade_core STATIC src/core/FbneoCore.cpp)
-target_include_directories(replayarcade_core PUBLIC src)
-target_link_libraries(replayarcade_core PUBLIC replaynes_engine PRIVATE fbneo)
+# fbneo, replayarcade_core and replayarcade_startup come from the product profile
+# (cmake/product.cmake -> cmake/AppTargets.cmake), included while ReplayNES's sources configure.
 
 if(REPLAYARCADE_BUILD_TESTS)
   enable_testing()
