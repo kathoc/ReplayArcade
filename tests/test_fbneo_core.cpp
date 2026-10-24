@@ -67,6 +67,89 @@ std::vector<Frame> replayRange(rn_session* s, uint64_t from, uint64_t to) {
   return out;
 }
 
+// Records `frames` frames: coin and start late enough for every game's boot (Gradius warms up for
+// about 20 s), then `press` for 20 of every 60 frames from `pressFrom` on (After Burner II's
+// take-off is not controllable); returns each frame's picture.
+std::vector<uint64_t> playWith(const std::string& zip, const std::string& layoutJson, const std::string& press,
+                               uint64_t pressFrom, uint64_t frames) {
+  std::vector<uint64_t> out;
+  rn_session_options opt;
+  rn_session_options_init(&opt);
+  opt.core = RN_CORE_EXTERNAL;
+  rn_session* s = nullptr;
+  if (rn_session_new(zip.c_str(), nullptr, &opt, &s) != RN_OK) return out;
+  rn_input* in = rn_input_new();
+  rn_input_set_layout_json(in, layoutJson.c_str());
+  rn_input_bind(in, "t:coin", "p1.coin");
+  rn_input_bind(in, "t:start", "p1.start");
+  if (!press.empty()) rn_input_bind(in, "t:press", press.c_str());
+  for (uint64_t f = 0; f < frames; ++f) {
+    rn_input_set_pressed(in, "t:coin", (f >= 1500 && f < 1510) || (f >= 1560 && f < 1570));
+    rn_input_set_pressed(in, "t:start", (f >= 1700 && f < 1710) || (f >= 1760 && f < 1770));
+    if (!press.empty()) rn_input_set_pressed(in, "t:press", f >= pressFrom && (f - pressFrom) % 60 < 20);
+    rn_input_record rec;
+    rn_input_sample_record(in, f, &rec);
+    rn_step_info info{};
+    if (rn_step_record(s, &rec, &info) != RN_OK) break;
+    rn_video_frame_info v{};
+    rn_session_video_frame(s, &v);
+    out.push_back(pictureHash(v));
+  }
+  rn_input_free(in);
+  rn_session_close(s);
+  return out;
+}
+
+// Every player-1 button and direction must reach the game: the picture after pressing it differs
+// from the picture without it. A button whose effect depends on the game's state (Gradius's
+// power-up needs a capsule) is reported, not failed; the fire buttons as a whole must act.
+void testInputsAct(const std::string& romDir, const std::string& game) {
+  std::string zip = romDir + "/" + game + ".zip";
+  if (!std::filesystem::exists(zip)) return;
+  rn_session_options opt;
+  rn_session_options_init(&opt);
+  opt.core = RN_CORE_EXTERNAL;
+  rn_session* s = nullptr;
+  if (rn_session_new(zip.c_str(), nullptr, &opt, &s) != RN_OK) return;
+  char* lj = rn_session_input_layout_json(s);
+  std::string layoutJson = lj;
+  rn_string_free(lj);
+  rn_session_close(s);
+  rn::Json layout;
+  rn::Json::parse(layoutJson, layout);
+  const uint64_t kFrom = 2000, kFrames = 3600;
+  std::vector<uint64_t> base = playWith(zip, layoutJson, "", 0, kFrames);
+  std::string acted, inert;
+  bool fireActs = false;
+  std::string turboChecked, turboSame;
+  bool turboActs = false;
+  for (auto& b : layout["buttons"].items()) {
+    std::string id = b["id"].asString();
+    if (id.rfind("p1.", 0) != 0 || id == "p1.coin" || id == "p1.start" || id == "p1.service") continue;
+    std::vector<uint64_t> got = playWith(zip, layoutJson, id, kFrom, kFrames);
+    bool differs = got.size() == base.size() && !std::equal(got.begin() + long(kFrom), got.end(), base.begin() + long(kFrom));
+    bool same = got.size() == base.size() && std::equal(got.begin(), got.begin() + long(kFrom), base.begin());
+    EXPECT(same, id + ": frames before the press match");
+    (differs ? acted : inert) += " " + id;
+    if (differs && id.find(".b") != std::string::npos) {
+      fireActs = true;
+      // Turbo: holding a button's turbo action presses it again and again, which the game sees
+      // (more shots), so the pictures differ from holding the button itself. A button the game
+      // already repeats while held (Gradius II's shot) looks the same; the next one is tried.
+      if (!turboActs) {
+        std::string turboId = b.has("turbo") ? b["turbo"].asString() : id + ".turbo";
+        std::vector<uint64_t> turbo = playWith(zip, layoutJson, turboId, kFrom, kFrames);
+        turboActs = turbo.size() == got.size() && !std::equal(turbo.begin(), turbo.end(), got.begin());
+        (turboActs ? turboChecked : turboSame) += " " + turboId;
+      }
+    }
+  }
+  EXPECT(turboActs, game + ": the turbo of a fire button differs from holding it");
+  std::printf("    acts:%s\n    no effect:%s\n    turbo acts:%s; same as holding:%s\n", acted.c_str(),
+              inert.empty() ? " (none)" : inert.c_str(), turboChecked.c_str(), turboSame.empty() ? " (none)" : turboSame.c_str());
+  EXPECT(fireActs, game + ": a fire button changes the game");
+}
+
 void testGame(const std::string& romDir, const std::string& game, const std::string& work) {
   std::string zip = romDir + "/" + game + ".zip";
   std::printf("== %s\n", game.c_str());
@@ -229,7 +312,10 @@ int main() {
   std::string work = std::filesystem::temp_directory_path().string() + "/replayarcade-test-fbneo";
   std::filesystem::create_directories(work);
   std::istringstream games(list);
-  for (std::string g; games >> g;) testGame(roms, g, work);
+  for (std::string g; games >> g;) {
+    testGame(roms, g, work);
+    testInputsAct(roms, g);
+  }
   std::printf("%s: %d failure(s)\n", failures ? "FAIL" : "PASS", failures);
   return failures ? 1 : 0;
 }

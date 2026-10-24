@@ -17,8 +17,10 @@ COMMON=(--exclude=/.git --exclude=.git --exclude='/build/' --exclude='/build-*/'
 echo "==> sync ReplayArcade and ReplayNES ($RN) -> $HOST:~/$RDIR/src"
 ssh "$HOST" "mkdir -p ~/$RDIR/src/third_party/replaynes"
 rsync -a --delete "${COMMON[@]}" --exclude=/third_party/replaynes/ -e ssh "$ROOT/" "$HOST:$RDIR/src/"
+# apps/macos holds the localization table every app builds from (Resources/Localizable.xcstrings).
 rsync -a --delete "${COMMON[@]}" --exclude=/.claude/ --exclude=/third_party/nestopia/ --exclude=/third_party/syphon/ \
-  --exclude=/third_party/SDL/ --exclude=/apps/macos/ --exclude=/apps/windows/ -e ssh "$RN/" "$HOST:$RDIR/src/third_party/replaynes/"
+  --exclude=/third_party/SDL/ --include=/apps/macos/ --include=/apps/macos/Resources/ \
+  --include=/apps/macos/Resources/Localizable.xcstrings --exclude='/apps/macos/**' --exclude=/apps/windows/ -e ssh "$RN/" "$HOST:$RDIR/src/third_party/replaynes/"
 INSTALL="--install"
 [ "${NO_INSTALL:-0}" = "1" ] && INSTALL=""
 echo "==> flatpak-builder on $HOST"
