@@ -18,8 +18,9 @@ record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/F
   presses the accelerator / brake, and the left / right / middle buttons are buttons 1-3 (After Burner II:
   Vulcan, missile, speed; Galaxy Force II). The game keeps the pointer while it runs; Esc gives it back.
   Pressing a pad or game key puts the mouse's stick and lever back in the middle.
-- Replays are exact: FinalBurn Neo is patched for determinism (`patches/fbneo/`); a recording replays
-  identically on Linux and Windows.
+- Replays: a recording played straight through is identical on Linux and Windows. FinalBurn Neo is patched
+  to save the machine state its save states left out (`patches/fbneo/`); after a seek, a rewind or an export
+  some games still differ, and that work goes on.
 
 Platforms: Steam Deck / Linux (Flatpak) and Windows x64.
 
