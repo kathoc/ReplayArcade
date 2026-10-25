@@ -27,7 +27,7 @@ set(RN_PRODUCT_OVERSCAN_CROP OFF)
 # Version (scripts/release.sh checks it) and the Windows update feed: GitHub releases of
 # kathoc/ReplayArcade, signed with ReplayArcade's own EdDSA key (public half below). Linux / Steam Deck
 # updates come from the signed Flatpak repository on GitHub Pages (scripts/release.sh).
-set(RN_PRODUCT_VERSION "0.1.0")
+set(RN_PRODUCT_VERSION "0.2.0")
 set(RN_PRODUCT_WINDOWS_ICON "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/artwork/replayarcade.ico")
 set(RN_PRODUCT_UPDATES ON)
 set(RN_PRODUCT_WINDOWS_APPCAST_URL "https://github.com/kathoc/ReplayArcade/releases/latest/download/appcast-windows.xml")

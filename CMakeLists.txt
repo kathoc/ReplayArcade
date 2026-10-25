@@ -32,9 +32,16 @@ if(REPLAYARCADE_BUILD_TESTS)
     add_test(NAME arcadedb_up_to_date
              COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_arcadedb.py --check
                      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fbneo/src/burn/drv ${CMAKE_CURRENT_SOURCE_DIR}/data)
+    # src/core/FbneoRelative.inc (which analog inputs are dials) likewise.
+    add_test(NAME fbneo_relative_up_to_date
+             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_fbneo_relative.py --check
+                     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fbneo/src/burn/drv ${CMAKE_CURRENT_SOURCE_DIR}/src/core/FbneoRelative.inc)
   endif()
 endif()
 
 # Rewind cost as the app sees it (tools/bench_rewind.cpp); not a test.
 add_executable(bench_rewind tools/bench_rewind.cpp)
 target_link_libraries(bench_rewind PRIVATE replayarcade_core)
+# The input layout of games (tools/dump_layout.cpp); not a test.
+add_executable(dump_layout tools/dump_layout.cpp)
+target_link_libraries(dump_layout PRIVATE replayarcade_core)

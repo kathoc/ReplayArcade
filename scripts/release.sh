@@ -2,6 +2,7 @@
 # Builds, signs and publishes a ReplayArcade release (all on this machine).
 #   scripts/release.sh <version>             build, sign, publish (gh-pages Flatpak repository + GitHub release)
 #   NO_PUBLISH=1 scripts/release.sh <version> build and sign into dist/ only
+#   CHANGES=<file.md>: what is new, at the top of the release notes
 # Outputs (dist/):
 #   ReplayArcade-<v>-windows-x64.zip           ReplayArcade.exe, WinSparkle.dll, README.txt, licences
 #   appcast-windows.xml                        WinSparkle feed, the zip signed with the EdDSA key
@@ -204,9 +205,9 @@ echo "==> GitHub release $TAG"
 git -C "$ROOT" tag -f "$TAG" HEAD
 git_gh -C "$ROOT" push -f "https://github.com/$REPO.git" "refs/tags/$TAG"
 NOTES="$WORK/notes.md"
-cat > "$NOTES" <<EOF
-ReplayArcade $VERSION. **No ROMs are included.**
-
+{ echo "ReplayArcade $VERSION. **No ROMs are included.**"; echo
+  if [ -n "${CHANGES:-}" ]; then cat "$CHANGES"; echo; fi; } > "$NOTES"
+cat >> "$NOTES" <<EOF
 - **Windows x64**: \`$NAME.zip\` (unzip, run \`ReplayArcade.exe\`; in-app updates use the signed \`appcast-windows.xml\`).
 - **Steam Deck / Linux**: \`flatpak install --user ${PAGES_URL}$APP_ID.flatpakref\` (signed repository, updates with
   \`flatpak update\`), or the bundle \`$BUNDLE\`.
