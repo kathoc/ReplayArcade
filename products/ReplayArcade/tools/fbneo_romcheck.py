@@ -27,7 +27,8 @@ def roms(t, info):
                 a = re.search(r'struct BurnRomInfo\s+%sRomDesc\[\]\s*=\s*\{(.*?)\n\};' % d, tt, re.S)
                 if a: break
         if not a: out.append(('?desc '+d, 0, 0)); continue
-        for e in re.finditer(r'\{\s*"([^"]*)"\s*,\s*(0x[0-9a-fA-F]+|\d+)\s*,\s*(0x[0-9a-fA-F]+)\s*,([^}]*)\}', a.group(1)):
+        body = re.sub(r'//[^\n]*', '', a.group(1))  # a commented-out entry is not loaded
+        for e in re.finditer(r'\{\s*"([^"]*)"\s*,\s*(0x[0-9a-fA-F]+|\d+)\s*,\s*(0x[0-9a-fA-F]+)\s*,([^}]*)\}', body):
             if 'NODUMP' in e.group(4) or 'BRF_OPT' in e.group(4) or int(e.group(3),16) == 0: continue
             out.append((e.group(1), int(e.group(2),0), int(e.group(3),16)))
     return out
