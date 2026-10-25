@@ -9,6 +9,12 @@ record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/F
 - Per-game button assignment and turbo, remembered separately for pads and arcade sticks
   (detected automatically, changeable on the Controller page).
 - Controller-only operation, Japanese and English UI.
+- Keyboard: arrows, buttons 1-6 on Z X C / A S D, coin 5 (player 2: 6), start 1 or Return (player 2: 2),
+  as in MAME.
+- Mouse, for games with analog controls: a trackball, dial or paddle follows the mouse's motion
+  (Arkanoid, Syvalion, Cameltry); a flight stick follows its position, the wheel moves a throttle or
+  presses the accelerator / brake, and the left / right / middle buttons are buttons 1-3 (After Burner II:
+  Vulcan, missile, speed; Galaxy Force II). The game keeps the pointer while it runs; Esc gives it back.
 - Replays are exact: FinalBurn Neo is patched for determinism (`patches/fbneo/`); a recording replays
   identically on Linux and Windows.
 

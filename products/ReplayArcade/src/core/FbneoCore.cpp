@@ -9,6 +9,7 @@
 #include <mutex>
 #include <numeric>
 #include <random>
+#include <set>
 #include <unistd.h>
 #include <vector>
 
@@ -25,7 +26,14 @@ struct BurnRomInfo {
   unsigned int nCrc;
   unsigned int nType;
 };
+struct BurnInputInfo {
+  char* szName;
+  unsigned char nType;
+  void* pVal;
+  char* szInfo;
+};
 char* BurnDrvGetTextA(unsigned int i);
+int BurnDrvGetInputInfo(struct BurnInputInfo* pii, unsigned int i);
 int BurnDrvGetRomInfo(struct BurnRomInfo* pri, unsigned int i);
 int BurnDrvGetAspect(int* pnXAspect, int* pnYAspect);
 int BurnDrvGetIndex(char* szName);
@@ -37,6 +45,16 @@ namespace {
 
 constexpr unsigned kDrvName = 0;             // DRV_NAME
 constexpr unsigned kRomNoDump = 1u << 28;    // BRF_NODUMP
+constexpr unsigned char kAnalogRel = 4;      // BIT_ANALOG_REL: a dial / trackball, read as a speed
+// FBNeo's libretro input reads a BIT_ANALOG_REL axis (signed: a stick, a dial) as (value >> 5) less
+// a dead zone of 200 (at its default analog speed): values below 6400 of 32767 do nothing.
+constexpr float kRelativeDeadzone = 6400.f / 32767.f;
+// Sets whose dial-like inputs are speeds (tools/make_fbneo_relative.py): FBNeo marks sticks
+// BIT_ANALOG_REL too (After Burner II), so the type alone does not tell.
+struct RelativeInputs { const char* set; const char* names; };
+constexpr RelativeInputs kRelativeInputs[] = {
+#include "core/FbneoRelative.inc"
+};
 constexpr const char* kCompat = "fbneo-libretro@2b0c1c067+replayarcade-1";
 constexpr const char* kStateMagic = "fbneo";
 
@@ -152,6 +170,28 @@ void buildLayout(Host& h) {
   l.recordBytes = uint32_t(kFirstAxisByte);
   h.axes.clear();
   std::map<std::pair<unsigned, unsigned>, std::string> buttons;
+  // Dials of this set by (port, name): FBNeo names them "P<n> <name>" (or "<name>" for a one-player
+  // machine); the descriptors drop "P<n> ".
+  std::set<std::string> dials;
+  const std::string set = BurnDrvGetTextA(kDrvName);
+  for (const RelativeInputs& r : kRelativeInputs)
+    if (set == r.set)
+      for (size_t a = 0, b; a <= std::strlen(r.names); a = b + 1) {
+        b = std::string(r.names).find('|', a);
+        if (b == std::string::npos) b = std::strlen(r.names);
+        dials.insert(std::string(r.names, a, b - a));
+      }
+  // Every BIT_ANALOG_REL input has the dead zone; the dials among them are speeds.
+  std::set<std::pair<unsigned, std::string>> signedInputs, relative;
+  BurnInputInfo bii{};
+  for (unsigned i = 0; BurnDrvGetInputInfo(&bii, i) == 0; ++i) {
+    if (bii.nType != kAnalogRel || !bii.szName) continue;
+    std::string n = bii.szName;
+    const bool player = n.size() > 3 && n[0] == 'P' && n[1] >= '1' && n[1] <= '9' && n[2] == ' ';
+    std::pair<unsigned, std::string> key{player ? unsigned(n[1] - '1') : 0u, player ? n.substr(3) : n};  // "Throttle": player 1
+    signedInputs.insert(key);
+    if (dials.count(key.second)) relative.insert(key);
+  }
   for (size_t i = 0; i < h.descriptors.size(); ++i) {
     const retro_input_descriptor& d = h.descriptors[i];
     if (d.port >= kMaxPorts) continue;
@@ -165,7 +205,10 @@ void buildLayout(Host& h) {
       std::string axisName = std::string(d.index == 0 ? "" : "r") + (d.id == 0 ? "x" : "y");
       size_t byte = l.recordBytes;
       l.recordBytes += 2;
-      l.axes.push_back({"p" + std::to_string(d.port + 1) + ".axis." + axisName, h.descriptorNames[i], uint16_t(byte)});
+      rn::InputLayout::Axis axis{"p" + std::to_string(d.port + 1) + ".axis." + axisName, h.descriptorNames[i], uint16_t(byte)};
+      axis.relative = relative.count({d.port, h.descriptorNames[i]}) != 0;
+      if (signedInputs.count({d.port, h.descriptorNames[i]})) axis.deadzone = kRelativeDeadzone;
+      l.axes.push_back(axis);
       h.axes.push_back({d.port, d.index, d.id, byte});
     }
   }
