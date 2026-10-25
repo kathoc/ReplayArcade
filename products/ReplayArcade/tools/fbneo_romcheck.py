@@ -1,6 +1,6 @@
-# FBNeo のドライバ定義から必要 ROM の CRC を取り、ROM フォルダの zip（自身と親）と照合する。
-# 使い方: python3 -I fbneo_romcheck.py <FBNeo の src/burn/drv> <ROM フォルダ> <ゲーム...>
-# 関数 driver / roms は tools/make_romdir.py からも使う（load で FBNeo のドライバを読む）。
+# Reads the ROM CRCs a game needs from FBNeo's driver source and checks them against the zips (its own and its parent's) in a ROM folder.
+# usage: python3 -I fbneo_romcheck.py <FBNeo src/burn/drv> <ROM dir> <games...>
+# driver() / roms() are also used by tools/make_romdir.py (load() reads the FBNeo drivers).
 import re, sys, zipfile, pathlib
 src = {}
 def load(drvroot):
@@ -16,7 +16,7 @@ def driver(name):
             return p, t, parent, bios, info
     return None
 def roms(t, info):
-    # STD_ROM_PICK / STDROMPICKEXT で他の Desc を連結している場合も拾う
+    # also follows STD_ROM_PICK / STDROMPICKEXT that chain other descriptors
     out = []
     m = re.search(r'STDROMPICKEXT\(\s*%s\s*,\s*(\w+)\s*,\s*(\w+)\s*\)' % info, t)
     descs = [m.group(1), m.group(2)] if m else [info]
@@ -43,14 +43,14 @@ def main():
     load(drvroot)
     for g in games:
         d = driver(g)
-        if not d: print(f'{g}: FBNeo にドライバなし'); continue
+        if not d: print(f'{g}: no FBNeo driver'); continue
         p, t, parent, bios, info = d
         need = roms(t, info)
         have = zcrcs([g, parent, bios], romdir)
         miss = [r for r in need if r[2] not in have]
         zips = [n for n in [g, parent, bios] if n and pathlib.Path(romdir, n+'.zip').exists()]
-        print(f'{g}: 必要 {len(need)} / 不足 {len(miss)}  (親={parent}, BIOS={bios}, zip={zips})')
-        for r in miss[:8]: print(f'    不足: {r[0]} crc={r[2]:08x}')
+        print(f'{g}: needed {len(need)} / missing {len(miss)}  (parent={parent}, BIOS={bios}, zip={zips})')
+        for r in miss[:8]: print(f'    missing: {r[0]} crc={r[2]:08x}')
 
 if __name__ == '__main__':
     main()

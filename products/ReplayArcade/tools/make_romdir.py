@@ -1,9 +1,9 @@
-# ReplayArcade の ROM フォルダを作る。対象ゲームごとに、FBNeo のドライバが要求するファイルを
-# 元の ROM フォルダの zip 群から CRC で探し、そのゲームだけで完結する zip（non-merged）を書く。
-# 元の ROM フォルダには書き込まない。merged セットのクローン（daimakai は ghouls.zip の中）や、
-# 別のセットにある共有ファイル（ordyneje の C65 MCU は assault.zip の中）もこれで揃う。
+# Builds a ReplayArcade ROM folder: for each game, finds the files its FBNeo driver needs
+# by CRC in the zips of a source ROM folder and writes a zip complete for that game alone (non-merged).
+# The source folder is never written. Clones in merged sets (daimakai inside ghouls.zip) and files
+# shared with another set (ordyneje's C65 MCU inside assault.zip) are found the same way.
 #
-# 使い方: python3 -I make_romdir.py <FBNeo の src/burn/drv> <元の ROM フォルダ> <作るフォルダ> [ゲーム...]
+# usage: python3 -I make_romdir.py <FBNeo src/burn/drv> <source ROM dir> <output dir> [games...]
 import pathlib
 import sys
 import zipfile
@@ -33,7 +33,7 @@ def main():
     for g in games:
         d = driver(g)
         if not d:
-            print(f"{g}: FBNeo にドライバなし")
+            print(f"{g}: no FBNeo driver")
             failed += 1
             continue
         _, text, parent, _, info = d
@@ -47,7 +47,7 @@ def main():
                         preferred.setdefault(i.CRC, (z, i.filename))
         missing = [r for r in need if r[2] not in preferred and r[2] not in index]
         if missing:
-            print(f"{g}: 不足 {len(missing)}: " + ", ".join(f"{r[0]} {r[2]:08x}" for r in missing[:5]))
+            print(f"{g}: missing {len(missing)}: " + ", ".join(f"{r[0]} {r[2]:08x}" for r in missing[:5]))
             failed += 1
             continue
         out = dst / f"{g}.zip"

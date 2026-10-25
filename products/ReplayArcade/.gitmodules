@@ -2,3 +2,6 @@
 	path = third_party/fbneo
 	url = https://github.com/libretro/FBNeo.git
 	ignore = untracked
+[submodule "third_party/replaynes"]
+	path = third_party/replaynes
+	url = https://github.com/kathoc/ReplayNES.git

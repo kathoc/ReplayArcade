@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# third_party/fbneo（libretro/FBNeo の submodule）に ReplayArcade のパッチを当てる。何度実行してもよい。
-#   scripts/fbneo-patches.sh          当てる（当て済みなら何もしない）
-#   scripts/fbneo-patches.sh --check  当て済みか確認するだけ（未適用なら exit 1）
-#   scripts/fbneo-patches.sh --export 作業ツリーの差分をパッチファイルへ書き戻す（パッチを直したとき）
+# Applies ReplayArcade's patches to third_party/fbneo (the libretro/FBNeo submodule). Safe to run repeatedly.
+#   scripts/fbneo-patches.sh          apply (nothing to do when already applied)
+#   scripts/fbneo-patches.sh --check  only check (exit 1 when not applied)
+#   scripts/fbneo-patches.sh --export write the working tree's changes back to the patch file (after fixing it)
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 sub=$root/third_party/fbneo
