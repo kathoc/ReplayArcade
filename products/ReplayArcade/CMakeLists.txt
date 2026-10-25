@@ -45,3 +45,11 @@ target_link_libraries(bench_rewind PRIVATE replayarcade_core)
 # The input layout of games (tools/dump_layout.cpp); not a test.
 add_executable(dump_layout tools/dump_layout.cpp)
 target_link_libraries(dump_layout PRIVATE replayarcade_core)
+# What a state load leaves out, for one game (tools/fbneo_diverge.cpp); not a test.
+add_executable(fbneo_diverge tools/fbneo_diverge.cpp)
+target_link_libraries(fbneo_diverge PRIVATE replayarcade_core ${CMAKE_DL_LIBS})
+# A project saved by another build opens and replays the same (tools/project_roundtrip.cpp); not a test.
+add_executable(project_roundtrip tools/project_roundtrip.cpp)
+target_link_libraries(project_roundtrip PRIVATE replayarcade_core)
+add_executable(fbneo_bisect tools/fbneo_bisect.cpp)
+target_link_libraries(fbneo_bisect PRIVATE replayarcade_core ${CMAKE_DL_LIBS})
