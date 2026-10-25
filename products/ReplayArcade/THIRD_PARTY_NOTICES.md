@@ -38,6 +38,14 @@ Not bundled: the Linux app uses the FFmpeg libraries of the `org.freedesktop.Pla
 (LGPL-2.1-or-later; its `codecs-extra` extension provides the H.264 encoders). The Windows app uses
 Windows Media Foundation.
 
+## Game titles (data/arcadedb.tsv)
+
+- Titles, makers, years and genres of the arcade sets come from FinalBurn Neo's driver table.
+- Japanese titles and readings: [Wikidata](https://www.wikidata.org/) (CC0), cached in
+  `data/wikidata-arcade.json` by `tools/fetch_arcade_wikidata.py`; of Japanese Wikipedia only the reading
+  given in parentheses after an article's title is kept (no article text). Hand-written corrections in
+  `data/arcadedb-ja.tsv`.
+
 ## No game software
 
 No ROM images, BIOS files or other game data are included or distributed.

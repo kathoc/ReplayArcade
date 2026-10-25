@@ -66,6 +66,27 @@ int main(int argc, char** argv) {
   rnf_game_info g{};
   EXPECT(rnf_gamedb_find_name("gradius3j.zip", &g) && std::strcmp(g.title_ja, "グラディウスIII 伝説から神話へ") == 0,
          "gradius3j: the Japanese title of gradius3ja");
+  // Sets the hand-written table does not have: Japanese titles and readings from Wikidata (the cache
+  // data/wikidata-arcade.json) and FBNeo, readings from the title's kana, Japanese Wikipedia or the romaji.
+  struct Want { const char* zip; const char* ja; const char* reading; };
+  for (const Want& w : {Want{"ggroundj.zip", "ゲイングランド", "ゲイングランド"}, Want{"seganinj.zip", "忍者プリンセス", "ニンジャプリンセス"},
+                        Want{"ogonsiro.zip", "黄金の城", "オウゴンノシロ"}, Want{"lwingsj.zip", "アレスの翼", "アレスノツバサ"}}) {
+    rnf_game_info x{};
+    bool found = rnf_gamedb_find_name(w.zip, &x) != 0;
+    EXPECT(found && std::strcmp(x.title_ja, w.ja) == 0, std::string(w.zip) + ": Japanese title " + (found ? x.title_ja : "-"));
+    EXPECT(found && std::strcmp(x.reading, w.reading) == 0, std::string(w.zip) + ": reading " + (found ? x.reading : "-"));
+  }
+  // A wide FBNeo name (L"...") no longer shifts the fields after it: Truxton II's genre is read.
+  EXPECT(rnf_gamedb_find_name("truxton2.zip", &g) && g.genre == RNF_GENRE_SHOOTER, "truxton2: genre");
+  // Most arcade sets have one (a lost cache would show here).
+  int withJa = 0, all = 0;
+  for (size_t i = 0, n = rnf_gamedb_count(); i < n; ++i) {
+    rnf_game_info x{};
+    if (!rnf_gamedb_get(i, &x)) continue;
+    ++all;
+    withJa += *x.title_ja && std::strcmp(x.title_ja, x.title_en) != 0 ? 1 : 0;
+  }
+  EXPECT(withJa >= 4000, "Japanese titles in the database: " + std::to_string(withJa) + " of " + std::to_string(all));
   // Neither a console game nor a BIOS.
   EXPECT(idOf("neogeo.zip").empty(), "neogeo.zip (BIOS)");
   EXPECT(idOf("md_sonic.zip").empty(), "md_sonic.zip (Mega Drive)");
