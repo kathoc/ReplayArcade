@@ -113,7 +113,10 @@ echo "    dist/$NAME.zip ($(du -h "$DIST/$NAME.zip" | cut -f1)), dist/appcast-wi
 echo "==> Flatpak"
 SRC="$WORK/flatpak-src"
 rm -rf "$SRC" && mkdir -p "$SRC"
+# Not copied: build output (also ReplayNES's download cache in third_party/replaynes/build) and FBNeo's
+# Windows SDK archive (src/dep/mingw), which the Flatpak does not use.
 rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
+  --exclude='/third_party/replaynes/build/' --exclude='/third_party/fbneo/src/dep/mingw/' \
   --exclude='*.o' --exclude='*.a' --exclude='*.d' "$ROOT/" "$SRC/"
 (cd "$SRC" && find . -type f) | no_game_data
 flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$WORK/flatpak-state" \
