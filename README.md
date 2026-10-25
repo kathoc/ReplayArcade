@@ -4,17 +4,20 @@ ReplayArcade is [ReplayNES](https://github.com/kathoc/ReplayNES) for arcade game
 record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/FBNeo) as its core.
 
 - Every session is recorded: rewind (L2), retry from any point, takes, bookmarks.
-- Practice sections (A/B) with a countdown, autosave and resume.
+- Practice sections with a countdown (3, 1 or none), autosave and resume: on the paused seek bar the
+  north button puts a marker (two make a section, on a marker it deletes it), west starts and stops
+  practice, L / R switch the section, L + START goes back to the first marker.
 - Make Video: MP4 export of any range.
 - Per-game button assignment and turbo, remembered separately for pads and arcade sticks
   (detected automatically, changeable on the Controller page).
 - Controller-only operation, Japanese and English UI.
 - Keyboard: arrows, buttons 1-6 on Z X C / A S D, coin 5 (player 2: 6), start 1 or Return (player 2: 2),
   as in MAME.
-- Mouse, for games with analog controls: a trackball, dial or paddle follows the mouse's motion
+- Mouse (Settings > Controls > More > Mouse, off by default), for games with analog controls: a trackball, dial or paddle follows the mouse's motion
   (Arkanoid, Syvalion, Cameltry); a flight stick follows its position, the wheel moves a throttle or
   presses the accelerator / brake, and the left / right / middle buttons are buttons 1-3 (After Burner II:
   Vulcan, missile, speed; Galaxy Force II). The game keeps the pointer while it runs; Esc gives it back.
+  Pressing a pad or game key puts the mouse's stick and lever back in the middle.
 - Replays are exact: FinalBurn Neo is patched for determinism (`patches/fbneo/`); a recording replays
   identically on Linux and Windows.
 

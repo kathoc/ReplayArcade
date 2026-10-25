@@ -1,8 +1,116 @@
 diff --git a/src/burn/burn.cpp b/src/burn/burn.cpp
-index 3674759df..630711720 100644
+index 3674759df..2d03aa731 100644
 --- a/src/burn/burn.cpp
 +++ b/src/burn/burn.cpp
-@@ -1814,11 +1814,9 @@ void BurnRandomSetSeed(UINT64 nSeed)
+@@ -5,6 +5,17 @@
+ #include "timer.h"
+ //#include "burn_sound.h" // included in burnint.h
+ #include "driverlist.h"
++#include <math.h>
++// ReplayArcade: the biquad filters a game set up (snd/biquad.h), in the order it did: their memory is
++// machine state. The list starts empty with each game.
++#include "biquad.h"
++static BIQ* BurnBiqList[64];
++static INT32 nBurnBiqCount = 0;
++void BurnBiqRegister(BIQ* biq)
++{
++	for (INT32 i = 0; i < nBurnBiqCount; i++) if (BurnBiqList[i] == biq) return;
++	if (nBurnBiqCount < 64) BurnBiqList[nBurnBiqCount++] = biq;
++}
+ 
+ #ifdef BUILD_WIN32
+ #include "mbtwc.h"
+@@ -821,6 +832,8 @@ extern "C" INT32 BurnDrvInit()
+ {
+ 	INT32 nReturnValue;
+ 
++	nBurnBiqCount = 0; // ReplayArcade: this game's filters register as it sets them up
++
+ 	if (nBurnDrvActive >= nBurnDrvCount) {
+ 		return 1;
+ 	}
+@@ -912,6 +925,7 @@ extern "C" INT32 BurnDrvInit()
+ // Exit game emulation
+ extern "C" INT32 BurnDrvExit()
+ {
++	nBurnBiqCount = 0; // ReplayArcade: the game's filters go with it
+ #if defined (FBNEO_DEBUG)
+ 	if (starttime) {
+ 		clock_t endtime;
+@@ -1198,6 +1212,53 @@ static INT32 __cdecl DefAcb (struct BurnArea* /* pba */) { return 1; }
+ INT32 (__cdecl *BurnAcb) (struct BurnArea* pba) = DefAcb;
+ 
+ // Scan driver data
++INT32 nReplayArcadeScanVersion = 2;
++
++// ReplayArcade: the registry of REPLAYARCADE_STATE (state.h). Filled by static constructors before
++// main (plain zero-initialised storage, so the order of the files' initialisation does not matter).
++struct ReplayArcadeStateEntry { void* pv; INT32 nSize; const char* szName; };
++static ReplayArcadeStateEntry* pReplayArcadeStates = NULL;
++static INT32 nReplayArcadeStates = 0, nReplayArcadeStatesCap = 0, bReplayArcadeStatesSorted = 0;
++
++ReplayArcadeState::ReplayArcadeState(void* pv, INT32 nSize, const char* szName)
++{
++	if (nReplayArcadeStates == nReplayArcadeStatesCap) {
++		nReplayArcadeStatesCap = nReplayArcadeStatesCap ? nReplayArcadeStatesCap * 2 : 64;
++		pReplayArcadeStates = (ReplayArcadeStateEntry*)realloc(pReplayArcadeStates, nReplayArcadeStatesCap * sizeof(ReplayArcadeStateEntry));
++	}
++	ReplayArcadeStateEntry e = { pv, nSize, szName };
++	pReplayArcadeStates[nReplayArcadeStates++] = e;
++	bReplayArcadeStatesSorted = 0;
++}
++
++static int ReplayArcadeStateCompare(const void* a, const void* b)
++{
++	return strcmp(((const ReplayArcadeStateEntry*)a)->szName, ((const ReplayArcadeStateEntry*)b)->szName);
++}
++
++void ReplayArcadeStateScan(INT32 nAction)
++{
++	if ((nAction & ACB_DRIVER_DATA) == 0) return;
++	if (!bReplayArcadeStatesSorted) {
++		qsort(pReplayArcadeStates, nReplayArcadeStates, sizeof(ReplayArcadeStateEntry), ReplayArcadeStateCompare);
++		bReplayArcadeStatesSorted = 1;
++	}
++	for (INT32 i = 0; i < nReplayArcadeStates; i++) {
++		struct BurnArea ba;
++		memset(&ba, 0, sizeof(ba));
++		ba.Data   = pReplayArcadeStates[i].pv;
++		ba.nLen   = pReplayArcadeStates[i].nSize;
++		ba.szName = (char*)pReplayArcadeStates[i].szName;
++		BurnAcb(&ba);
++	}
++}
++void BurnBitmapScan(INT32 nAction); // burn_bitmap.cpp
++void filter_rc_scan(INT32 nAction); // snd/flt_rc.cpp
++void BurnSoundFilterScan(INT32 nAction); // burn_sound.cpp
++void GenericTilemapScan(INT32 nAction); // tilemap_generic.cpp
++extern "C" void FMReplayArcadeScan(int nAction); // snd/fm.c
++
++
+ INT32 BurnAreaScan(INT32 nAction, INT32* pnMin)
+ {
+ 	INT32 nRet = 0;
+@@ -1212,6 +1273,18 @@ INT32 BurnAreaScan(INT32 nAction, INT32* pnMin)
+ 		nRet |= pDriver[nBurnDrvActive]->AreaScan(nAction, pnMin);
+ 	}
+ 
++	// ReplayArcade: the drawing bitmaps (pTransDraw, pPrioDraw, the drivers' others) carry the picture
++	// from frame to frame where a driver does not redraw all of it; a load left the previous run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2) {
++		BurnBitmapScan(nAction);
++		for (INT32 i = 0; i < nBurnBiqCount; i++) BurnBiqList[i]->scan();
++		filter_rc_scan(nAction);
++		BurnSoundFilterScan(nAction);
++		GenericTilemapScan(nAction);
++		FMReplayArcadeScan(nAction);
++		ReplayArcadeStateScan(nAction);
++	}
++
+ #ifdef __LIBRETRO__
+ 	// standalone method to handle hiscores with runahead
+ 	// doesn't work with libretro's second instance or 2+ frames
+@@ -1814,11 +1887,9 @@ void BurnRandomSetSeed(UINT64 nSeed)
  
  void BurnRandomInit()
  { // for states & input recordings - init before emulation starts
@@ -17,6 +125,230 @@ index 3674759df..630711720 100644
  }
  
  // ----------------------------------------------------------------------------
+diff --git a/src/burn/burn_bitmap.cpp b/src/burn/burn_bitmap.cpp
+index ee978a74b..994b5fc62 100644
+--- a/src/burn/burn_bitmap.cpp
++++ b/src/burn/burn_bitmap.cpp
+@@ -65,6 +65,28 @@ void BurnBitmapAllocate(INT32 nBitmapNumber, INT32 nWidth, INT32 nHeight, bool u
+ }
+ 
+ // get pointer to clip dimensions
++void BurnBitmapScan(INT32 nAction)
++{
++	for (INT32 i = 0; i < MAX_BITMAPS; i++) {
++		bitmap_struct *ptr = &bitmaps[i];
++		if (!(ptr->nFlags & FLAG_INITIALIZED)) continue;
++
++		struct BurnArea ba;
++		memset(&ba, 0, sizeof(ba));
++		ba.Data = ptr->pBitmap;
++		ba.nLen = ptr->nWidth * (ptr->nHeight + nTransferOverflow) * sizeof(UINT16);
++		ba.szName = "Bitmap";
++		BurnAcb(&ba);
++		if (ptr->nFlags & FLAG_HAS_PRIMAP) {
++			ba.Data = ptr->pPrimap;
++			ba.nLen = ptr->nWidth * (ptr->nHeight + nTransferOverflow);
++			ba.szName = "Priority map";
++			BurnAcb(&ba);
++		}
++	}
++	(void)nAction;
++}
++
+ clip_struct *BurnBitmapClipDims(INT32 nBitmapNumber)
+ {
+ #if defined FBNEO_DEBUG
+diff --git a/src/burn/burn_bitmap.h b/src/burn/burn_bitmap.h
+index 68d59a67b..b4bc7cd24 100644
+--- a/src/burn/burn_bitmap.h
++++ b/src/burn/burn_bitmap.h
+@@ -64,6 +64,8 @@ void BurnBitmapCopy(INT32 nBitmapNumber, UINT16 *pDest, UINT8 *pPrio, INT32 nScr
+ // Allocate bitmap and priority map (optional)
+ // Note--NEVER USE BITMAP #0! This is reserved for pTransDraw!!!!
+ void BurnBitmapAllocate(INT32 nBitmapNumber, INT32 nWidth, INT32 nHeight, bool use_primap);
++// ReplayArcade: every allocated bitmap and priority map, for save states
++void BurnBitmapScan(INT32 nAction);
+ 
+ // Exit bitmap functions and free memory (Call in GenericTilesExit())
+ void BurnBitmapExit();
+diff --git a/src/burn/burn_gun.cpp b/src/burn/burn_gun.cpp
+index 551b9ebfd..e6b4041e2 100644
+--- a/src/burn/burn_gun.cpp
++++ b/src/burn/burn_gun.cpp
+@@ -318,10 +318,12 @@ void BurnTrackballUpdatePortB(INT32 dev)
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of BurnTrackballUpdateSlither() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 burn_gun_BurnTrackballUpdateSlither_flippy[2] = { 0, 0 }; REPLAYARCADE_STATE(burn_gun_BurnTrackballUpdateSlither_flippy);
+ void BurnTrackballUpdateSlither(INT32 dev)
+ {
+ 	// simulate the divider circuit on down + right(V) for Slither (taito/d_qix.cpp)
+-	static INT32 flippy[2] = { 0, 0 };
++	INT32 (&flippy)[2] = burn_gun_BurnTrackballUpdateSlither_flippy;
+ 	// PortA (usually X-Axis)
+ 	if (DrvJoyT[(dev*4) + 0]) { // Backward
+ 		flippy[0] ^= 1;
+diff --git a/src/burn/burn_memory.cpp b/src/burn/burn_memory.cpp
+index feae3a9f7..48f764a07 100644
+--- a/src/burn/burn_memory.cpp
++++ b/src/burn/burn_memory.cpp
+@@ -104,6 +104,20 @@ UINT8 *BurnRealloc(void *ptr, INT32 size)
+ 	return NULL;
+ }
+ 
++// ReplayArcade: the blocks BurnMalloc handed out (for tools/fbneo_diverge, which compares what the
++// drivers allocated between two runs); returns how many were written.
++INT32 BurnMallocBlocks(UINT8** ptrs, INT32* sizes, INT32 max)
++{
++	INT32 n = 0;
++	for (INT32 i = 0; i < MAX_MEM_PTR && n < max; i++) {
++		if (memptr[i] == NULL) continue;
++		ptrs[n] = memptr[i];
++		sizes[n] = memsize[i];
++		n++;
++	}
++	return n;
++}
++
+ // call BurnFree() instead of "free" (see macro in burnint.h)
+ void _BurnFree(void *ptr)
+ {
+diff --git a/src/burn/burn_sound.cpp b/src/burn/burn_sound.cpp
+index 7773d3c61..557adf883 100644
+--- a/src/burn/burn_sound.cpp
++++ b/src/burn/burn_sound.cpp
+@@ -34,6 +34,9 @@ static INT16 dac_lastin_l  = 0;
+ static INT16 dac_lastout_l = 0;
+ 
+ static INT32 limiting = 0;
++// ReplayArcade: were function-local statics in BurnSoundLimiter, never reset; they are machine state.
++static INT32 limiter_mode = -1; // -1 startup, 0 attack, 1 release
++static INT32 limiter_envelope = 0;
+ 
+ // BurnSoundDCFilterReset() is called automatically @ game init, no need to call this in-driver.
+ void BurnSoundDCFilterReset()
+@@ -41,6 +44,22 @@ void BurnSoundDCFilterReset()
+ 	dac_lastin_r = dac_lastout_r = 0;
+ 	dac_lastin_l = dac_lastout_l = 0;
+ 	limiting = 0;
++	limiter_mode = -1;
++	limiter_envelope = 0;
++}
++
++// ReplayArcade: the DC filter's and the limiter's memory shape every following sample; a load left the
++// last run's (scanned with every game's state, burn.cpp).
++void BurnSoundFilterScan(INT32 nAction)
++{
++	if (!(nAction & ACB_DRIVER_DATA)) return;
++	SCAN_VAR(dac_lastin_r);
++	SCAN_VAR(dac_lastout_r);
++	SCAN_VAR(dac_lastin_l);
++	SCAN_VAR(dac_lastout_l);
++	SCAN_VAR(limiting);
++	SCAN_VAR(limiter_mode);
++	SCAN_VAR(limiter_envelope);
+ }
+ 
+ // Runs a dc-blocking filter on pBurnSoundOut - see drv/pre90s/d_mappy.cpp for usage.
+@@ -82,9 +101,9 @@ void BurnSoundLimiter(INT16 *sndout, INT32 len, double percent, double make_up_g
+ 	const INT32 sample_pos_limit = 0x7fff * percent;
+ 	const INT32 sample_neg_limit = -0x8000 * percent;
+ 
+-	static INT32 mode = -1; // -1 startup, 0 attack, 1 release
+-	static INT32 envelope = 0;
+-	static INT32 percent_int = percent * 100;
++	INT32 &mode = limiter_mode;
++	INT32 &envelope = limiter_envelope;
++	const INT32 percent_int = percent * 100; // ReplayArcade: was fixed by the first call (static)
+ 
+ 	for (INT32 i = 0; i < len; i++) {
+ 		INT32 sample_l = (sndout[i * 2 + 0]);
+diff --git a/src/burn/devices/eeprom.cpp b/src/burn/devices/eeprom.cpp
+index d6182ea14..d708e063a 100644
+--- a/src/burn/devices/eeprom.cpp
++++ b/src/burn/devices/eeprom.cpp
+@@ -383,7 +383,9 @@ void EEPROMScan(INT32 nAction, INT32* pnMin)
+ 		ba.szName	= "Serial Buffer";
+ 		BurnAcb(&ba);
+ 
+-		if (nAction & ACB_RUNAHEAD) {
++		// ReplayArcade: every session starts from a blank EEPROM (no NVRAM file) and replays recompute
++		// from power-on, so what the game wrote into it is machine state, like RunAhead needs.
++		if ((nAction & ACB_RUNAHEAD) || nReplayArcadeScanVersion >= 2) {
+ 			// we _must_ scan eeprom data when in RunAhead mode or corruption is a possibility
+ 			ScanVar(eeprom_data, MEMORY_SIZE, "eeprom_data");
+ 		}
+diff --git a/src/burn/devices/gaelco_crypt.cpp b/src/burn/devices/gaelco_crypt.cpp
+index 12e34205c..8ddc81a01 100644
+--- a/src/burn/devices/gaelco_crypt.cpp
++++ b/src/burn/devices/gaelco_crypt.cpp
+@@ -102,9 +102,16 @@ static INT32 decrypt(INT32 const param1, INT32 const param2, INT32 const enc_pre
+ 	return BITSWAP16(res, 2,6,0,11,14,12,7,10,5,4,8,3,9,1,13,15);
+ }
+ 
++// ReplayArcade: emulation state of gaelco_decrypt() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 gaelco_crypt_lastpc, gaelco_crypt_lastoffset, gaelco_crypt_lastencword, gaelco_crypt_lastdecword;
++REPLAYARCADE_STATE(gaelco_crypt_lastpc);
++REPLAYARCADE_STATE(gaelco_crypt_lastoffset);
++REPLAYARCADE_STATE(gaelco_crypt_lastencword);
++REPLAYARCADE_STATE(gaelco_crypt_lastdecword);
+ UINT16 __fastcall gaelco_decrypt(INT32 offset, INT32 data, INT32 param1, INT32 param2)
+ {
+-	static INT32 lastpc, lastoffset, lastencword, lastdecword;
++	INT32 &lastpc = gaelco_crypt_lastpc, &lastoffset = gaelco_crypt_lastoffset, &lastencword = gaelco_crypt_lastencword,
++	      &lastdecword = gaelco_crypt_lastdecword;
+ 
+ 	INT32 thispc = SekGetPC(-1);
+ 
+diff --git a/src/burn/devices/joyprocess.cpp b/src/burn/devices/joyprocess.cpp
+index 518b28f05..426790791 100644
+--- a/src/burn/devices/joyprocess.cpp
++++ b/src/burn/devices/joyprocess.cpp
+@@ -4,11 +4,19 @@
+ 
+ INT32 nSocd[6] = { 3,3,3,3,3,3 };	// Last Input Priority (8 Way)
+ 
++// ReplayArcade: the 4-way buffers carry the stick from frame to frame (which direction a diagonal
++// keeps): emulation state (state.h, REPLAYARCADE_STATE). As function statics a load left the
++// previous run's.
++static INT32 joyprocess_fourway[4]      = { 0, 0, 0, 0 }; // 4-way buffer
++static UINT8 joyprocess_DrvInputPrev[4] = { 0, 0, 0, 0 }; // 4-way buffer
++REPLAYARCADE_STATE(joyprocess_fourway);
++REPLAYARCADE_STATE(joyprocess_DrvInputPrev);
++
+ // Digital Processing
+ void ProcessJoystick(UINT8 *input, INT8 playernum, INT8 up_bit, INT8 down_bit, INT8 left_bit, INT8 right_bit, UINT8 flags)
+ { // limitations: 4 players max., processes 8-bit inputs only!
+-	static INT32 fourway[4]      = { 0, 0, 0, 0 }; // 4-way buffer
+-	static UINT8 DrvInputPrev[4] = { 0, 0, 0, 0 }; // 4-way buffer
++	INT32 (&fourway)[4] = joyprocess_fourway;
++	UINT8 (&DrvInputPrev)[4] = joyprocess_DrvInputPrev;
+ 
+ 	if (flags & INPUT_ISACTIVELOW) {
+ 		*input ^= 0xff;
+diff --git a/src/burn/drv/atari/d_atarisy2.cpp b/src/burn/drv/atari/d_atarisy2.cpp
+index 568c77e87..476fa9237 100644
+--- a/src/burn/drv/atari/d_atarisy2.cpp
++++ b/src/burn/drv/atari/d_atarisy2.cpp
+@@ -1465,6 +1465,8 @@ static void mix_sm2s(INT16 *buf_in, INT16 *buf_out, INT32 buf_len, double volume
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of DrvFrame() (was a function static; state.h, REPLAYARCADE_STATE)
++static int d_atarisy2_DrvFrame_soundirqderp = 0; REPLAYARCADE_STATE(d_atarisy2_DrvFrame_soundirqderp);
+ static INT32 DrvFrame()
+ {
+ 	BurnWatchdogUpdate();
+@@ -1498,7 +1500,7 @@ static INT32 DrvFrame()
+ 	INT32 nCyclesTotal[2] = { 10000000 / 60, sound_mhz / 60 };
+ 	INT32 nCyclesDone[2] = { nCyclesExtra, 0 };
+ 
+-	static int soundirqderp = 0; // dink: fix this garbage. aka make timing timing again
++	int &soundirqderp = d_atarisy2_DrvFrame_soundirqderp; // dink: fix this garbage. aka make timing timing again
+ 
+ 	DrvDrawBegin();
+ 
 diff --git a/src/burn/drv/capcom/cps_mem.cpp b/src/burn/drv/capcom/cps_mem.cpp
 index 178756962..e4326eac0 100644
 --- a/src/burn/drv/capcom/cps_mem.cpp
@@ -85,6 +417,111 @@ index 04e41b51b..ea4e13761 100644
  
  	CpsXmvPaletteRestored = false;
  
+diff --git a/src/burn/drv/capcom/d_mitchell.cpp b/src/burn/drv/capcom/d_mitchell.cpp
+index e988cb44c..aac06bee8 100644
+--- a/src/burn/drv/capcom/d_mitchell.cpp
++++ b/src/burn/drv/capcom/d_mitchell.cpp
+@@ -1288,9 +1288,11 @@ static INT32 MstworldDoReset()
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of BlockDialRead() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_mitchell_BlockDialRead_Dir[2]; REPLAYARCADE_STATE(d_mitchell_BlockDialRead_Dir);
+ static UINT8 BlockDialRead(INT32 Offset)
+ {
+-	static INT32 Dir[2];
++	INT32 (&Dir)[2] = d_mitchell_BlockDialRead_Dir;
+ 					
+ 	if (DrvDialSelected) {
+ 		INT32 Delta;
+diff --git a/src/burn/drv/capcom/qs_c.cpp b/src/burn/drv/capcom/qs_c.cpp
+index e4cd0c35b..425741ee6 100644
+--- a/src/burn/drv/capcom/qs_c.cpp
++++ b/src/burn/drv/capcom/qs_c.cpp
+@@ -778,7 +778,8 @@ INT32 QscScan(INT32 nAction)
+ 	ba.szName	= szName;
+ 	BurnAcb(&ba);
+ 
+-	if (CpsXmvSixEnabled) {
++	// ReplayArcade: from state layout 2 on for every QSound game (version 1 had it for xmvsf3v3 only)
++	if (CpsXmvSixEnabled || nReplayArcadeScanVersion >= 2) {
+ 		// xmvsf3v3: the resampler too, so its states replay exactly (other games' states keep their size)
+ 		SCAN_VAR(nDelta);
+ 		SCAN_VAR(nPos);
+diff --git a/src/burn/drv/dataeast/d_dec0.cpp b/src/burn/drv/dataeast/d_dec0.cpp
+index 5122917d4..62416f61a 100644
+--- a/src/burn/drv/dataeast/d_dec0.cpp
++++ b/src/burn/drv/dataeast/d_dec0.cpp
+@@ -2491,10 +2491,12 @@ static UINT8 Joy2Rotate(UINT8 *joy) { // ugly code, but the effect is awesome. -
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of dialRotation() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_dec0_dialRotation_lastplayer[2][2] = { { 0, 0 }, { 0, 0 } }; REPLAYARCADE_STATE(d_dec0_dialRotation_lastplayer);
+ static int dialRotation(INT32 playernum) {
+     // p1 = 0, p2 = 1
+ 	UINT8 player[2] = { 0, 0 };
+-	static UINT8 lastplayer[2][2] = { { 0, 0 }, { 0, 0 } };
++	UINT8 (&lastplayer)[2][2] = d_dec0_dialRotation_lastplayer;
+ 
+     if ((playernum != 0) && (playernum != 1)) {
+ 		//bprintf(PRINT_NORMAL, _T("Strange Rotation address => %06X\n"), playernum);
+diff --git a/src/burn/drv/dataeast/d_dec8.cpp b/src/burn/drv/dataeast/d_dec8.cpp
+index 210a57cd1..185de103a 100644
+--- a/src/burn/drv/dataeast/d_dec8.cpp
++++ b/src/burn/drv/dataeast/d_dec8.cpp
+@@ -3616,10 +3616,12 @@ static UINT8 Joy2Rotate(UINT8 *joy) { // joy position to rotational position
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of dialRotation() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_dec8_dialRotation_lastplayer[2][2] = { { 0, 0 }, { 0, 0 } }; REPLAYARCADE_STATE(d_dec8_dialRotation_lastplayer);
+ static int dialRotation(INT32 playernum) {
+     // p1 = 0, p2 = 1
+ 	UINT8 player[2] = { 0, 0 };
+-	static UINT8 lastplayer[2][2] = { { 0, 0 }, { 0, 0 } };
++	UINT8 (&lastplayer)[2][2] = d_dec8_dialRotation_lastplayer;
+ 
+     if ((playernum != 0) && (playernum != 1)) {
+ 		//bprintf(PRINT_NORMAL, _T("Strange Rotation address => %06X\n"), playernum);
+diff --git a/src/burn/drv/irem/d_m72.cpp b/src/burn/drv/irem/d_m72.cpp
+index c64cf4f03..93a9331e9 100644
+--- a/src/burn/drv/irem/d_m72.cpp
++++ b/src/burn/drv/irem/d_m72.cpp
+@@ -1099,10 +1099,13 @@ static void __fastcall m72_main_write_port(UINT32 port, UINT8 data)
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of poundfor_trackball_r() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_m72_poundfor_trackball_r_prev[4] = { 0, 0, 0, 0 }; REPLAYARCADE_STATE(d_m72_poundfor_trackball_r_prev);
++static INT32 d_m72_poundfor_trackball_r_diff[4] = { 0, 0, 0, 0 }; REPLAYARCADE_STATE(d_m72_poundfor_trackball_r_diff);
+ static UINT16 __fastcall poundfor_trackball_r(INT32 port)
+ {
+-	static INT32 prev[4] = { 0, 0, 0, 0 };
+-	static INT32 diff[4] = { 0, 0, 0, 0 };
++	INT32 (&prev)[4] = d_m72_poundfor_trackball_r_prev;
++	INT32 (&diff)[4] = d_m72_poundfor_trackball_r_diff;
+ 
+ 	INT32 offset = (port / 2) & 0x03;
+ 
+diff --git a/src/burn/drv/konami/d_jackal.cpp b/src/burn/drv/konami/d_jackal.cpp
+index b6cf6bacc..ffa27c178 100644
+--- a/src/burn/drv/konami/d_jackal.cpp
++++ b/src/burn/drv/konami/d_jackal.cpp
+@@ -336,10 +336,12 @@ static UINT8 Joy2Rotate(UINT8 *joy) { // ugly code, but the effect is awesome. -
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of dialRotation() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_jackal_dialRotation_lastplayer[2][2] = { { 0, 0 }, { 0, 0 } }; REPLAYARCADE_STATE(d_jackal_dialRotation_lastplayer);
+ static int dialRotation(INT32 playernum) {
+ 	// p1 = 0, p2 = 1
+ 	UINT8 player[2] = { 0, 0 };
+-	static UINT8 lastplayer[2][2] = { { 0, 0 }, { 0, 0 } };
++	UINT8 (&lastplayer)[2][2] = d_jackal_dialRotation_lastplayer;
+ 
+ 	if ((playernum != 0) && (playernum != 1)) {
+ 		bprintf(PRINT_NORMAL, _T("Strange Rotation address => %06X\n"), playernum);
 diff --git a/src/burn/drv/konami/k051960.cpp b/src/burn/drv/konami/k051960.cpp
 index 25d97c407..48d65834e 100644
 --- a/src/burn/drv/konami/k051960.cpp
@@ -125,6 +562,182 @@ index 25d97c407..48d65834e 100644
  		}
  
  		return 0;
+diff --git a/src/burn/drv/konami/konamigx.cpp b/src/burn/drv/konami/konamigx.cpp
+index 0402a4d1a..774ebace4 100644
+--- a/src/burn/drv/konami/konamigx.cpp
++++ b/src/burn/drv/konami/konamigx.cpp
+@@ -196,13 +196,15 @@ static void gx_draw_basic_tilemaps(INT32 mixerflags, INT32 code)
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of gx_draw_basic_extended_tilemaps_1() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 konamigx_gx_draw_basic_extended_tilemaps_1_parity = 0; REPLAYARCADE_STATE(konamigx_gx_draw_basic_extended_tilemaps_1_parity);
+ static void gx_draw_basic_extended_tilemaps_1(INT32 mixerflags, INT32 code, INT32 sub1, INT32 sub1flags, INT32 rushingheroes_hack, INT32 offs)
+ {
+ 	INT32 temp1,temp2,temp3,temp4;
+ 	INT32 i = code<<1;
+ 	INT32 j = mixerflags>>i & 3;
+ 	INT32 k = 0;
+-	static INT32 parity = 0;
++	INT32 &parity = konamigx_gx_draw_basic_extended_tilemaps_1_parity;
+ 	parity ^= 1;
+ 
+ 	sub1 ^= 0; // kill warnings
+diff --git a/src/burn/drv/konami/konamiic.cpp b/src/burn/drv/konami/konamiic.cpp
+index 74a554da8..2cd68b676 100644
+--- a/src/burn/drv/konami/konamiic.cpp
++++ b/src/burn/drv/konami/konamiic.cpp
+@@ -197,6 +197,10 @@ void KonamiICExit()
+ 	K05324xZRejection = -1;
+ }
+ 
++// ReplayArcade: K051937ByteRead's read counter (konamiic.h; was a function static in the macro).
++INT32 K051937MacroCounter = 0;
++REPLAYARCADE_STATE(K051937MacroCounter);
++
+ void KonamiICScan(INT32 nAction)
+ {
+ 	if (KonamiIC_K051960InUse) K051960Scan(nAction);
+diff --git a/src/burn/drv/konami/konamiic.h b/src/burn/drv/konami/konamiic.h
+index abad3806b..256052df6 100644
+--- a/src/burn/drv/konami/konamiic.h
++++ b/src/burn/drv/konami/konamiic.h
+@@ -120,12 +120,13 @@ if (a >= nStartAddress && a <= nStartAddress + 0x3ff) {				\
+ 	return;									\
+ }
+ 
++extern INT32 K051937MacroCounter; // ReplayArcade: K051937ByteRead's read counter (was a static in the macro)
+ #define K051937ByteRead(nStartAddress)						\
+ if (a >= nStartAddress && a <= nStartAddress + 7) {				\
+ 	INT32 Offset = (a - nStartAddress);					\
+ 										\
+ 	if (Offset == 0) {							\
+-		static INT32 Counter;						\
++		INT32 &Counter = K051937MacroCounter; /* ReplayArcade */		\
+ 		return (Counter++) & 1;						\
+ 	}									\
+ 										\
+diff --git a/src/burn/drv/pre90s/d_alpha68k2.cpp b/src/burn/drv/pre90s/d_alpha68k2.cpp
+index 33bc52cad..dd16c705d 100644
+--- a/src/burn/drv/pre90s/d_alpha68k2.cpp
++++ b/src/burn/drv/pre90s/d_alpha68k2.cpp
+@@ -867,10 +867,12 @@ static UINT8 Joy2Rotate12(UINT8 *joy) { // even more ugly code
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of dialRotation() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_alpha68k2_dialRotation_lastplayer[2][2] = { { 0, 0 }, { 0, 0 } }; REPLAYARCADE_STATE(d_alpha68k2_dialRotation_lastplayer);
+ static int dialRotation(INT32 playernum) {
+     // p1 = 0, p2 = 1
+ 	UINT8 player[2] = { 0, 0 };
+-	static UINT8 lastplayer[2][2] = { { 0, 0 }, { 0, 0 } };
++	UINT8 (&lastplayer)[2][2] = d_alpha68k2_dialRotation_lastplayer;
+ 
+     if ((playernum != 0) && (playernum != 1)) {
+         bprintf(PRINT_NORMAL, _T("Strange Rotation address => %06X\n"), playernum);
+diff --git a/src/burn/drv/pre90s/d_btime.cpp b/src/burn/drv/pre90s/d_btime.cpp
+index 2cf6becd4..5c3cfd61d 100644
+--- a/src/burn/drv/pre90s/d_btime.cpp
++++ b/src/burn/drv/pre90s/d_btime.cpp
+@@ -2201,6 +2201,8 @@ extern int counter; // save for later debugging/tweaking. -dink
+ int lastctr = 0;
+ #endif
+ 
++// ReplayArcade: emulation state of BtimeFrame() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_btime_BtimeFrame_prevcoin = 0; REPLAYARCADE_STATE(d_btime_BtimeFrame_prevcoin);
+ static INT32 BtimeFrame()
+ {
+ 	if (DrvReset) {
+@@ -2210,7 +2212,7 @@ static INT32 BtimeFrame()
+ 	M6502NewFrame();
+ 
+ 	{
+-		static UINT8 prevcoin = 0;
++		UINT8 &prevcoin = d_btime_BtimeFrame_prevcoin;
+ 
+ 		memset(DrvInputs, ((discomode) ? 0x00 : 0xff), 3);
+ 
+diff --git a/src/burn/drv/pre90s/d_firetrap.cpp b/src/burn/drv/pre90s/d_firetrap.cpp
+index d610991f2..401f46ea1 100644
+--- a/src/burn/drv/pre90s/d_firetrap.cpp
++++ b/src/burn/drv/pre90s/d_firetrap.cpp
+@@ -861,6 +861,8 @@ static INT32 DrvDraw()
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of DrvFrame() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_firetrap_DrvFrame_lastcoin = 0; REPLAYARCADE_STATE(d_firetrap_DrvFrame_lastcoin);
+ static INT32 DrvFrame()
+ {
+ 	if (DrvReset) {
+@@ -881,7 +883,7 @@ static INT32 DrvFrame()
+ 		}
+ 
+ 		{ // coin derp
+-			static UINT8 lastcoin = 0;
++			UINT8 &lastcoin = d_firetrap_DrvFrame_lastcoin;
+ 			if (DrvInputs[3] && lastcoin != DrvInputs[3]) {
+ 				if (!i8751_current_command) {
+ 					i8751_return = (DrvInputs[3]&1) ? 1 : 2;
+diff --git a/src/burn/drv/pre90s/d_goindol.cpp b/src/burn/drv/pre90s/d_goindol.cpp
+index 5387167fe..bffcffb65 100644
+--- a/src/burn/drv/pre90s/d_goindol.cpp
++++ b/src/burn/drv/pre90s/d_goindol.cpp
+@@ -481,6 +481,9 @@ static INT32 DrvDraw()
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of DrvFrame() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_goindol_DrvFrame_lastcoin0 = 0; REPLAYARCADE_STATE(d_goindol_DrvFrame_lastcoin0);
++static UINT8 d_goindol_DrvFrame_lastcoin1 = 0; REPLAYARCADE_STATE(d_goindol_DrvFrame_lastcoin1);
+ static INT32 DrvFrame()
+ {
+ 	if (DrvReset) {
+@@ -490,8 +493,8 @@ static INT32 DrvFrame()
+ 	ZetNewFrame();
+ 
+ 	{
+-		static UINT8 lastcoin0 = 0;
+-		static UINT8 lastcoin1 = 0;
++		UINT8 &lastcoin0 = d_goindol_DrvFrame_lastcoin0;
++		UINT8 &lastcoin1 = d_goindol_DrvFrame_lastcoin1;
+ 
+ 		DrvJoy1[4] |= DrvJoy2[4]; // shared controls - game only responds to player 1 inputs.
+ 		DrvJoy1[5] |= DrvJoy2[5];
+diff --git a/src/burn/drv/pre90s/d_ladybug.cpp b/src/burn/drv/pre90s/d_ladybug.cpp
+index 3a8277458..397bf199d 100644
+--- a/src/burn/drv/pre90s/d_ladybug.cpp
++++ b/src/burn/drv/pre90s/d_ladybug.cpp
+@@ -1106,9 +1106,11 @@ static void draw_sprites()
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of redclash_update_stars() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_ladybug_redclash_update_stars_count = 0; REPLAYARCADE_STATE(d_ladybug_redclash_update_stars_count);
+ static void redclash_update_stars()
+ {
+-	static INT32 count = 0;
++	INT32 &count = d_ladybug_redclash_update_stars_count;
+ 
+ 	if (*enablestars == 0)
+ 		return;
+diff --git a/src/burn/drv/pre90s/d_mystston.cpp b/src/burn/drv/pre90s/d_mystston.cpp
+index 80e83aa09..40be55b05 100644
+--- a/src/burn/drv/pre90s/d_mystston.cpp
++++ b/src/burn/drv/pre90s/d_mystston.cpp
+@@ -521,9 +521,11 @@ static INT32 DrvDraw()
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of mystston_interrupt_handler() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_mystston_mystston_interrupt_handler_coin; REPLAYARCADE_STATE(d_mystston_mystston_interrupt_handler_coin);
+ static void mystston_interrupt_handler(INT32 scanline)
+ {
+-	static INT32 coin;
++	INT32 &coin = d_mystston_mystston_interrupt_handler_coin;
+ 	INT32 inp = (DrvJoy1[6] << 6) | (DrvJoy1[7] << 7);
+ 
+ 	if ((~inp & 0xc0) != 0xc0)
 diff --git a/src/burn/drv/pre90s/d_namcos1.cpp b/src/burn/drv/pre90s/d_namcos1.cpp
 index f61183266..bb84025de 100644
 --- a/src/burn/drv/pre90s/d_namcos1.cpp
@@ -149,6 +762,172 @@ index 33d06ab19..e03bb1720 100644
  
  		SCAN_VAR(m_voices);
  		SCAN_VAR(buffer_sprites);
+diff --git a/src/burn/drv/pre90s/d_nitedrvr.cpp b/src/burn/drv/pre90s/d_nitedrvr.cpp
+index 14bb41543..040ea3eea 100644
+--- a/src/burn/drv/pre90s/d_nitedrvr.cpp
++++ b/src/burn/drv/pre90s/d_nitedrvr.cpp
+@@ -234,11 +234,15 @@ static void out1_write(UINT8 data)
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of nitedrvr_write() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_nitedrvr_nitedrvr_write_screech[2] = { 0, 0 }; REPLAYARCADE_STATE(d_nitedrvr_nitedrvr_write_screech);
++static INT32 d_nitedrvr_nitedrvr_write_rate_target = 0; REPLAYARCADE_STATE(d_nitedrvr_nitedrvr_write_rate_target);
++static INT32 d_nitedrvr_nitedrvr_write_rate_adder = 0; REPLAYARCADE_STATE(d_nitedrvr_nitedrvr_write_rate_adder);
+ static void nitedrvr_write(UINT16 address, UINT8 data)
+ {
+-	static UINT8 screech[2] = { 0, 0 };
+-	static INT32 rate_target = 0;
+-	static INT32 rate_adder = 0;
++	UINT8 (&screech)[2] = d_nitedrvr_nitedrvr_write_screech;
++	INT32 &rate_target = d_nitedrvr_nitedrvr_write_rate_target;
++	INT32 &rate_adder = d_nitedrvr_nitedrvr_write_rate_adder;
+ 
+ 	if ((address & 0xfe00) == 0x0200) {
+ 		DrvVidRAM[address & 0x7f] = data;
+diff --git a/src/burn/drv/pre90s/d_redclash.cpp b/src/burn/drv/pre90s/d_redclash.cpp
+index 667a08653..ca5bab90f 100644
+--- a/src/burn/drv/pre90s/d_redclash.cpp
++++ b/src/burn/drv/pre90s/d_redclash.cpp
+@@ -750,9 +750,11 @@ static void draw_bullets()
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of redclash_update_stars() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_redclash_redclash_update_stars_count = 0; REPLAYARCADE_STATE(d_redclash_redclash_update_stars_count);
+ static void redclash_update_stars()
+ {
+-	static INT32 count = 0;
++	INT32 &count = d_redclash_redclash_update_stars_count;
+ 
+ 	if (enablestars == 0)
+ 		return;
+diff --git a/src/burn/drv/pre90s/d_snk.cpp b/src/burn/drv/pre90s/d_snk.cpp
+index 508674867..d31824eeb 100644
+--- a/src/burn/drv/pre90s/d_snk.cpp
++++ b/src/burn/drv/pre90s/d_snk.cpp
+@@ -2271,10 +2271,12 @@ static UINT8 Joy2Rotate(UINT8 *joy) { // ugly code, but the effect is awesome. -
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of dialRotation() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_snk_dialRotation_lastplayer[2][2] = { { 0, 0 }, { 0, 0 } }; REPLAYARCADE_STATE(d_snk_dialRotation_lastplayer);
+ static int dialRotation(INT32 playernum) {
+     // p1 = 0, p2 = 1
+ 	UINT8 player[2] = { 0, 0 };
+-	static UINT8 lastplayer[2][2] = { { 0, 0 }, { 0, 0 } };
++	UINT8 (&lastplayer)[2][2] = d_snk_dialRotation_lastplayer;
+ 
+     if ((playernum != 0) && (playernum != 1)) {
+         bprintf(PRINT_NORMAL, _T("Strange Rotation address => %06X\n"), playernum);
+diff --git a/src/burn/drv/pre90s/d_snk68.cpp b/src/burn/drv/pre90s/d_snk68.cpp
+index 882a79b3a..417d11618 100644
+--- a/src/burn/drv/pre90s/d_snk68.cpp
++++ b/src/burn/drv/pre90s/d_snk68.cpp
+@@ -571,10 +571,12 @@ static UINT8 Joy2Rotate(UINT8 *joy) { // ugly code, but the effect is awesome. -
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of dialRotation() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_snk68_dialRotation_lastplayer[2][2] = { { 0, 0 }, { 0, 0 } }; REPLAYARCADE_STATE(d_snk68_dialRotation_lastplayer);
+ static int dialRotation(INT32 playernum) {
+ 	// p1 = 0, p2 = 1
+ 	UINT8 player[2] = { 0, 0 };
+-	static UINT8 lastplayer[2][2] = { { 0, 0 }, { 0, 0 } };
++	UINT8 (&lastplayer)[2][2] = d_snk68_dialRotation_lastplayer;
+ 
+ 	if ((playernum != 0) && (playernum != 1)) {
+ 		bprintf(PRINT_NORMAL, _T("Strange Rotation address => %06X\n"), playernum);
+diff --git a/src/burn/drv/pre90s/d_spacefb.cpp b/src/burn/drv/pre90s/d_spacefb.cpp
+index 4fa45d66d..d27fc69bf 100644
+--- a/src/burn/drv/pre90s/d_spacefb.cpp
++++ b/src/burn/drv/pre90s/d_spacefb.cpp
+@@ -610,13 +610,18 @@ static INT32 DrvDraw()
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of dcfilter_dac() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT16 d_spacefb_dcfilter_dac_dac_lastin_r = 0; REPLAYARCADE_STATE(d_spacefb_dcfilter_dac_dac_lastin_r);
++static INT16 d_spacefb_dcfilter_dac_dac_lastout_r = 0; REPLAYARCADE_STATE(d_spacefb_dcfilter_dac_dac_lastout_r);
++static INT16 d_spacefb_dcfilter_dac_dac_lastin_l = 0; REPLAYARCADE_STATE(d_spacefb_dcfilter_dac_dac_lastin_l);
++static INT16 d_spacefb_dcfilter_dac_dac_lastout_l = 0; REPLAYARCADE_STATE(d_spacefb_dcfilter_dac_dac_lastout_l);
+ static void dcfilter_dac()
+ {
+ 	// dc-blocking filter
+-	static INT16 dac_lastin_r  = 0;
+-	static INT16 dac_lastout_r = 0;
+-	static INT16 dac_lastin_l  = 0;
+-	static INT16 dac_lastout_l = 0;
++	INT16 &dac_lastin_r = d_spacefb_dcfilter_dac_dac_lastin_r;
++	INT16 &dac_lastout_r = d_spacefb_dcfilter_dac_dac_lastout_r;
++	INT16 &dac_lastin_l = d_spacefb_dcfilter_dac_dac_lastin_l;
++	INT16 &dac_lastout_l = d_spacefb_dcfilter_dac_dac_lastout_l;
+ 
+ 	for (INT32 i = 0; i < nBurnSoundLen; i++) {
+ 		INT16 r = pBurnSoundOut[i*2+0];
+diff --git a/src/burn/drv/pre90s/d_warpwarp.cpp b/src/burn/drv/pre90s/d_warpwarp.cpp
+index 6e0fdb222..b0b848f9f 100644
+--- a/src/burn/drv/pre90s/d_warpwarp.cpp
++++ b/src/burn/drv/pre90s/d_warpwarp.cpp
+@@ -511,12 +511,17 @@ static void warpwarp_timer_tiktiktik(INT32 /*ticks*/)
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of warpwarp_sound_update() (was a function static; state.h, REPLAYARCADE_STATE)
++static int d_warpwarp_warpwarp_sound_update_vcarry = 0; REPLAYARCADE_STATE(d_warpwarp_warpwarp_sound_update_vcarry);
++static int d_warpwarp_warpwarp_sound_update_vcount = 0; REPLAYARCADE_STATE(d_warpwarp_warpwarp_sound_update_vcount);
++static int d_warpwarp_warpwarp_sound_update_mcarry = 0; REPLAYARCADE_STATE(d_warpwarp_warpwarp_sound_update_mcarry);
++static int d_warpwarp_warpwarp_sound_update_mcount = 0; REPLAYARCADE_STATE(d_warpwarp_warpwarp_sound_update_mcount);
+ static void warpwarp_sound_update(INT16 *buffer, INT32 length)
+ {
+-    static int vcarry = 0;
+-    static int vcount = 0;
+-    static int mcarry = 0;
+-	static int mcount = 0;
++    int &vcarry = d_warpwarp_warpwarp_sound_update_vcarry;
++    int &vcount = d_warpwarp_warpwarp_sound_update_vcount;
++    int &mcarry = d_warpwarp_warpwarp_sound_update_mcarry;
++	int &mcount = d_warpwarp_warpwarp_sound_update_mcount;
+ 
+ 	memset(buffer, 0, length * 2 * sizeof(INT16));
+ 
+diff --git a/src/burn/drv/pre90s/d_wc90b.cpp b/src/burn/drv/pre90s/d_wc90b.cpp
+index 2c7241f0b..e35a4f7b4 100644
+--- a/src/burn/drv/pre90s/d_wc90b.cpp
++++ b/src/burn/drv/pre90s/d_wc90b.cpp
+@@ -611,9 +611,11 @@ inline static INT32 Wc90b1SynchroniseStream(INT32 nSoundRate)
+ 	return (INT64)(double)ZetTotalCycles() * nSoundRate / 5000000;
+ }
+ 
++// ReplayArcade: emulation state of Wc90b1MSM5205Vck0() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_wc90b_Wc90b1MSM5205Vck0_Toggle = 0; REPLAYARCADE_STATE(d_wc90b_Wc90b1MSM5205Vck0_Toggle);
+ static void Wc90b1MSM5205Vck0()
+ {
+-	static INT32 Toggle = 0;
++	INT32 &Toggle = d_wc90b_Wc90b1MSM5205Vck0_Toggle;
+ 	
+ 	Toggle ^= 1;
+ 	
+diff --git a/src/burn/drv/pre90s/d_zaccaria.cpp b/src/burn/drv/pre90s/d_zaccaria.cpp
+index ce782a346..b57d8f03c 100644
+--- a/src/burn/drv/pre90s/d_zaccaria.cpp
++++ b/src/burn/drv/pre90s/d_zaccaria.cpp
+@@ -984,10 +984,13 @@ static void disty(INT16 *buf_in, INT32 buf_len)
+ }
+ 
+ // dc blocking filter (mono stream)
++// ReplayArcade: emulation state of dcblock() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT16 d_zaccaria_dcblock_lastin = 0; REPLAYARCADE_STATE(d_zaccaria_dcblock_lastin);
++static INT16 d_zaccaria_dcblock_lastout = 0; REPLAYARCADE_STATE(d_zaccaria_dcblock_lastout);
+ static void dcblock(INT16 *buf_in, INT32 buf_len)
+ {
+-	static INT16 lastin  = 0;
+-	static INT16 lastout = 0;
++	INT16 &lastin = d_zaccaria_dcblock_lastin;
++	INT16 &lastout = d_zaccaria_dcblock_lastout;
+ 
+ 	for (INT32 i = 0; i < buf_len; i++) {
+ 		INT16 m = buf_in[i];
 diff --git a/src/burn/drv/pst90s/d_namcos2.cpp b/src/burn/drv/pst90s/d_namcos2.cpp
 index fe48ba2a5..b8130e8ad 100644
 --- a/src/burn/drv/pst90s/d_namcos2.cpp
@@ -161,8 +940,209 @@ index fe48ba2a5..b8130e8ad 100644
  
  		BurnYM2151Scan(nAction, pnMin);
  		c140_scan(nAction, pnMin);
+diff --git a/src/burn/drv/pst90s/d_nmk16.cpp b/src/burn/drv/pst90s/d_nmk16.cpp
+index aba60f199..f42c52fd0 100644
+--- a/src/burn/drv/pst90s/d_nmk16.cpp
++++ b/src/burn/drv/pst90s/d_nmk16.cpp
+@@ -2268,14 +2268,21 @@ static void tdragon_mainram_w(INT32 offset)
+ 	}
+ }
+ 
++// ReplayArcade: emulation state of mcu_run() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_nmk16_mcu_run_input_pressed; REPLAYARCADE_STATE(d_nmk16_mcu_run_input_pressed);
++static UINT16 d_nmk16_mcu_run_coin_input; REPLAYARCADE_STATE(d_nmk16_mcu_run_coin_input);
++static UINT8 d_nmk16_mcu_run_start_helper = 0; REPLAYARCADE_STATE(d_nmk16_mcu_run_start_helper);
++static UINT8 d_nmk16_mcu_run_coin_count[2]; REPLAYARCADE_STATE(d_nmk16_mcu_run_coin_count);
++static UINT8 d_nmk16_mcu_run_coin_count_frac[2]; REPLAYARCADE_STATE(d_nmk16_mcu_run_coin_count_frac);
++static UINT8 d_nmk16_mcu_run_i; REPLAYARCADE_STATE(d_nmk16_mcu_run_i);
+ static void mcu_run(UINT8 dsw_setting)
+ {
+-	static UINT8 input_pressed;
+-	static UINT16 coin_input;
++	UINT8 &input_pressed = d_nmk16_mcu_run_input_pressed;
++	UINT16 &coin_input = d_nmk16_mcu_run_coin_input;
+ 	UINT8 dsw[2];
+-	static UINT8 start_helper = 0;
+-	static UINT8 coin_count[2],coin_count_frac[2];
+-	static UINT8 i;
++	UINT8 &start_helper = d_nmk16_mcu_run_start_helper;
++	UINT8 (&coin_count)[2] = d_nmk16_mcu_run_coin_count; UINT8 (&coin_count_frac)[2] = d_nmk16_mcu_run_coin_count_frac;
++	UINT8 &i = d_nmk16_mcu_run_i;
+ 
+ 	UINT16 *nmk16_mainram = (UINT16*)Drv68KRAM;
+ 
+diff --git a/src/burn/drv/pst90s/d_seta.cpp b/src/burn/drv/pst90s/d_seta.cpp
+index 847383fd1..06864acce 100644
+--- a/src/burn/drv/pst90s/d_seta.cpp
++++ b/src/burn/drv/pst90s/d_seta.cpp
+@@ -5007,9 +5007,12 @@ static INT32 zombraid_gun_read()
+ 	return (DrvAnalogInput[gun_input_src] >> gun_input_bit) & 1;
+ }
+ 
++// ReplayArcade: emulation state of zombraid_gun_write() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_seta_zombraid_gun_write_bit_count = 0; REPLAYARCADE_STATE(d_seta_zombraid_gun_write_bit_count);
++static INT32 d_seta_zombraid_gun_write_old_clock = 0; REPLAYARCADE_STATE(d_seta_zombraid_gun_write_old_clock);
+ static void zombraid_gun_write(INT32 data)
+ {
+-	static INT32 bit_count = 0, old_clock = 0;
++	INT32 &bit_count = d_seta_zombraid_gun_write_bit_count; INT32 &old_clock = d_seta_zombraid_gun_write_old_clock;
+ 
+ 	if(data&4) { bit_count = 0; return; } // Reset
+ 
+@@ -5356,10 +5359,12 @@ static UINT8 Joy2Rotate(UINT8 *joy) { // ugly code, but the effect is awesome. -
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of dialRotation() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_seta_dialRotation_lastplayer[2][2] = { { 0, 0 }, { 0, 0 } }; REPLAYARCADE_STATE(d_seta_dialRotation_lastplayer);
+ static int dialRotation(INT32 playernum) {
+ 	// p1 = 0, p2 = 1
+ 	UINT8 player[2] = { 0, 0 };
+-	static UINT8 lastplayer[2][2] = { { 0, 0 }, { 0, 0 } };
++	UINT8 (&lastplayer)[2][2] = d_seta_dialRotation_lastplayer;
+ 
+ 	if ((playernum != 0) && (playernum != 1)) {
+ 		bprintf(PRINT_NORMAL, _T("Strange Rotation address => %06X\n"), playernum);
+diff --git a/src/burn/drv/pst90s/d_seta2.cpp b/src/burn/drv/pst90s/d_seta2.cpp
+index 9c91ce2d4..7524ac87b 100644
+--- a/src/burn/drv/pst90s/d_seta2.cpp
++++ b/src/burn/drv/pst90s/d_seta2.cpp
+@@ -2426,6 +2426,8 @@ UINT8 __fastcall pzlbowlReadByte(UINT32 sekAddress)
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of pzlbowlReadWord() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT16 d_seta2_pzlbowlReadWord_prot = 0; REPLAYARCADE_STATE(d_seta2_pzlbowlReadWord_prot);
+ UINT16 __fastcall pzlbowlReadWord(UINT32 sekAddress)
+ {
+ 	switch (sekAddress) {
+@@ -2436,7 +2438,7 @@ UINT16 __fastcall pzlbowlReadWord(UINT32 sekAddress)
+ 
+ 		case 0x500004: {
+ 			//readinputport(4) | (rand() & 0x80 )
+-			static UINT16 prot = 0;
++			UINT16 &prot = d_seta2_pzlbowlReadWord_prot;
+ 			prot ^= 0x80;
+ 			return ~(prot | DrvInput[2]);
+ 			}
+diff --git a/src/burn/drv/sega/d_segag80r.cpp b/src/burn/drv/sega/d_segag80r.cpp
+index 73f11cd76..fa99eb741 100644
+--- a/src/burn/drv/sega/d_segag80r.cpp
++++ b/src/burn/drv/sega/d_segag80r.cpp
+@@ -1375,6 +1375,8 @@ static INT32 MonsterbDraw()
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of DrvFrame() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_segag80r_DrvFrame_lastS = 0; REPLAYARCADE_STATE(d_segag80r_DrvFrame_lastS);
+ static INT32 DrvFrame()
+ {
+ 	if (DrvReset) {
+@@ -1384,7 +1386,7 @@ static INT32 DrvFrame()
+ 	ZetNewFrame();
+ 
+ 	{
+-		static UINT8 lastS = 0;
++		UINT8 &lastS = d_segag80r_DrvFrame_lastS;
+ 		DrvInputs[0] = 0xff;
+ 		DrvInputs[1] = 0xff;
+ 		DrvInputs[2] = DrvDips[0];
+diff --git a/src/burn/drv/sega/d_segag80v.cpp b/src/burn/drv/sega/d_segag80v.cpp
+index 14d33a20e..f0d3653de 100644
+--- a/src/burn/drv/sega/d_segag80v.cpp
++++ b/src/burn/drv/sega/d_segag80v.cpp
+@@ -1281,6 +1281,10 @@ static INT32 DrvDraw()
+ 	return 0;
+ }
+ 
++// ReplayArcade: emulation state of DrvFrame() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_segag80v_DrvFrame_last = 0; REPLAYARCADE_STATE(d_segag80v_DrvFrame_last);
++static UINT8 d_segag80v_DrvFrame_last2[2] = { 0, 0 }; REPLAYARCADE_STATE(d_segag80v_DrvFrame_last2);
++static UINT8 d_segag80v_DrvFrame_OldDiag = 0; REPLAYARCADE_STATE(d_segag80v_DrvFrame_OldDiag);
+ static INT32 DrvFrame()
+ {
+ 	if (DrvReset) {
+@@ -1299,12 +1303,12 @@ static INT32 DrvFrame()
+ 		DrvInputs[5] = 0;  // elim4 fake coins input
+ 
+ 		if (dialmode == -1) { // eliminator 4, hold coin for 1 frame
+-			static UINT8 last = 0;
++			UINT8 &last = d_segag80v_DrvFrame_last;
+ 			UINT8 coins = (DrvJoy5[0] | DrvJoy5[1] | DrvJoy5[2] | DrvJoy5[3]);
+ 			DrvJoy1[0] = (last == 0 && coins);
+ 			last = coins;
+ 		} else { // others, hold for 1 frame
+-			static UINT8 last[2] = { 0, 0 };
++			UINT8 (&last)[2] = d_segag80v_DrvFrame_last2;
+ 			UINT8 coin[2] = { DrvJoy5[0], DrvJoy5[4] };
+ 			DrvJoy1[0] = (last[0] == 0 && coin[0]);
+ 			DrvJoy1[4] = (last[1] == 0 && coin[1]);
+@@ -1331,7 +1335,7 @@ static INT32 DrvFrame()
+ 		}
+ 
+ 		{ // Service Mode (Diagnostics) NMI
+-			static UINT8 OldDiag = 0;
++			UINT8 &OldDiag = d_segag80v_DrvFrame_OldDiag;
+ 			if (DrvJoy6[0] == 0 && OldDiag == 1) {
+ 				ZetOpen(0);
+ 				ZetNmi();
+diff --git a/src/burn/drv/sega/d_sys16a.cpp b/src/burn/drv/sega/d_sys16a.cpp
+index 29100058a..f1b06d619 100644
+--- a/src/burn/drv/sega/d_sys16a.cpp
++++ b/src/burn/drv/sega/d_sys16a.cpp
+@@ -2915,6 +2915,9 @@ static void MjleagueMakeAnalogInputs()
+ 	MjleagueBat2 = ProcessAnalog(System16AnalogPort1, 1, INPUT_DEADZONE | INPUT_LINEAR, 0x00, 0x80);
+ }
+ 
++// ReplayArcade: emulation state of MjleagueReadByte() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_sys16a_MjleagueReadByte_last_buttons1 = 0; REPLAYARCADE_STATE(d_sys16a_MjleagueReadByte_last_buttons1);
++static UINT8 d_sys16a_MjleagueReadByte_last_buttons2 = 0; REPLAYARCADE_STATE(d_sys16a_MjleagueReadByte_last_buttons2);
+ static UINT8 __fastcall MjleagueReadByte(UINT32 a)
+ {
+ 	switch (a) {
+@@ -2945,8 +2948,8 @@ static UINT8 __fastcall MjleagueReadByte(UINT32 a)
+ 			if (System16VideoControl & 4) {
+ 				return (MjleagueBat1 >> 4) | (MjleagueBat2 & 0xf0);
+ 			} else {
+-				static UINT8 last_buttons1 = 0;
+-				static UINT8 last_buttons2 = 0;
++				UINT8 &last_buttons1 = d_sys16a_MjleagueReadByte_last_buttons1;
++				UINT8 &last_buttons2 = d_sys16a_MjleagueReadByte_last_buttons2;
+ 				UINT8 buttons1 = 0xff - System16Input[1];
+ 				UINT8 buttons2 = 0xff - System16Input[2];
+ 
+@@ -2989,9 +2992,11 @@ static UINT8 __fastcall MjleagueReadByte(UINT32 a)
+ 	return 0xff;
+ }
+ 
++// ReplayArcade: emulation state of Passsht16aReadByte() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 d_sys16a_Passsht16aReadByte_PortNum = 0; REPLAYARCADE_STATE(d_sys16a_Passsht16aReadByte_PortNum);
+ static UINT8 __fastcall Passsht16aReadByte(UINT32 a)
+ {
+-	static INT32 PortNum = 0;
++	INT32 &PortNum = d_sys16a_Passsht16aReadByte_PortNum;
+ 
+ 	switch (a) {
+ 		case 0xc40001:
+diff --git a/src/burn/drv/sega/d_sys16b.cpp b/src/burn/drv/sega/d_sys16b.cpp
+index 6958a5664..9b635781d 100644
+--- a/src/burn/drv/sega/d_sys16b.cpp
++++ b/src/burn/drv/sega/d_sys16b.cpp
+@@ -9477,9 +9477,11 @@ static INT32 TturfInit()
+ 	return nRet;
+ }
+ 
++// ReplayArcade: emulation state of UltracinMakeAnalogInputs() (was a function static; state.h, REPLAYARCADE_STATE)
++static UINT8 d_sys16b_UltracinMakeAnalogInputs_clock = 0; REPLAYARCADE_STATE(d_sys16b_UltracinMakeAnalogInputs_clock);
+ static void UltracinMakeAnalogInputs()
+ {
+-	static UINT8 clock = 0;
++	UINT8 &clock = d_sys16b_UltracinMakeAnalogInputs_clock;
+ 
+ 	if (System16Input[1] & (0xc0)) {
+ 		clock ^= 0x08;
 diff --git a/src/burn/drv/sega/sys16_gfx.cpp b/src/burn/drv/sega/sys16_gfx.cpp
-index 2f7428162..dc88d09e4 100644
+index 2f7428162..74c6772dc 100644
 --- a/src/burn/drv/sega/sys16_gfx.cpp
 +++ b/src/burn/drv/sega/sys16_gfx.cpp
 @@ -3251,6 +3251,7 @@ INT32 System16BootlegRender()
@@ -173,7 +1153,23 @@ index 2f7428162..dc88d09e4 100644
  		return 0;
  	}
  
-@@ -3749,6 +3750,7 @@ INT32 HangonRender()
+@@ -3603,6 +3604,7 @@ INT32 System18Render()
+ 	GenericTilesPRIMASK = 0xff;
+ 
+ 	if (!System16VideoEnable) {
++		BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 		return 0;
+ 	}
+ 
+@@ -3686,6 +3688,7 @@ INT32 System16BRender()
+ 
+ 	if (!System16IgnoreVideoEnable) {
+ 		if (!System16VideoEnable) {
++			BurnClearScreen(); // ReplayArcade: video off is black; returning without output left the previous picture
+ 			return 0;
+ 		}
+ 	}
+@@ -3749,6 +3752,7 @@ INT32 HangonRender()
  {
  	if (!System16VideoEnable) {
  		BurnTransferClear();
@@ -181,7 +1177,7 @@ index 2f7428162..dc88d09e4 100644
  		return 0;
  	}
  	
-@@ -3779,6 +3781,7 @@ INT32 HangonAltRender()
+@@ -3779,6 +3783,7 @@ INT32 HangonAltRender()
  {
  	if (!System16VideoEnable) {
  		BurnTransferClear();
@@ -189,7 +1185,7 @@ index 2f7428162..dc88d09e4 100644
  		return 0;
  	}
  	
-@@ -3809,6 +3812,7 @@ INT32 OutrunRender()
+@@ -3809,6 +3814,7 @@ INT32 OutrunRender()
  {
  	if (!System16VideoEnable) {
  		BurnTransferClear();
@@ -197,7 +1193,7 @@ index 2f7428162..dc88d09e4 100644
  		return 0;
  	}
  
-@@ -3866,6 +3870,7 @@ INT32 XBoardRender()
+@@ -3866,6 +3872,7 @@ INT32 XBoardRender()
  {
  	if (!System16VideoEnable) {
  		BurnTransferClear();
@@ -205,7 +1201,7 @@ index 2f7428162..dc88d09e4 100644
  		return 0;
  	}
  
-@@ -3897,6 +3902,7 @@ INT32 YBoardRender()
+@@ -3897,6 +3904,7 @@ INT32 YBoardRender()
  {
  	if (!System16VideoEnable) {
  		BurnTransferClear();
@@ -230,6 +1226,38 @@ index 8aee7c118..32fd17f01 100644
  	}
  	
  	if (nAction & ACB_DRIVER_DATA) {
+diff --git a/src/burn/drv/toaplan/toaplan.cpp b/src/burn/drv/toaplan/toaplan.cpp
+index ee58c16c8..5e65cb665 100644
+--- a/src/burn/drv/toaplan/toaplan.cpp
++++ b/src/burn/drv/toaplan/toaplan.cpp
+@@ -11,6 +11,10 @@ INT32 nToaCyclesScanline;
+ INT32 nToaCyclesDisplayStart;
+ INT32 nToaCyclesVBlankStart;
+ 
++// ReplayArcade: ToaScanlineRegister()'s previous scanline (toaplan.h; was a function static).
++INT32 nToaPreviousScanline = 0;
++REPLAYARCADE_STATE(nToaPreviousScanline);
++
+ // Variables for the graphics drawing
+ bool bRotatedScreen;
+ UINT8* pBurnBitmap;
+diff --git a/src/burn/drv/toaplan/toaplan.h b/src/burn/drv/toaplan/toaplan.h
+index 0c914a34e..ab55e23b3 100644
+--- a/src/burn/drv/toaplan/toaplan.h
++++ b/src/burn/drv/toaplan/toaplan.h
+@@ -167,9 +167,11 @@ inline static UINT16 ToaVBlankRegister()
+ 	return 0;
+ }
+ 
++extern INT32 nToaPreviousScanline; // ReplayArcade: was a function static (toaplan.cpp, REPLAYARCADE_STATE)
++
+ inline static UINT16 ToaScanlineRegister()
+ {
+-	static INT32 nPreviousScanline;
++	INT32 &nPreviousScanline = nToaPreviousScanline;
+ 	UINT16 nFlags = 0xFE00;
+ 	INT32 nCurrentScanline = (SekCurrentScanline() + 1) % 262;
+ 
 diff --git a/src/burn/snd/ay8910.c b/src/burn/snd/ay8910.c
 index e2e156576..0f3538c45 100644
 --- a/src/burn/snd/ay8910.c
@@ -250,6 +1278,100 @@ index e2e156576..0f3538c45 100644
  }
  
  #define AY8910_ADD_SOUND(route, output)												\
+diff --git a/src/burn/snd/biquad.h b/src/burn/snd/biquad.h
+index f63d8cc40..86192369a 100644
+--- a/src/burn/snd/biquad.h
++++ b/src/burn/snd/biquad.h
+@@ -1,5 +1,10 @@
+ // (also appears in k054539.cpp, d_spectrum.cpp c/o dink)
+ // direct form II(transposed) biquadradic filter, needed for delay(echo) effect's filter taps -dink
++struct BIQ;
++// ReplayArcade: every initialised filter is listed (burn.cpp) and its memory scanned with the machine:
++// a filter's output depends on its past samples, so a state load must restore them.
++void BurnBiqRegister(struct BIQ* biq);
++
+ enum { FILT_HIGHPASS = 0, FILT_LOWPASS = 1, FILT_LOWSHELF = 2, FILT_HIGHSHELF = 3, FILT_PEAK = 4, FILT_NOTCH = 5, FILT_BANDPASS };
+ 
+ struct BIQ {
+@@ -66,6 +71,7 @@ struct BIQ {
+ 	}
+ 
+ 	void init(INT32 type, INT32 sample_rate, INT32 freqhz, double q_, double gain, bool reset_accu = true) {
++		BurnBiqRegister(this);
+ 		samplerate = sample_rate;
+ 		frequency = freqhz;
+ 		q = q_;
+diff --git a/src/burn/snd/burn_md2612.cpp b/src/burn/snd/burn_md2612.cpp
+index 3f37e3070..ebf144fc6 100644
+--- a/src/burn/snd/burn_md2612.cpp
++++ b/src/burn/snd/burn_md2612.cpp
+@@ -17,6 +17,7 @@ static INT32 nMD2612Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nNumChips = 0;
+ static INT32 bMD2612AddSignal;
+@@ -195,6 +196,8 @@ INT32 BurnMD2612Init(INT32 num, INT32 bIsPal, INT32 (*StreamCallback)(INT32), IN
+ 	MDYM2612Init();
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * 2 * num * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 2 * num; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * 2 * num * sizeof(INT16));
+ 	
+ 	nMD2612Position = 0;
+@@ -228,6 +231,13 @@ void BurnMD2612SetRoute(INT32 nChip, INT32 nIndex, double nVolume, INT32 nRouteD
+ 
+ void BurnMD2612Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM2612Initted) bprintf(PRINT_ERROR, _T("BurnMD2612Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_y8950.cpp b/src/burn/snd/burn_y8950.cpp
+index 02eaa91ab..41f1c4868 100644
+--- a/src/burn/snd/burn_y8950.cpp
++++ b/src/burn/snd/burn_y8950.cpp
+@@ -16,6 +16,7 @@ static INT32 nY8950Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nNumChips = 0;
+ 
+@@ -311,6 +312,8 @@ INT32 BurnY8950Init(INT32 num, INT32 nClockFrequency, UINT8* Y8950ADPCM0ROM, INT
+ 	}
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * num * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = num; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * num * sizeof(INT16));
+ 
+ 	nY8950Position = 0;
+@@ -354,6 +357,14 @@ void BurnY8950SetRoute(INT32 nChip, INT32 nIndex, double nVolume, INT32 nRouteDi
+ 
+ void BurnY8950Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ 	#if defined FBNEO_DEBUG
+ 	if (!DebugSnd_Y8950Initted) bprintf(PRINT_ERROR, _T("BurnY8950Scan called without init\n"));
+ #endif
 diff --git a/src/burn/snd/burn_ym2151.cpp b/src/burn/snd/burn_ym2151.cpp
 index 1b5c22ac4..a63e20952 100644
 --- a/src/burn/snd/burn_ym2151.cpp
@@ -279,6 +1401,366 @@ index 1b5c22ac4..a63e20952 100644
  	BurnYM2151Scan_int(nAction); // Scan the YM2151's internal registers
  
  	if (YM2151BurnTimer)
+diff --git a/src/burn/snd/burn_ym2203.cpp b/src/burn/snd/burn_ym2203.cpp
+index 38f0d7c84..b044e3014 100644
+--- a/src/burn/snd/burn_ym2203.cpp
++++ b/src/burn/snd/burn_ym2203.cpp
+@@ -17,6 +17,7 @@ static INT32 nAY8910Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nNumChips = 0;
+ 
+@@ -625,6 +626,8 @@ INT32 BurnYM2203Init(INT32 num, INT32 nClockFrequency, FM_IRQHANDLER IRQCallback
+ 	YM2203Init(num, timer_chipbase, nClockFrequency, nBurnYM2203SoundRate, &BurnOPNTimerCallback, IRQCallback);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * 4 * num * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 4 * num; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * 4 * num * sizeof(INT16));
+ 
+ 	nYM2203Position = 0;
+@@ -749,6 +752,14 @@ void BurnYM2203SetRightVolume(INT32 nChip, INT32 nIndex, double nRightVolume)
+ 
+ void BurnYM2203Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM2203Initted) bprintf(PRINT_ERROR, _T("BurnYM2203Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ym2413.cpp b/src/burn/snd/burn_ym2413.cpp
+index cfa6bebe9..95ecc05fe 100644
+--- a/src/burn/snd/burn_ym2413.cpp
++++ b/src/burn/snd/burn_ym2413.cpp
+@@ -12,6 +12,7 @@ static INT32 nAddSound;
+ static INT32 nBurnPosition;
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ static UINT32 nSamplesRendered;
+ 
+ static double YM2413Volumes[2];
+@@ -142,6 +143,8 @@ INT32 BurnYM2413Init(INT32 nClockFrequency, INT32 nAdd)
+ 	YM2413Init(1, nClockFrequency, nBurnYM2413SoundRate);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(65536 * 2 * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 65536; nReplayArcadeCarryChunks = 2; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 65536 * 2 * sizeof(INT16));
+ 
+ 	nSampleSize = (UINT32)nBurnYM2413SoundRate * (1 << 16) / nBurnSoundRate;
+@@ -171,6 +174,14 @@ void BurnYM2413SetRoute(INT32 nIndex, double nVolume, INT32 nRouteDir)
+ 
+ void BurnYM2413Scan(INT32 nAction, INT32 *)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM2413Initted) bprintf(PRINT_ERROR, _T("BurnYM2413Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ym2608.cpp b/src/burn/snd/burn_ym2608.cpp
+index caf24155e..a262866ce 100644
+--- a/src/burn/snd/burn_ym2608.cpp
++++ b/src/burn/snd/burn_ym2608.cpp
+@@ -17,6 +17,7 @@ static INT32 nAY8910Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 bYM2608AddSignal;
+ 
+@@ -371,6 +372,8 @@ INT32 BurnYM2608Init(INT32 nClockFrequency, UINT8* YM2608ADPCMROM, INT32* nYM260
+ 	YM2608Init(1, timer_chipbase, nClockFrequency, nBurnYM2608SoundRate, (void**)(&YM2608ADPCMROM), nYM2608ADPCMSize, YM2608IROM, &BurnOPNTimerCallback, IRQCallback);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * 6 * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 6; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * 6 * sizeof(INT16));
+ 
+ 	pAYBuffer = (INT32*)BurnMalloc(4096 * sizeof(INT32));
+@@ -405,6 +408,14 @@ void BurnYM2608SetRoute(INT32 nIndex, double nVolume, INT32 nRouteDir)
+ 
+ void BurnYM2608Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM2608Initted) bprintf(PRINT_ERROR, _T("BurnYM2608Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ym2610.cpp b/src/burn/snd/burn_ym2610.cpp
+index 65f3f374f..d67d50085 100644
+--- a/src/burn/snd/burn_ym2610.cpp
++++ b/src/burn/snd/burn_ym2610.cpp
+@@ -17,6 +17,7 @@ static INT32 nAY8910Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 bYM2610AddSignal;
+ 
+@@ -431,6 +432,8 @@ INT32 BurnYM2610Init(INT32 nClockFrequency, UINT8* YM2610ADPCMAROM, INT32* nYM26
+ 	YM2610Init(1, timer_chipbase, nClockFrequency, nBurnYM2610SoundRate, (void**)(&YM2610ADPCMAROM), nYM2610ADPCMASize, (void**)(&YM2610ADPCMBROM), nYM2610ADPCMBSize, &BurnOPNTimerCallback, IRQCallback);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * 6 * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 6; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * 6 * sizeof(INT16));
+ 
+ 	pAYBuffer = (INT32*)BurnMalloc(4096 * sizeof(INT32));
+@@ -494,6 +497,14 @@ void BurnYM2610SetRightVolume(INT32 nIndex, double nRightVolume)
+ 
+ void BurnYM2610Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM2610Initted) bprintf(PRINT_ERROR, _T("BurnYM2610Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ym2612.cpp b/src/burn/snd/burn_ym2612.cpp
+index 3f96f411d..0c12039c2 100644
+--- a/src/burn/snd/burn_ym2612.cpp
++++ b/src/burn/snd/burn_ym2612.cpp
+@@ -16,6 +16,7 @@ static INT32 nYM2612Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nNumChips = 0;
+ static INT32 bYM2612AddSignal;
+@@ -336,6 +337,8 @@ INT32 BurnYM2612Init(INT32 num, INT32 nClockFrequency, FM_IRQHANDLER IRQCallback
+ 	YM2612Init(num, timer_chipbase, nClockFrequency, nBurnYM2612SoundRate, &BurnOPNTimerCallback, IRQCallback);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * 2 * num * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 2 * num; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * 2 * num * sizeof(INT16));
+ 	
+ 	nYM2612Position = 0;
+@@ -381,6 +384,14 @@ void BurnYM2612SetRoute(INT32 nChip, INT32 nIndex, double nVolume, INT32 nRouteD
+ 
+ void BurnYM2612Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM2612Initted) bprintf(PRINT_ERROR, _T("BurnYM2612Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ym3526.cpp b/src/burn/snd/burn_ym3526.cpp
+index c794a7035..e64a9a3c9 100644
+--- a/src/burn/snd/burn_ym3526.cpp
++++ b/src/burn/snd/burn_ym3526.cpp
+@@ -14,6 +14,7 @@ static INT32 nYM3526Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 bYM3526AddSignal;
+ 
+@@ -257,6 +258,8 @@ INT32 BurnYM3526Init(INT32 nClockFrequency, OPL_IRQHANDLER IRQCallback, INT32 (*
+ 	YM3526SetUpdateHandler(0, &BurnYM3526UpdateRequest, 0);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 1; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * sizeof(INT16));
+ 
+ 	nYM3526Position = 0;
+@@ -285,6 +288,14 @@ void BurnYM3526SetRoute(INT32 nIndex, double nVolume, INT32 nRouteDir)
+ 
+ void BurnYM3526Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM3526Initted) bprintf(PRINT_ERROR, _T("BurnYM3526Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ym3812.cpp b/src/burn/snd/burn_ym3812.cpp
+index 18288637e..bc77877a8 100644
+--- a/src/burn/snd/burn_ym3812.cpp
++++ b/src/burn/snd/burn_ym3812.cpp
+@@ -16,6 +16,7 @@ static INT32 nYM3812Position;
+ 
+ static UINT32 nSampleSize;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nNumChips = 0;
+ static INT32 bYM3812AddSignal;
+@@ -304,6 +305,8 @@ INT32 BurnYM3812Init(INT32 num, INT32 nClockFrequency, OPL_IRQHANDLER IRQCallbac
+ 	}
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * num * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = num; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * num * sizeof(INT16));
+ 
+ 	nYM3812Position = 0;
+@@ -346,6 +349,14 @@ void BurnYM3812SetRoute(INT32 nChip, INT32 nIndex, double nVolume, INT32 nRouteD
+ 
+ void BurnYM3812Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YM3812Initted) bprintf(PRINT_ERROR, _T("BurnYM3812Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ymf262.cpp b/src/burn/snd/burn_ymf262.cpp
+index 22e9e6cc1..37abd4be3 100644
+--- a/src/burn/snd/burn_ymf262.cpp
++++ b/src/burn/snd/burn_ymf262.cpp
+@@ -11,6 +11,7 @@ static INT32 bYMF262AddSignal;
+ static UINT32 nSampleSize;
+ static INT32 nYMF262Position;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nBurnYMF262SoundRate;
+ 
+@@ -222,6 +223,8 @@ INT32 BurnYMF262Init(INT32 nClockFrequency, void (*IRQCallback)(INT32, INT32), I
+ 	ymfchip = ymf262_init(nClockFrequency, nBurnYMF262SoundRate, IRQCallback, BurnYMF262TimerCallback);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * 2 * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 2; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * 2 * sizeof(INT16));
+ 
+ 	nYMF262Position = 0;
+@@ -249,6 +252,14 @@ void BurnYMF262SetRoute(INT32 nIndex, double nVolume, INT32 nRouteDir)
+ 
+ void BurnYMF262Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YMF262Initted) bprintf(PRINT_ERROR, _T("BurnYMF262Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ymf271.cpp b/src/burn/snd/burn_ymf271.cpp
+index fb4bfb9f4..957e711f4 100644
+--- a/src/burn/snd/burn_ymf271.cpp
++++ b/src/burn/snd/burn_ymf271.cpp
+@@ -11,6 +11,7 @@ static INT32 bYMF271AddSignal;
+ static UINT32 nSampleSize;
+ static INT32 nYMF271Position;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nBurnYMF271SoundRate;
+ 
+@@ -235,6 +236,8 @@ INT32 BurnYMF271Init(INT32 nClockFrequency, UINT8 *rom, INT32 romsize, void (*IR
+ 	ymf271_init(nClockFrequency, rom, romsize, IRQCallback, BurnYMF262TimerCallback);
+ 
+ 	pBuffer = (INT16*)BurnMalloc((4096 + 4) * 4 * sizeof(INT16));
++
++	nReplayArcadeCarryStride = (4096 + 4); nReplayArcadeCarryChunks = 4; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, (4096 + 4) * 4 * sizeof(INT16));
+ 
+ 	nYMF271Position = 0;
+@@ -267,6 +270,14 @@ void BurnYMF271SetRoute(INT32 nIndex, double nVolume, INT32 nRouteDir)
+ 
+ void BurnYMF271Scan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YMF271Initted) bprintf(PRINT_ERROR, _T("BurnYMF271Scan called without init\n"));
+ #endif
+diff --git a/src/burn/snd/burn_ymf278b.cpp b/src/burn/snd/burn_ymf278b.cpp
+index 77dc5003b..1fb34d59d 100644
+--- a/src/burn/snd/burn_ymf278b.cpp
++++ b/src/burn/snd/burn_ymf278b.cpp
+@@ -11,6 +11,7 @@ static INT32 bYMF278BAddSignal;
+ static UINT32 nSampleSize;
+ static INT32 nYMF278BPosition;
+ static INT32 nFractionalPosition;
++static INT32 nReplayArcadeCarryStride = 0, nReplayArcadeCarryChunks = 0; // ReplayArcade: pBuffer's channels
+ 
+ static INT32 nBurnYMF278SoundRate;
+ 
+@@ -282,6 +283,8 @@ INT32 BurnYMF278BInit(INT32 nClockFrequency, UINT8* YMF278BROM, INT32 YMF278BROM
+ 	ymf278b_start(0, YMF278BROM, YMF278BROMSize, IRQCallback, BurnYMFTimerCallback, nClockFrequency);
+ 
+ 	pBuffer = (INT16*)BurnMalloc(4096 * 2 * sizeof(INT16));
++
++	nReplayArcadeCarryStride = 4096; nReplayArcadeCarryChunks = 2; // ReplayArcade: for the scan
+ 	memset(pBuffer, 0, 4096 * 2 * sizeof(INT16));
+ 
+ 	nYMF278BPosition = 0;
+@@ -309,6 +312,14 @@ void BurnYMF278BSetRoute(INT32 nIndex, double nVolume, INT32 nRouteDir)
+ 
+ void BurnYMF278BScan(INT32 nAction, INT32* pnMin)
+ {
++	// ReplayArcade: the resampler's phase and the chip samples each channel carries into the next frame
++	// (interpolation history and samples rendered ahead) are machine state: a load left the last run's.
++	if ((nAction & ACB_DRIVER_DATA) && nReplayArcadeScanVersion >= 2 && pBuffer) {
++		SCAN_VAR(nFractionalPosition);
++		for (INT32 i = 0; i < nReplayArcadeCarryChunks; i++)
++			ScanVar(pBuffer + i * nReplayArcadeCarryStride, 64 * sizeof(INT16), (char*)"resampler carry");
++	}
++
+ #if defined FBNEO_DEBUG
+ 	if (!DebugSnd_YMF278BInitted) bprintf(PRINT_ERROR, _T("BurnYMF278BScan called without init\n"));
+ #endif
 diff --git a/src/burn/snd/c140.cpp b/src/burn/snd/c140.cpp
 index c6461c1ff..f08771d87 100644
 --- a/src/burn/snd/c140.cpp
@@ -308,8 +1790,40 @@ index 167265837..90302d1f2 100644
 +		SCAN_VAR(dac_lastout_l);
  	}
  }
+diff --git a/src/burn/snd/flt_rc.cpp b/src/burn/snd/flt_rc.cpp
+index 3d57335ce..7f9739136 100644
+--- a/src/burn/snd/flt_rc.cpp
++++ b/src/burn/snd/flt_rc.cpp
+@@ -269,6 +269,17 @@ void filter_rc_set_limit(INT32 num, double nVolume)
+ 	//bprintf(0, _T("limiter is +-%X. (%f)\n"), ptr->limit, nVolume);
+ }
+ 
++void filter_rc_scan(INT32 nAction)
++{
++	if (!(nAction & ACB_DRIVER_DATA)) return;
++
++	// ReplayArcade: an RC filter's output follows its memory (the charge of its capacitor); a load
++	// left the last run's.
++	for (INT32 i = 0; i < num_filters && i < FLT_RC_NUM; i++) {
++		SCAN_VAR(flt_rc_table[i].state.memory);
++	}
++}
++
+ void filter_rc_exit()
+ {
+ #if defined FBNEO_DEBUG
+diff --git a/src/burn/snd/flt_rc.h b/src/burn/snd/flt_rc.h
+index b2e73a30d..79765e93d 100644
+--- a/src/burn/snd/flt_rc.h
++++ b/src/burn/snd/flt_rc.h
+@@ -14,3 +14,5 @@ void filter_rc_set_src_stereo(INT32 num);
+ void filter_rc_set_route(INT32 num, double nVolume, INT32 nRouteDir);
+ void filter_rc_set_limit(INT32 num, double nVolume);
+ void filter_rc_exit();
++// ReplayArcade: the filters' memory, scanned with every game's state (burn.cpp)
++void filter_rc_scan(INT32 nAction);
 diff --git a/src/burn/snd/fm.c b/src/burn/snd/fm.c
-index 0bbf884e1..c4f1b1394 100644
+index 0bbf884e1..7e31f7e09 100644
 --- a/src/burn/snd/fm.c
 +++ b/src/burn/snd/fm.c
 @@ -2442,6 +2442,13 @@ static void YM2203_postload(void)
@@ -335,6 +1849,70 @@ index 0bbf884e1..c4f1b1394 100644
  	}
  	FM_IS_POSTLOADING = 0;
  	cur_chip = NULL;
+@@ -4759,3 +4768,63 @@ int YM2612TimerOver(int n,int c)
+ }
+ 
+ #endif /* BUILD_YM2612 */
++
++/* ReplayArcade: chip state the save states leave out, scanned with every game's state (state layout 2,
++   burn.cpp). OPN.type: SSG-EG rewrites it at run time (the "=" in the SSG-EG test of FM_ADVANCE_EG
++   makes any OPN a YM2612 once a slot uses SSG-EG; kept as upstream has it), so a load left the last
++   run's type. YM2608 / YM2610: the envelope and LFO counters, which YM2203 and YM2612 already save. */
++void FMReplayArcadeScan(int nAction)
++{
++	int num;
++	if (!(nAction & ACB_DRIVER_DATA)) return;
++#if BUILD_YM2203
++	for (num = 0; FM2203 && num < YM2203NumChips; num++) {
++		ScanVar(&FM2203[num].OPN.type, sizeof(FM2203[num].OPN.type), (char*)"YM2203 type");
++	}
++#endif
++#if BUILD_YM2608
++	for (num = 0; FM2608 && num < YM2608NumChips; num++) {
++		FM_OPN *OPN = &FM2608[num].OPN;
++		ScanVar(&OPN->type, sizeof(OPN->type), (char*)"YM2608 type");
++		ScanVar(&OPN->lfo_cnt, sizeof(OPN->lfo_cnt), (char*)"YM2608 lfo_cnt");
++		ScanVar(&OPN->lfo_inc, sizeof(OPN->lfo_inc), (char*)"YM2608 lfo_inc");
++		ScanVar(&OPN->eg_cnt, sizeof(OPN->eg_cnt), (char*)"YM2608 eg_cnt");
++		ScanVar(&OPN->eg_timer, sizeof(OPN->eg_timer), (char*)"YM2608 eg_timer");
++	}
++#endif
++#if (BUILD_YM2610||BUILD_YM2610B)
++	for (num = 0; FM2610 && num < YM2610NumChips; num++) {
++		FM_OPN *OPN = &FM2610[num].OPN;
++		ScanVar(&OPN->type, sizeof(OPN->type), (char*)"YM2610 type");
++		ScanVar(&OPN->lfo_cnt, sizeof(OPN->lfo_cnt), (char*)"YM2610 lfo_cnt");
++		ScanVar(&OPN->lfo_inc, sizeof(OPN->lfo_inc), (char*)"YM2610 lfo_inc");
++		ScanVar(&OPN->eg_cnt, sizeof(OPN->eg_cnt), (char*)"YM2610 eg_cnt");
++		ScanVar(&OPN->eg_timer, sizeof(OPN->eg_timer), (char*)"YM2610 eg_timer");
++	}
++#endif
++#if (BUILD_YM2612||BUILD_YM3438)
++	for (num = 0; FM2612 && num < YM2612NumChips; num++) {
++		ScanVar(&FM2612[num].OPN.type, sizeof(FM2612[num].OPN.type), (char*)"YM2612 type");
++	}
++#endif
++}
++
++/* ReplayArcade: where the chips live (malloc'd, not BurnMalloc'd), for tools/fbneo_bisect, which compares
++   the drivers' memory between two runs. Writes up to 4 (pointer, size) pairs; returns how many. */
++int FMChipMemory(void **ptrs, int *sizes)
++{
++	int n = 0;
++#if BUILD_YM2203
++	if (FM2203) { ptrs[n] = FM2203; sizes[n] = (int)(sizeof(YM2203) * YM2203NumChips); n++; }
++#endif
++#if BUILD_YM2608
++	if (FM2608) { ptrs[n] = FM2608; sizes[n] = (int)(sizeof(YM2608) * YM2608NumChips); n++; }
++#endif
++#if (BUILD_YM2610||BUILD_YM2610B)
++	if (FM2610) { ptrs[n] = FM2610; sizes[n] = (int)(sizeof(YM2610) * YM2610NumChips); n++; }
++#endif
++#if (BUILD_YM2612||BUILD_YM3438)
++	if (FM2612) { ptrs[n] = FM2612; sizes[n] = (int)(sizeof(YM2612) * YM2612NumChips); n++; }
++#endif
++	return n;
++}
 diff --git a/src/burn/snd/k051649.cpp b/src/burn/snd/k051649.cpp
 index 8704db1b5..d70533bec 100644
 --- a/src/burn/snd/k051649.cpp
@@ -344,6 +1922,92 @@ index 8704db1b5..d70533bec 100644
  		ScanVar(&Chips[i].channel_list, sizeof(Chips[i].channel_list), (char *)names[i]);
  		SCAN_VAR(Chips[i].test);
 +		stream[i].scan(nAction, pnMin); // ReplayArcade
+ 	}
+ }
+ 
+diff --git a/src/burn/snd/msm6295.cpp b/src/burn/snd/msm6295.cpp
+index 99e3de38a..d58de0f85 100644
+--- a/src/burn/snd/msm6295.cpp
++++ b/src/burn/snd/msm6295.cpp
+@@ -157,6 +157,13 @@ void MSM6295Scan(INT32 , INT32 *)
+ 	{
+ 		ScanVar(&MSM6295[nChip], STRUCT_SIZE_HELPER(struct MSM6295Struct, nSampleInfo), "MSM6295 Chip");
+ 		SCAN_VAR(nMSM6295Status[nChip]);
++		// ReplayArcade: the resampler's phase and its two interpolated samples are machine state too
++		// (a state load left the previous run's values, so the sound parted at the next sample).
++		if (nReplayArcadeScanVersion >= 2) {
++			SCAN_VAR(MSM6295[nChip].nFractionalPosition);
++			SCAN_VAR(nPreviousSample[nChip]);
++			SCAN_VAR(nCurrentSample[nChip]);
++		}
+ 	}
+ }
+ 
+diff --git a/src/burn/snd/nes_apu.cpp b/src/burn/snd/nes_apu.cpp
+index c23ecb5fe..47429a9a9 100644
+--- a/src/burn/snd/nes_apu.cpp
++++ b/src/burn/snd/nes_apu.cpp
+@@ -1133,6 +1133,8 @@ void nesapuScan(INT32 nAction, INT32 *)
+ 			SCAN_VAR(info->APU.noi);
+ 			SCAN_VAR(info->APU.dpcm);
+ 			SCAN_VAR(info->APU.regs);
++			// ReplayArcade: the downsampler's phase decides the next frame's samples (a load left the last run's)
++			if (nReplayArcadeScanVersion >= 2) SCAN_VAR(info->resamp.nFractionalPosition);
+ 		}
+ 
+ 		// frame-irq stuff
+diff --git a/src/burn/snd/pokey.cpp b/src/burn/snd/pokey.cpp
+index e2d0212b3..7df36ac25 100644
+--- a/src/burn/snd/pokey.cpp
++++ b/src/burn/snd/pokey.cpp
+@@ -636,9 +636,11 @@ void PokeyPotCallback(INT32 chip, INT32 potnum, INT32 (*pot_cb)(INT32 offs))
+ 	p->pot_r[potnum] = pot_cb;
+ }
+ 
++// ReplayArcade: emulation state of DefaultTotalCycles() (was a function static; state.h, REPLAYARCADE_STATE)
++static INT32 pokey_DefaultTotalCycles_sillyctr = 0; REPLAYARCADE_STATE(pokey_DefaultTotalCycles_sillyctr);
+ static INT32 DefaultTotalCycles()
+ {
+-	static INT32 sillyctr = 0;
++	INT32 &sillyctr = pokey_DefaultTotalCycles_sillyctr;
+ 
+ 	sillyctr += 92;
+ 
+diff --git a/src/burn/snd/rf5c68.cpp b/src/burn/snd/rf5c68.cpp
+index dd1267d3f..b5fdf5d63 100644
+--- a/src/burn/snd/rf5c68.cpp
++++ b/src/burn/snd/rf5c68.cpp
+@@ -246,6 +246,15 @@ void RF5C68PCMScan(INT32 nAction, INT32 *)
+ 		SCAN_VAR(chip->wbank);
+ 		SCAN_VAR(chip->enable);
+ 		SCAN_VAR(chip->chan);
++
++		// ReplayArcade: the resampler's phase, the samples rendered ahead and the interpolation history
++		// carried into the next frame are machine state too (a load left the last run's).
++		if (nReplayArcadeScanVersion >= 2) {
++			SCAN_VAR(nFractionalPosition);
++			SCAN_VAR(nPosition);
++			ScanVar(soundbuf_l, 64 * sizeof(INT16), (char*)"RF5C68 carry L");
++			ScanVar(soundbuf_r, 64 * sizeof(INT16), (char*)"RF5C68 carry R");
++		}
+ 	}
+ }
+ 
+diff --git a/src/burn/snd/sn76496.cpp b/src/burn/snd/sn76496.cpp
+index 4316d4e0d..a987f4b59 100644
+--- a/src/burn/snd/sn76496.cpp
++++ b/src/burn/snd/sn76496.cpp
+@@ -558,6 +558,13 @@ void SN76496Scan(INT32 nAction, INT32 *pnMin)
+ 		for (INT32 i = 0; i < NumChips; i++) {
+ 			ScanVar(Chips[i], STRUCT_SIZE_HELPER(struct SN76496, StereoMask), "SN76496/SN76489 Chip");
+ 		}
++		// ReplayArcade: the DC blocker is an IIR filter; its memory shapes every following sample.
++		if (nReplayArcadeScanVersion >= 2) {
++			SCAN_VAR(dac_lastin_r);
++			SCAN_VAR(dac_lastout_r);
++			SCAN_VAR(dac_lastin_l);
++			SCAN_VAR(dac_lastout_l);
++		}
  	}
  }
  
@@ -488,6 +2152,69 @@ index 3b54c2552..0727e93f3 100644
  
  	/* initialize hardware registers */
  	for (i=0; i<32; i++)
+diff --git a/src/burn/state.h b/src/burn/state.h
+index c4d9bd8d5..513b5d70f 100644
+--- a/src/burn/state.h
++++ b/src/burn/state.h
+@@ -15,6 +15,25 @@
+ /* Scan driver data */
+ INT32 BurnAreaScan(INT32 nAction, INT32* pnMin); // burn.cpp
+ 
++/* ReplayArcade: the layout of its save states. 2 (current) scans what version 1 left out (a state load
++   restored the machine but not all of it); a version-1 state is loaded with this set to 1 for that
++   load, so the projects saved before still open. Additions since version 1 are scanned only when >= 2. */
++extern INT32 nReplayArcadeScanVersion;
++
++/* ReplayArcade: emulation state that FinalBurn Neo kept in function statics (a coin's previous level,
++   a 4-way stick's last direction, a read counter): moved to file scope and registered here, so that
++   state version 2 scans it (all of them for every game, in the order of their names: the same on
++   every platform). Use: "static UINT8 d_btime_prevcoin = 0; REPLAYARCADE_STATE(d_btime_prevcoin);"
++   with a name unique in all of FBNeo (file and variable), and in the function "UINT8 &prevcoin =
++   d_btime_prevcoin;" (the code that uses it unchanged). */
++#ifdef __cplusplus
++struct ReplayArcadeState {
++	ReplayArcadeState(void* pv, INT32 nSize, const char* szName);
++};
++#define REPLAYARCADE_STATE(x) static ReplayArcadeState x##_replayarcade(&(x), sizeof(x), #x)
++#endif
++void ReplayArcadeStateScan(INT32 nAction); // burn.cpp
++
+ /* ReWind */
+ void StateRewindInit();
+ void StateRewindExit();
+diff --git a/src/burn/tilemap_generic.cpp b/src/burn/tilemap_generic.cpp
+index 8f5e48cd1..bd39afed4 100644
+--- a/src/burn/tilemap_generic.cpp
++++ b/src/burn/tilemap_generic.cpp
+@@ -34,6 +34,28 @@ static GenericTilemap maps[MAX_TILEMAPS];
+ static GenericTilemap *cur_map;
+ GenericTilesGfx GenericGfxData[MAX_TILEMAPS];
+ 
++// ReplayArcade: a tilemap's display settings are machine state where a driver sets them only when the
++// game writes its registers (Xevious's scroll); a load left the last run's. Scanned with every game's
++// state (burn.cpp); the layout (sizes, tables' lengths) is the driver's, fixed at init.
++void GenericTilemapScan(INT32 nAction)
++{
++	if (!(nAction & ACB_DRIVER_DATA)) return;
++	for (INT32 i = 0; i < MAX_TILEMAPS; i++) {
++		GenericTilemap *t = &maps[i];
++		if (!t->initialized) continue;
++		SCAN_VAR(t->enable);
++		SCAN_VAR(t->scrollx);
++		SCAN_VAR(t->scrolly);
++		SCAN_VAR(t->priority);
++		SCAN_VAR(t->xoffset);
++		SCAN_VAR(t->yoffset);
++		SCAN_VAR(t->flags);
++		SCAN_VAR(t->transcolor);
++		if (t->scrollx_table) ScanVar(t->scrollx_table, t->scroll_rows * sizeof(INT32), (char*)"tilemap scroll x");
++		if (t->scrolly_table) ScanVar(t->scrolly_table, t->scroll_cols * sizeof(INT32), (char*)"tilemap scroll y");
++	}
++}
++
+ void GenericTilemapInit(INT32 which, INT32 (*pScan)(INT32 col, INT32 row), void (*pTile)(INT32 offs, GenericTilemapCallbackStruct *sTile), UINT32 tile_width, UINT32 tile_height, UINT32 map_width, UINT32 map_height)
+ {
+ #if defined FBNEO_DEBUG
 diff --git a/src/burner/libretro/libretro.cpp b/src/burner/libretro/libretro.cpp
 index 9e8983568..7650ad119 100644
 --- a/src/burner/libretro/libretro.cpp

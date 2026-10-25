@@ -38,6 +38,7 @@ int BurnDrvGetRomInfo(struct BurnRomInfo* pri, unsigned int i);
 int BurnDrvGetAspect(int* pnXAspect, int* pnYAspect);
 int BurnDrvGetIndex(char* szName);
 extern unsigned int nBurnDrvActive;
+extern int nReplayArcadeScanVersion;  // patched FBNeo (state.h): 2 = this state layout, 1 = before 0.2.2
 }
 
 namespace rac {
@@ -72,6 +73,7 @@ struct Host {
   retro_system_av_info av{};
   unsigned rotation = 0;
   std::vector<uint8_t> powerOn;      // machine state right after loading, before any frame
+  size_t legacySize = 0;             // size of this content's states in layout version 1 (before 0.2.2)
   rn::InputLayout layout;            // from FBNeo's input descriptors for the loaded content
   struct AxisSource { unsigned port, index, id; size_t layoutByte; };
   std::vector<AxisSource> axes;
@@ -361,9 +363,10 @@ class FbneoCore final : public rn::ICore {
     const uint8_t* payload;
     size_t n;
     RN_TRY(rn::stateenv::read(data, size, kCompat, frame, payload, n));
-    if (n != host().powerOn.size()) return rn::Error(rn::Err::StateError, "state belongs to other content");
+    if (n != host().powerOn.size() && n != host().legacySize)
+      return rn::Error(rn::Err::StateError, "state belongs to other content");
     if (host().owner == this) {
-      if (!retro_unserialize(payload, n)) return rn::Error(rn::Err::StateError, "FinalBurn Neo refused the state");
+      if (!unserialize(payload, n)) return rn::Error(rn::Err::StateError, "FinalBurn Neo refused the state");
     } else {
       parked_.assign(payload, payload + n);
     }
@@ -434,6 +437,9 @@ class FbneoCore final : public rn::ICore {
     // Power-on state first; then one frame to receive the input descriptors (FBNeo sends them
     // on its first frame); then back to power-on.
     size_t size = retro_serialize_size();
+    nReplayArcadeScanVersion = 1;
+    h.legacySize = retro_serialize_size();
+    nReplayArcadeScanVersion = 2;
     h.powerOn.assign(size, 0);
     if (!size || !retro_serialize(h.powerOn.data(), size)) {
       unloadContent(h);
@@ -496,6 +502,16 @@ class FbneoCore final : public rn::ICore {
     audio_.assign(size_t(spf_ + 64) * 2, 0);
   }
 
+  // A state of this layout, or one saved before it (version 1: a project from 0.2.1 or earlier; its
+  // size tells, as the version-2 additions only add bytes). Loading one leaves out what version 1 did.
+  static bool unserialize(const uint8_t* data, size_t n) {
+    if (n == host().powerOn.size()) return retro_unserialize(data, n);
+    nReplayArcadeScanVersion = 1;
+    const bool ok = retro_unserialize(data, n);
+    nReplayArcadeScanVersion = 2;
+    return ok;
+  }
+
   rn::Status serializeInto(std::vector<uint8_t>& out) {
     out.assign(host().powerOn.size(), 0);
     if (!retro_serialize(out.data(), out.size())) return rn::Error(rn::Err::StateError, "FinalBurn Neo could not save");
@@ -514,7 +530,7 @@ class FbneoCore final : public rn::ICore {
     if (h.loadedPath != path_) RN_TRY(ensureLoaded(path_));
     if (h.owner) h.owner->park();
     h.owner = nullptr;
-    if (!retro_unserialize(parked_.data(), parked_.size()))
+    if (!unserialize(parked_.data(), parked_.size()))
       return rn::Error(rn::Err::StateError, "FinalBurn Neo refused this core's state");
     h.owner = this;
     return rn::Status::Ok();
