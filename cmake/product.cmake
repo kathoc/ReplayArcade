@@ -24,10 +24,12 @@ set(RN_PRODUCT_LIBRARY_PICTURE_FRAME 1800)
 set(RN_PRODUCT_FLASH_FILTER OFF)
 # No edge crop: it is for the NES on a TV; arcade pictures are shown whole (user decision 2026-10-24).
 set(RN_PRODUCT_OVERSCAN_CROP OFF)
+# Another window in front pauses the game (Settings > System > More > Play in the Background: off).
+set(RN_PRODUCT_FOCUS_PAUSE ON)
 # Version (scripts/release.sh checks it) and the Windows update feed: GitHub releases of
 # kathoc/ReplayArcade, signed with ReplayArcade's own EdDSA key (public half below). Linux / Steam Deck
 # updates come from the signed Flatpak repository on GitHub Pages (scripts/release.sh).
-set(RN_PRODUCT_VERSION "0.2.0")
+set(RN_PRODUCT_VERSION "0.2.1")
 set(RN_PRODUCT_WINDOWS_ICON "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/artwork/replayarcade.ico")
 set(RN_PRODUCT_UPDATES ON)
 set(RN_PRODUCT_WINDOWS_APPCAST_URL "https://github.com/kathoc/ReplayArcade/releases/latest/download/appcast-windows.xml")
