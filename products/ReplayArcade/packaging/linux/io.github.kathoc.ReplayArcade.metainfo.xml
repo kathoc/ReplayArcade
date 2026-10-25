@@ -4,12 +4,17 @@
   <name>ReplayArcade</name>
   <summary>Record, rewind and replay arcade play with frame-exact timelines</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>LicenseRef-proprietary</project_license>
+  <project_license>GPL-2.0-or-later AND LicenseRef-FBNeo</project_license>
   <description>
     <p>ReplayArcade is ReplayNES with an arcade core (FinalBurn Neo): input-history recording,
-    rewind and retry, practice sections, video export. Private build, not distributed.</p>
+    rewind and retry, practice sections, video export, per-game button assignment and turbo for pads
+    and arcade sticks. No ROMs are included.</p>
   </description>
   <launchable type="desktop-id">io.github.kathoc.ReplayArcade.desktop</launchable>
   <provides><binary>replayarcade-linux</binary></provides>
+  <url type="homepage">https://github.com/kathoc/ReplayArcade</url>
   <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-25"/>
+  </releases>
 </component>
