@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Phase 0 の受け入れ検証を一括で回す。2 つの独立した方法で確かめる。
-#   A. 決定性: 保存 → N フレーム → 復元 → 同じ入力で N フレーム。画面・音声・毎フレームのステートを比較し、
-#      ステートの往復一致と、2 プロセスでの電源投入からの一致も見る（診断版コア）。
-#   B. ランダムシーク: 電源投入から直進して 300 フレームごとにチェックポイントを取り、順不同に読み込んで
-#      記録と比較する（通常版コア。ReplayNES の使い方に近い）。
-# 使い方: verify_all.sh <作業フォルダ> <ROM フォルダ> [ゲーム...]
-#   作業フォルダには rebuild_cores.sh が作る fbneo_dbg.so と fbneo-build.log がある前提。
+# Runs the Phase 0 acceptance checks, two independent methods:
+#   A. Determinism: save -> N frames -> load -> N frames with the same input; compares picture, sound and every
+#      frame's state, the state round trip, and two processes from power-on (diagnostic core).
+#   B. Random seek: runs from power-on taking a checkpoint every 300 frames, loads them in a scrambled order and
+#      compares with the recording (normal core; close to how ReplayNES uses it).
+# usage: verify_all.sh <work dir> <ROM dir> [games...]
+#   The work dir holds fbneo_dbg.so and fbneo-build.log made by rebuild_cores.sh.
 set -u
 work=$1 romdir=$2; shift 2
 games=${*:-aburner2 gforce2ja sharrier splatter ordyneje dspirit genpeitd daimakai gradius gradius2 salamand aliens}

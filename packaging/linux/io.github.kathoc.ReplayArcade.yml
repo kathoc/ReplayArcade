@@ -39,8 +39,3 @@ modules:
           - build-linux-sdk
           - .flatpak-builder
           - dist
-      # ReplayNES's engine always links the Nestopia core (cmake/NestopiaCore.cmake checks the pin).
-      - type: git
-        url: https://github.com/0ldsk00l/nestopia.git
-        commit: 7b5c87d8dc3c817211545449683d1fcd897324ca
-        dest: third_party/replaynes/third_party/nestopia

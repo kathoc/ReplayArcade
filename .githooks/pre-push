@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# stdin: <local ref> <local sha> <remote ref> <remote sha>
+z=0000000000000000000000000000000000000000
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$z" ] && continue
+  range="$lsha"; [ "$rsha" != "$z" ] && range="$rsha..$lsha"
+  for c in $(git rev-list "$range"); do
+    git diff-tree --no-commit-id --name-only -r --diff-filter=AM "$c" | "$(dirname "$0")/check-no-roms.sh" "$c" || { echo "push refused: commit $c" >&2; exit 1; }
+  done
+done

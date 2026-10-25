@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# FBNeo libretro を再ビルドし、診断版（retro_memory.cpp だけ -DFBNEO_DEBUG）を別名でリンクする。
-# 使い方: rebuild_cores.sh <作業フォルダ>   （fbneo-build.log は初回フルビルドの make 出力）
+# Rebuilds FBNeo (libretro) and links a diagnostic variant (only retro_memory.cpp with -DFBNEO_DEBUG) under another name.
+# usage: rebuild_cores.sh <work dir>   (fbneo-build.log is the make output of the first full build)
 set -euo pipefail
 work=$1
 lib=$(cd "$(dirname "$0")/../third_party/fbneo/src/burner/libretro" && pwd)

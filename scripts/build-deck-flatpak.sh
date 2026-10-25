@@ -3,11 +3,11 @@
 # scripts/build-linux-flatpak.sh does for ReplayNES): copies ReplayArcade and ReplayNES's source
 # tree to ~/ReplayArcade-dev/src on the Deck and runs flatpak-builder there (--user install).
 #   scripts/build-deck-flatpak.sh [user@host]      (default deck@steamdeck.local)
-# Env: REPLAYNES_DIR (default: the ReplayNES worktree used by CMakeLists.txt), NO_INSTALL=1.
+# Env: REPLAYNES_DIR (default: the submodule third_party/replaynes), NO_INSTALL=1.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${1:-deck@steamdeck.local}"
-RN="${REPLAYNES_DIR:-$HOME/Playground/ReplayNES/.claude/worktrees/generalize}"
+RN="${REPLAYNES_DIR:-$ROOT/third_party/replaynes}"
 RDIR=ReplayArcade-dev
 APP_ID=io.github.kathoc.ReplayArcade
 "$ROOT/scripts/fbneo-patches.sh" --check >/dev/null || { echo "FBNeo patches are not applied" >&2; exit 1; }
