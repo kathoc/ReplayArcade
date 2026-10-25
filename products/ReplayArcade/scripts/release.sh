@@ -195,8 +195,10 @@ git commit -q -m "Flatpak repository: ReplayArcade $VERSION" -m "Signed OSTree r
 git branch -D gh-pages-publish >/dev/null 2>&1 || true
 git branch -m gh-pages-publish
 git_gh push -f "https://github.com/$REPO.git" gh-pages-publish:gh-pages
+# GitHub may enable Pages by itself for a new gh-pages branch (the POST then answers 409).
 gh api "repos/$REPO/pages" >/dev/null 2>&1 ||
-  gh api -X POST "repos/$REPO/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' >/dev/null
+  gh api -X POST "repos/$REPO/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' >/dev/null 2>&1 ||
+  gh api "repos/$REPO/pages" >/dev/null
 cd "$ROOT"
 echo "==> GitHub release $TAG"
 git -C "$ROOT" tag -f "$TAG" HEAD
