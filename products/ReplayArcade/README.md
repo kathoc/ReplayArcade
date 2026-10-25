@@ -14,6 +14,17 @@ record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/F
 
 Platforms: Steam Deck / Linux (Flatpak) and Windows x64.
 
+## Install and updates
+
+- **Steam Deck / Linux**: `flatpak install --user https://kathoc.github.io/ReplayArcade/flatpak/io.github.kathoc.ReplayArcade.flatpakref`
+  (GPG-signed repository). The app finds new versions itself (Settings > System > ReplayArcade Version)
+  and installs them through the Flatpak portal; `flatpak update` works too. Gaming Mode has no dialog
+  for the portal's one-time "allow updates" question: answer it once in Desktop Mode, or run
+  `flatpak permission-set flatpak updates io.github.kathoc.ReplayArcade yes`.
+- **Windows x64**: unzip `ReplayArcade-<version>-windows-x64.zip` from the
+  [releases](https://github.com/kathoc/ReplayArcade/releases) and run `ReplayArcade.exe`. In-app updates
+  read the release's `appcast-windows.xml` and verify its EdDSA signature.
+
 **No ROMs are included.** Put the ROM zips you are entitled to use (FinalBurn Neo set names,
 non-merged; e.g. `gradius.zip`) in `Documents/ReplayArcade/ROM`.
 
