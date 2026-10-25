@@ -605,8 +605,9 @@ void registerFbneoCore(const FbneoSettings& settings) {
       h.initialised = true;
     }
   }
+  // All instances take turns on FBNeo's one machine (CapSharesMachine): the app does not run them in parallel.
   rn::registerExternalCore({"fbneo", kCompat,
-                            uint32_t(rn::CapAudio | rn::CapState | rn::CapSoftReset | rn::CapRecording),
+                            uint32_t(rn::CapAudio | rn::CapState | rn::CapSoftReset | rn::CapRecording | rn::CapSharesMachine),
                             [] { return std::unique_ptr<rn::ICore>(new FbneoCore()); }});
 }
 
