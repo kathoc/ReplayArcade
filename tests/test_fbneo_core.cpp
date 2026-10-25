@@ -274,6 +274,26 @@ void testGame(const std::string& romDir, const std::string& game, const std::str
     EXPECT(same, "seek to " + std::to_string(from) + " replays the recording");
   }
 
+  // Hold Rewind as the app does (2, 3, then 4 frames per tick) from the end: every picture on the
+  // way back is the recorded one (the engine's rewind cache must not change anything).
+  {
+    rn_set_mode(s, RN_MODE_REPLAY);
+    bool ok = rn_seek(s, kFrames) == RN_OK;
+    int tick = 0, compared = 0, wrong = 0;
+    while (ok && rn_frame(s) > 1000) {
+      ++tick;
+      uint64_t n = tick <= 30 ? 2 : tick <= 90 ? 3 : 4;
+      if (rn_rewind(s, n) != RN_OK) { ok = false; break; }
+      uint64_t f = rn_frame(s);
+      rn_video_frame_info v{};
+      rn_session_video_frame(s, &v);
+      ++compared;
+      if (f == 0 || pictureHash(v) != recorded[size_t(f - 1)].video) ++wrong;
+    }
+    EXPECT(ok && compared > 200 && wrong == 0,
+           "rewind pictures equal the recording (" + std::to_string(wrong) + " of " + std::to_string(compared) + " differ)");
+  }
+
   // Export on another thread while the session replays: two virtual machines take turns in FBNeo.
   rn_renderer* r = nullptr;
   EXPECT(rn_renderer_new(s, 1000, 2600, &r) == RN_OK, "renderer");
