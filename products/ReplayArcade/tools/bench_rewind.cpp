@@ -5,6 +5,8 @@
 // thumbnails do after a session is resumed), sharing FBNeo's one machine with the session.
 // With a project: opens it and starts at the end of the take (as resuming a session does).
 // With "-": records record_frames frames first (a session played until now).
+// With "autosave:<dir>": records record_frames frames into a new project at <dir>, autosaving every
+// 300 frames as the app does (no full save after the first), closes it, then opens it as a resume does.
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -33,7 +35,22 @@ int main(int argc, char** argv) {
   using clock = std::chrono::steady_clock;
   auto t0 = clock::now();
   std::string project = argv[2];
-  if (project == "-") {
+  if (project.rfind("autosave:", 0) == 0) {
+    std::string dir = project.substr(9);
+    if (rn_session_new(argv[1], dir.c_str(), &opt, &s) != RN_OK) return std::fprintf(stderr, "%s\n", rn_last_error()), 1;
+    if (rn_session_save(s) != RN_OK) return std::fprintf(stderr, "save: %s\n", rn_last_error()), 1;
+    for (uint64_t f = 0; f < recordFrames; ++f) {
+      rn_step_info info{};
+      rn_step(s, 0, 0, 0, &info);
+      if (f % 300 == 299 && rn_session_autosave(s) != RN_OK) return std::fprintf(stderr, "autosave: %s\n", rn_last_error()), 1;
+    }
+    rn_session_autosave(s);
+    rn_session_close(s);
+    s = nullptr;
+    t0 = clock::now();
+    if (rn_session_open(dir.c_str(), argv[1], &opt, &s) != RN_OK) return std::fprintf(stderr, "open: %s\n", rn_last_error()), 1;
+    if (rn_seek(s, rn_take_length(s)) != RN_OK) return std::fprintf(stderr, "seek: %s\n", rn_last_error()), 1;
+  } else if (project == "-") {
     if (rn_session_new(argv[1], nullptr, &opt, &s) != RN_OK) return std::fprintf(stderr, "%s\n", rn_last_error()), 1;
     for (uint64_t f = 0; f < recordFrames; ++f) {
       rn_step_info info{};
@@ -41,10 +58,18 @@ int main(int argc, char** argv) {
     }
   } else {
     if (rn_session_open(project.c_str(), argv[1], &opt, &s) != RN_OK) return std::fprintf(stderr, "%s\n", rn_last_error()), 1;
-    uint64_t end = rn_take_length(s);
+    uint64_t end = std::getenv("BENCH_FROM") ? uint64_t(std::atoll(std::getenv("BENCH_FROM"))) : rn_take_length(s);
     if (rn_seek(s, end) != RN_OK) return std::fprintf(stderr, "seek: %s\n", rn_last_error()), 1;
   }
   double setup = std::chrono::duration<double>(clock::now() - t0).count();
+  // BENCH_IDLE_S: the paused pause before pressing Rewind, with the app's idle work each frame.
+  if (const char* idle = std::getenv("BENCH_IDLE_S")) {
+    auto until = clock::now() + std::chrono::milliseconds(int(std::atof(idle) * 1000));
+    while (clock::now() < until) {
+      rn_session_idle_work(s, 4);
+      std::this_thread::sleep_for(std::chrono::milliseconds(11));
+    }
+  }
   uint64_t start = rn_frame(s);
   std::atomic<bool> stop{false};
   std::atomic<uint64_t> rendered{0};
@@ -60,12 +85,18 @@ int main(int argc, char** argv) {
     });
   }
   std::vector<double> ms;
-  rn_set_mode(s, RN_MODE_REPLAY);
+  // The app rewinds in record mode (paused at the take end); BENCH_MODE=replay switches first.
+  if (std::getenv("BENCH_MODE") && std::string(std::getenv("BENCH_MODE")) == "replay") rn_set_mode(s, RN_MODE_REPLAY);
+  std::printf("mode %d at frame %llu of %llu\n", int(rn_get_mode(s)), (unsigned long long)rn_frame(s), (unsigned long long)rn_take_length(s));
   for (int tick = 1; tick <= ticks && rn_frame(s) > 0; ++tick) {
     uint64_t n = tick <= 30 ? 2 : tick <= 90 ? 3 : 4;
     auto a = clock::now();
     if (rn_rewind(s, n) != RN_OK) return std::fprintf(stderr, "rewind: %s\n", rn_last_error()), 1;
     ms.push_back(std::chrono::duration<double, std::milli>(clock::now() - a).count());
+    // BENCH_TICK_SLEEP_MS: wait between ticks like the app's frame loop (vsync), so another thread
+    // gets the machine in between.
+    if (const char* w = std::getenv("BENCH_TICK_SLEEP_MS")) std::this_thread::sleep_for(std::chrono::milliseconds(std::atoi(w)));
+    if (std::getenv("BENCH_TRACE")) std::printf("tick %d: frame %llu (%.1f ms)\n", tick, (unsigned long long)rn_frame(s), ms.back());
   }
   stop = true;
   if (bg.joinable()) bg.join();
