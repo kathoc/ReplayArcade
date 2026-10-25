@@ -23,6 +23,16 @@ if(REPLAYARCADE_BUILD_TESTS)
   target_link_libraries(test_fbneo_core PRIVATE replayarcade_core)
   add_test(NAME test_fbneo_core COMMAND test_fbneo_core)
   set_tests_properties(test_fbneo_core PROPERTIES TIMEOUT 1800)
+  add_executable(test_arcadedb tests/test_arcadedb.cpp)
+  target_link_libraries(test_arcadedb PRIVATE replaynes_frontend)
+  add_test(NAME test_arcadedb COMMAND test_arcadedb ${CMAKE_CURRENT_SOURCE_DIR}/data)
+  # data/arcadedb.tsv is what tools/make_arcadedb.py writes from the pinned FBNeo and data/.
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_FOUND)
+    add_test(NAME arcadedb_up_to_date
+             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_arcadedb.py --check
+                     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fbneo/src/burn/drv ${CMAKE_CURRENT_SOURCE_DIR}/data)
+  endif()
 endif()
 
 # Rewind cost as the app sees it (tools/bench_rewind.cpp); not a test.

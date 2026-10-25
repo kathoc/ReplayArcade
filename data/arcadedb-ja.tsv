@@ -1,0 +1,159 @@
+# Japanese titles and readings for tools/make_arcadedb.py: "G<TAB>set<TAB>title<TAB>reading" (the
+# set's clones of the same English title get them too), "M<TAB>FBNeo maker<TAB>Japanese name".
+M	Capcom	カプコン
+M	Konami	コナミ
+M	Namco	ナムコ
+M	Sega	セガ
+M	Taito	タイトー
+M	Taito Corporation	タイトー
+M	Taito Corporation Japan	タイトー
+M	Taito / Midway	タイトー / ミッドウェイ
+M	Irem	アイレム
+M	Irem (licensed from Broderbund)	アイレム（ブローダーバンド許諾）
+M	Toaplan	東亜プラン
+M	Toaplan / Taito	東亜プラン / タイトー
+M	Toaplan / Taito Corporation	東亜プラン / タイトー
+M	Data East Corporation	データイースト
+M	Data East USA	データイースト
+M	Technos Japan	テクノスジャパン
+M	Nintendo	任天堂
+M	Tehkan	テーカン
+M	Tecmo	テクモ
+M	Nichibutsu	日本物産
+M	Seibu Kaihatsu	セイブ開発
+M	Psikyo	彩京
+M	Video System Co.	ビデオシステム
+M	Cave (Atlus license)	ケイブ（アトラス許諾）
+M	Compile (Sega license)	コンパイル（セガ許諾）
+M	Mitchell	ミッチェル
+M	Daipro (Capcom license)	ダイプロ（カプコン許諾）
+M	Technosoft / Sega	テクノソフト / セガ
+M	Sega / Westone	セガ / ウエストン
+M	Escape (Sega license)	エスケープ（セガ許諾）
+M	SNK	SNK
+M	Jaleco	ジャレコ
+M	Atlus	アトラス
+M	Raizing / 8ing	ライジング / エイティング
+M	Cave	ケイブ
+M	Video System	ビデオシステム
+M	Kaneko	カネコ
+M	Banpresto	バンプレスト
+M	Nichibutsu (Taito license)	日本物産（タイトー許諾）
+G	1941j	1941	1941
+G	1942	1942	1942
+G	1943kai	1943改 ミッドウェイ海戦	1943カイミッドウェイカイセン
+G	akumajou	悪魔城ドラキュラ	アクマジョウドラキュラ
+G	aliensj	エイリアンズ	エイリアンズ
+G	aliensynj	エイリアンシンドローム	エイリアンシンドローム
+G	altbeastj	獣王記	ジュウオウキ
+G	area88	エリア88	エリア88
+G	arkanoidj	アルカノイド	アルカノイド
+G	batsugun	バツグン	バツグン
+G	blkdrgon	ブラックドラゴン	ブラックドラゴン
+G	bombjack	ボンジャック	ボンジャック
+G	btime	バーガータイム	バーガータイム
+G	bublbobl	バブルボブル	バブルボブル
+G	cadashj	カダッシュ	カダッシュ
+G	captcommj	キャプテンコマンドー	キャプテンコマンドー
+G	cclimberj	クレイジー・クライマー	クレイジークライマー
+G	chasehqj	チェイスH.Q.	チェイスエイチキュー
+G	chelnovj	超人機メタルフォース チェルノブ	チョウジンキメタルフォースチェルノブ
+G	columnsj	コラムス	コラムス
+G	commandoj	戦場の狼	センジョウノオオカミ
+G	contraj	魂斗羅	コントラ
+G	darius2	ダライアスII	ダライアスツー
+G	dariusg	ダライアス外伝	ダライアスガイデン
+G	dariusj	ダライアス	ダライアス
+G	ddragon2j	ダブルドラゴンII ザ・リベンジ	ダブルドラゴンツーザリベンジ
+G	ddragonj	双截龍	ダブルドラゴン
+G	detatwin	出たな!!ツインビー	デタナツインビー
+G	digdug	ディグダグ	ディグダグ
+G	dinoj	キャディラックス 恐竜新世紀	キャディラックスキョウリュウシンセイキ
+G	dkgensan	大工の源さん	ダイクノゲンサン
+G	dkongj	ドンキーコング	ドンキーコング
+G	dkongjrj	ドンキーコングJR.	ドンキーコングジュニア
+G	donpachij	首領蜂	ドンパチ
+G	elevator	エレベーターアクション	エレベーターアクション
+G	fantzone	ファンタジーゾーン	ファンタジーゾーン
+G	ffightj	ファイナルファイト	ファイナルファイト
+G	flicky	フリッキー	フリッキー
+G	galaga	ギャラガ	ギャラガ
+G	gaplus	ギャプラス	ギャプラス
+G	goldnaxej	ゴールデンアックス	ゴールデンアックス
+G	gradius3ja	グラディウスIII 伝説から神話へ	グラディウススリーデンセツカラシンワヘ
+G	gunbirdj	ガンバード	ガンバード
+G	gunbuletj	ガンバレット	ガンバレット
+G	gunlock	レイフォース	レイフォース
+G	gunsmokej	ガンスモーク	ガンスモーク
+G	gyruss	ジャイラス	ジャイラス
+G	hishouza	飛翔鮫	ヒショウザメ
+G	hyprolym	ハイパーオリンピック	ハイパーオリンピック
+G	imgfightj	イメージファイト	イメージファイト
+G	invaders	スペースインベーダー	スペースインベーダー
+G	joemac	戦え原始人ジョー&マック	タタカエゲンシジンジョーアンドマック
+G	kaiteids	海底大戦争	カイテイダイセンソウ
+G	karnov	カルノフ	カルノフ
+G	knightsj	ナイツ・オブ・ザ・ラウンド	ナイツオブザラウンド
+G	kodj	ザ・キングオブドラゴンズ	ザキングオブドラゴンズ
+G	ktigera	究極タイガー	キュウキョクタイガー
+G	kuniokun	熱血硬派くにおくん	ネッケツコウハクニオクン
+G	ldrun	ロードランナー	ロードランナー
+G	lkage	影の伝説	カゲノデンセツ
+G	lostwrld	ロストワールド	ロストワールド
+G	makaimur	魔界村	マカイムラ
+G	mappyj	マッピー	マッピー
+G	marioj	マリオブラザーズ	マリオブラザーズ
+G	metalbj	メタルブラック	メタルブラック
+G	midresj	ミッドナイトレジスタンス	ミッドナイトレジスタンス
+G	mizubaku	ミズバク大冒険	ミズバクダイボウケン
+G	nightstrj	ナイトストライカー	ナイトストライカー
+G	ninjawj	ニンジャウォーリアーズ	ニンジャウォーリアーズ
+G	nkdodge	熱血高校ドッジボール部	ネッケツコウコウドッジボールブ
+G	nspiritj	最後の忍道	サイゴノニンドウ
+G	outrun	アウトラン	アウトラン
+G	outzone	アウトゾーン	アウトゾーン
+G	pacmaniaj	パックマニア	パックマニア
+G	pang	ポンピングワールド	ポンピングワールド
+G	parodiusj	パロディウスだ! 神話からお笑いへ	パロディウスダシンワカラオワライヘ
+G	pbobble	パズルボブル	パズルボブル
+G	popeyej	ポパイ	ポパイ
+G	puckman	パックマン	パックマン
+G	punchoutj	パンチアウト!!	パンチアウト
+G	punisherj	パニッシャー	パニッシャー
+G	puyopuy2	ぷよぷよ通	プヨプヨツウ
+G	raidenj	雷電	ライデン
+G	rastsaga	ラスタンサーガ	ラスタンサーガ
+G	rbisland	レインボーアイランド	レインボーアイランド
+G	rtype2j	R-TYPE II	アールタイプツー
+G	rygarj	アルゴスの戦士	アルゴスノセンシ
+G	s1945j	ストライカーズ1945	ストライカーズ1945
+G	sf2ceja	ストリートファイターIIダッシュ	ストリートファイターツーダッシュ
+G	sf2j	ストリートファイターII	ストリートファイターツー
+G	shdancerj	シャドー・ダンサー	シャドーダンサー
+G	snowbrosj	スノーブラザーズ	スノーブラザーズ
+G	solomonj	ソロモンの鍵	ソロモンノカギ
+G	sonicwi	ソニックウィングス	ソニックウィングス
+G	spartanx	スパルタンX	スパルタンエックス
+G	splatterj	スプラッターハウス	スプラッターハウス
+G	starforc	スターフォース	スターフォース
+G	striderj	ストライダー飛竜	ストライダーヒリュウ
+G	terracre	テラクレスタ	テラクレスタ
+G	tetrisse	テトリス	テトリス
+G	tfrceacj	サンダーフォースAC	サンダーフォースエーシー
+G	thunderxj	サンダークロス	サンダークロス
+G	tigerhj	タイガーヘリ	タイガーヘリ
+G	timeplt	タイムパイロット	タイムパイロット
+G	tnzsj	ニュージーランドストーリー	ニュージーランドストーリー
+G	todruaga	ドルアーガの塔	ドルアーガノトウ
+G	toutrunj	ターボアウトラン	ターボアウトラン
+G	travrusa	トラバースUSA	トラバースユーエスエー
+G	truxton2	達人王	タツジンオウ
+G	uccopsj	アンダーカバーコップス	アンダーカバーコップス
+G	wbml	ワンダーボーイ モンスターランド	ワンダーボーイモンスターランド
+G	wboy	ワンダーボーイ	ワンダーボーイ
+G	wofj	天地を喰らうII 赤壁の戦い	テンチヲクラウツーセキヘキノタタカイ
+G	ws	プロ野球ワールドスタジアム	プロヤキュウワールドスタジアム
+G	xevious	ゼビウス	ゼビウス
+G	xexex	XEXEX	ゼクセクス
+G	yiear	イー・アル・カンフー	イーアルカンフー
+G	youkaidk1	妖怪道中記	ヨウカイドウチュウキ
