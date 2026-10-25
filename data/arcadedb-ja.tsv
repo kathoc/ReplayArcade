@@ -157,3 +157,28 @@ G	xevious	ゼビウス	ゼビウス
 G	xexex	XEXEX	ゼクセクス
 G	yiear	イー・アル・カンフー	イーアルカンフー
 G	youkaidk1	妖怪道中記	ヨウカイドウチュウキ
+# 2026-10-26: sets Wikidata has no Japanese title for (sources: Japanese Wikipedia, 2026-10-26).
+# 「アルカノイド」の節「アルカノイド リベンジ オブ Doh」
+G	arknoid2j	アルカノイド リベンジ オブ Doh	アルカノイドリベンジオブドー
+# 「超絶倫人ベラボーマン」（ちょうぜつりんじんベラボーマン）
+G	berabohm	超絶倫人ベラボーマン	チョウゼツリンジンベラボーマン
+# 「グリーンベレー (コナミ)」
+G	gberet	グリーンベレー	グリーンベレー
+# 「フック (映画)」のゲーム化作品「Hook（アーケードゲーム、アイレム、1992年）」; the film's Japanese title フック
+G	hookj	フック	フック
+# 「P-47 (ゲーム)」（ピーよんなな）
+G	p47j	P-47	ピーヨンナナ
+# 「雷牙」（らいが）
+G	raiga	雷牙	ライガ
+# 「テクモ」の作品一覧「シルクワーム（AC）（1988）」
+G	silkwormj	シルクワーム	シルクワーム
+# 「倉庫番」の「倉庫番Deluxe」
+G	soukobdx	倉庫番Deluxe	ソウコバンデラックス
+# 「スーパーリアルダーウィン」: SRD SUPER REAL DARWIN（SRDスーパーリアルダーウィン）
+G	srdarwinj	SRDスーパーリアルダーウィン	エスアールディースーパーリアルダーウィン
+# 「T.M.N.T. 〜スーパー亀忍者〜」（ティーンエージ ミュータント ニンジャ タートルズ 〜スーパーかめにんじゃ〜）, 1989 arcade
+G	tmnt2pj	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ
+# 「プロテニス ワールドコート」
+G	wldcourt	プロテニス ワールドコート	プロテニスワールドコート
+# 「X-メン」（エックスメン）; the arcade game's title X-MEN
+G	xmenj	X-MEN	エックスメン

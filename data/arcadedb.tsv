@@ -1565,10 +1565,10 @@ G	a-arkbloc2	Block	アルカノイド	アルカノイド	m:bootleg (Game Corpora
 G	a-arkblock	Block	アルカノイド	アルカノイド	m:bootleg (Game Corporation)	1986	action		arkblock
 G	a-arkgcbl	Arkanoid	アルカノイド	アルカノイド	m:bootleg	1986	action		arkgcbl
 G	a-arkgcbla	Arkanoid	アルカノイド	アルカノイド	m:bootleg	1986	action		arkgcbla
-G	a-arknoid2	Arkanoid - Revenge of DOH			m:Taito Corporation Japan	1987	action		arknoid2
-G	a-arknoid2b	Arkanoid - Revenge of DOH			m:bootleg	1987	action		arknoid2b
-G	a-arknoid2j	Arkanoid - Revenge of DOH			m:Taito Corporation	1987	action		arknoid2j
-G	a-arknoid2u	Arkanoid - Revenge of DOH			m:Taito America Corporation (Romstar license)	1987	action		arknoid2u
+G	a-arknoid2	Arkanoid - Revenge of DOH	アルカノイド リベンジ オブ Doh	アルカノイドリベンジオブドー	m:Taito Corporation Japan	1987	action		arknoid2
+G	a-arknoid2b	Arkanoid - Revenge of DOH	アルカノイド リベンジ オブ Doh	アルカノイドリベンジオブドー	m:bootleg	1987	action		arknoid2b
+G	a-arknoid2j	Arkanoid - Revenge of DOH	アルカノイド リベンジ オブ Doh	アルカノイドリベンジオブドー	m:Taito Corporation	1987	action		arknoid2j
+G	a-arknoid2u	Arkanoid - Revenge of DOH	アルカノイド リベンジ オブ Doh	アルカノイドリベンジオブドー	m:Taito America Corporation (Romstar license)	1987	action		arknoid2u
 G	a-arkretrn	Arkanoid Returns			m:Taito Corporation	1997	action		arkretrn
 G	a-arkretrnj	Arkanoid Returns			m:Taito Corporation	1997	action		arkretrnj
 G	a-arkretrnu	Arkanoid Returns			m:Taito Corporation	1997	action		arkretrnu
@@ -1804,8 +1804,8 @@ G	a-beast	Shadow of the Beast	シャドー・オブ・ザ・ビースト 魔性�
 G	a-beastfp	Beastie Feastie			m:Epos Corporation	1984	action		beastfp
 G	a-beastfpa	Beastie Feastie			m:Epos Corporation	1984	action		beastfpa
 G	a-benberob	Ben Bero Beh	べんべろべえ	ベンベロベエ	m:Taito	1984	action		benberob
-G	a-berabohm	Chou Zetsurinjin Berabowman			m:Namco	1988	action		berabohm
-G	a-berabohmb	Chou Zetsurinjin Berabowman			m:Namco	1988	action		berabohmb
+G	a-berabohm	Chou Zetsurinjin Berabowman	超絶倫人ベラボーマン	チョウゼツリンジンベラボーマン	m:Namco	1988	action		berabohm
+G	a-berabohmb	Chou Zetsurinjin Berabowman	超絶倫人ベラボーマン	チョウゼツリンジンベラボーマン	m:Namco	1988	action		berabohmb
 G	a-berlwall	The Berlin Wall			m:Kaneko	1991	action		berlwall
 G	a-berlwallk	The Berlin Wall			m:Kaneko (Inter license)	1991	action		berlwallk
 G	a-berlwallt	The Berlin Wall			m:Kaneko	1991	action		berlwallt
@@ -3808,8 +3808,8 @@ G	a-gauntletr5	Gauntlet	ガントレット	ガントレット	m:Atari Games	1985
 G	a-gauntletr7	Gauntlet	ガントレット	ガントレット	m:Atari Games	1985	action		gauntletr7
 G	a-gauntletr9	Gauntlet	ガントレット	ガントレット	m:Atari Games	1985	action		gauntletr9
 G	a-gauntlets	Gauntlet	ガントレット	ガントレット	m:Atari Games	1985	action		gauntlets
-G	a-gberet	Green Beret			m:Konami	1985	action		gberet
-G	a-gberetb	Green Beret			m:bootleg	1985	action		gberetb
+G	a-gberet	Green Beret	グリーンベレー	グリーンベレー	m:Konami	1985	action		gberet
+G	a-gberetb	Green Beret	グリーンベレー	グリーンベレー	m:bootleg	1985	action		gberetb
 G	a-gblchmp	Global Champion	カイザーナックル	カイザーナックル	m:Taito America Corporation	1994	fighting		gblchmp
 G	a-gbusters	Gang Busters			m:Konami	1988	action		gbusters
 G	a-gbustersa	Gang Busters			m:Konami	1988	action		gbustersa
@@ -4281,30 +4281,30 @@ G	a-holeland2	Hole Land			m:Tecfri	1984	shooter		holeland2
 G	a-holo	Holosseum	ホロシアム	ホロシアム	m:Sega	1992	fighting		holo
 G	a-homo	Homo			m:bootleg	1987	action		homo
 G	a-honeydol	Honey Doll			m:Barko Corp.	1995	puzzle		honeydol
-G	a-hook	Hook			m:Irem	1992	action		hook
-G	a-hook1v4	Hook			m:hack	2016	action		hook1v4
-G	a-hook6h	Hook			m:hack	2022	action		hook6h
-G	a-hookbo	Hook			m:hack	2024	action		hookbo
-G	a-hookdj	Hook			m:hack	2025	action		hookdj
-G	a-hookdszz	Hook			m:hack	2023	action		hookdszz
-G	a-hookdw	Hook			m:hack	2016	action		hookdw
-G	a-hookgs	Hook			m:hack	2022	action		hookgs
-G	a-hookgs2	Hook			m:hack	2023	action		hookgs2
-G	a-hookhd	Hook			m:hack	2024	action		hookhd
-G	a-hookhd2	Hook			m:hack	2024	action		hookhd2
-G	a-hookj	Hook			m:Irem	1992	action		hookj
-G	a-hookjy	Hook			m:hack	2024	action		hookjy
-G	a-hookjyds	Hook			m:hack	2025	action		hookjyds
-G	a-hooknx	Hook			m:hack	2022	action		hooknx
-G	a-hooknx2	Hook			m:hack	2022	action		hooknx2
-G	a-hookpj	Hook			m:hack	2024	action		hookpj
-G	a-hookpls	Hook			m:hack	2024	action		hookpls
-G	a-hooksw	Hook			m:hack	2022	action		hooksw
-G	a-hooksw2	Hook			m:hack	2025	action		hooksw2
-G	a-hooku	Hook			m:Irem America	1992	action		hooku
-G	a-hookx2	Hook			m:hack	2018	action		hookx2
-G	a-hookxr	Hook			m:hack	2018	action		hookxr
-G	a-hookxx	Hook			m:hack	2025	action		hookxx
+G	a-hook	Hook	フック	フック	m:Irem	1992	action		hook
+G	a-hook1v4	Hook	フック	フック	m:hack	2016	action		hook1v4
+G	a-hook6h	Hook	フック	フック	m:hack	2022	action		hook6h
+G	a-hookbo	Hook	フック	フック	m:hack	2024	action		hookbo
+G	a-hookdj	Hook	フック	フック	m:hack	2025	action		hookdj
+G	a-hookdszz	Hook	フック	フック	m:hack	2023	action		hookdszz
+G	a-hookdw	Hook	フック	フック	m:hack	2016	action		hookdw
+G	a-hookgs	Hook	フック	フック	m:hack	2022	action		hookgs
+G	a-hookgs2	Hook	フック	フック	m:hack	2023	action		hookgs2
+G	a-hookhd	Hook	フック	フック	m:hack	2024	action		hookhd
+G	a-hookhd2	Hook	フック	フック	m:hack	2024	action		hookhd2
+G	a-hookj	Hook	フック	フック	m:Irem	1992	action		hookj
+G	a-hookjy	Hook	フック	フック	m:hack	2024	action		hookjy
+G	a-hookjyds	Hook	フック	フック	m:hack	2025	action		hookjyds
+G	a-hooknx	Hook	フック	フック	m:hack	2022	action		hooknx
+G	a-hooknx2	Hook	フック	フック	m:hack	2022	action		hooknx2
+G	a-hookpj	Hook	フック	フック	m:hack	2024	action		hookpj
+G	a-hookpls	Hook	フック	フック	m:hack	2024	action		hookpls
+G	a-hooksw	Hook	フック	フック	m:hack	2022	action		hooksw
+G	a-hooksw2	Hook	フック	フック	m:hack	2025	action		hooksw2
+G	a-hooku	Hook	フック	フック	m:Irem America	1992	action		hooku
+G	a-hookx2	Hook	フック	フック	m:hack	2018	action		hookx2
+G	a-hookxr	Hook	フック	フック	m:hack	2018	action		hookxr
+G	a-hookxx	Hook	フック	フック	m:hack	2025	action		hookxx
 G	a-hoops95	Hoops			m:Data East Corporation	1995	sports		hoops95
 G	a-hoops96	Hoops '96			m:Data East Corporation	1996	sports		hoops96
 G	a-hopmappy	Hopping Mappy	ホッピングマッピー	ホッピングマッピー	m:Namco	1986	puzzle		hopmappy
@@ -6335,11 +6335,11 @@ G	a-ozmawars2	Ozma Wars	オズマウォーズ	オズマウォーズ	m:SNK	1979	s
 G	a-ozmawars3	Ozma Wars	オズマウォーズ	オズマウォーズ	m:SNK	1979	shooter		ozmawars3
 G	a-ozon1	Ozon I			m:Proma	1983	shooter		ozon1
 G	a-p47	P-47: The Phantom Fighter			m:Jaleco	1988	shooter		p47
-G	a-p47a	P-47: The Freedom Fighter			m:Jaleco	1988	shooter		p47a
+G	a-p47a	P-47: The Freedom Fighter	P-47	ピーヨンナナ	m:Jaleco	1988	shooter		p47a
 G	a-p47aces	P-47 Aces	P-47 ACES		m:Jaleco	1995	shooter		p47aces
 G	a-p47acesa	P-47 Aces	P-47 ACES		m:Jaleco	1995	shooter		p47acesa
-G	a-p47j	P-47: The Freedom Fighter			m:Jaleco	1988	shooter		p47j
-G	a-p47je	P-47: The Freedom Fighter			m:Jaleco	1988	shooter		p47je
+G	a-p47j	P-47: The Freedom Fighter	P-47	ピーヨンナナ	m:Jaleco	1988	shooter		p47j
+G	a-p47je	P-47: The Freedom Fighter	P-47	ピーヨンナナ	m:Jaleco	1988	shooter		p47je
 G	a-pacgal	Pac-Gal	ミズ・パックマン	ミズパックマン	m:hack	1981	action		pacgal
 G	a-pacheart	Pac-Man	パックマン	パックマン	m:hack	1981	action		pacheart
 G	a-packbang	Pack'n Bang Bang			m:Kaneko	1994	puzzle		packbang
@@ -6972,8 +6972,8 @@ G	a-raidenub	Raiden	雷電	ライデン	m:Seibu Kaihatsu (Fabtek license)	1990	s
 G	a-raiders5	Raiders5	レイダース5	レイダース5	m:UPL	1985	action		raiders5
 G	a-raiders5t	Raiders5	レイダース5	レイダース5	m:UPL (Taito license)	1985	action		raiders5t
 G	a-raiders5ta	Raiders5	レイダース5	レイダース5	m:UPL (Taito license)	1985	action		raiders5ta
-G	a-raiga	Raiga - Strato Fighter			m:Tecmo	1991	shooter		raiga
-G	a-raigaa	Raiga - Strato Fighter			m:Tecmo	1991	shooter		raigaa
+G	a-raiga	Raiga - Strato Fighter	雷牙	ライガ	m:Tecmo	1991	shooter		raiga
+G	a-raigaa	Raiga - Strato Fighter	雷牙	ライガ	m:Tecmo	1991	shooter		raigaa
 G	a-raimais	Raimais	レイメイズ	レイメイズ	m:Taito Corporation Japan	1988	action		raimais
 G	a-raimaisj	Raimais	レイメイズ	レイメイズ	m:Taito Corporation	1988	action		raimaisj
 G	a-raimaisjo	Raimais	レイメイズ	レイメイズ	m:Taito Corporation	1988	action		raimaisjo
@@ -7975,11 +7975,11 @@ G	a-silentdj	Silent Dragon	サイレントドラゴン	サイレントドラゴ�
 G	a-silentdu	Silent Dragon	サイレントドラゴン	サイレントドラゴン	m:Taito America Corporation	1992	action		silentdu
 G	a-silkroad	The Legend of Silkroad			m:Unico	1999	action		silkroad
 G	a-silkroada	The Legend of Silkroad			m:Unico	1999	action		silkroada
-G	a-silkworm	Silk Worm			m:Tecmo	1988	shooter		silkworm
-G	a-silkwormb	Silk Worm			m:bootleg	1988	shooter		silkwormb
-G	a-silkwormb2	Silk Worm			m:bootleg	1988	shooter		silkwormb2
-G	a-silkwormj	Silk Worm			m:Tecmo	1988	shooter		silkwormj
-G	a-silkwormp	Silk Worm			m:Tecmo	1988	shooter		silkwormp
+G	a-silkworm	Silk Worm	シルクワーム	シルクワーム	m:Tecmo	1988	shooter		silkworm
+G	a-silkwormb	Silk Worm	シルクワーム	シルクワーム	m:bootleg	1988	shooter		silkwormb
+G	a-silkwormb2	Silk Worm	シルクワーム	シルクワーム	m:bootleg	1988	shooter		silkwormb2
+G	a-silkwormj	Silk Worm	シルクワーム	シルクワーム	m:Tecmo	1988	shooter		silkwormj
+G	a-silkwormp	Silk Worm	シルクワーム	シルクワーム	m:Tecmo	1988	shooter		silkwormp
 G	a-silvland	Silver Land	リバーパトロール	リバーパトロール	m:Falcon	1981	action		silvland
 G	a-silvmil	Silver Millennium			m:Para	1995	shooter		silvmil
 G	a-simpsonjr	Simpson Junior			m:bootleg (Daigom Games)	2003	action		simpsonjr
@@ -8148,7 +8148,7 @@ G	a-sos	SOS Game			m:K.K. Tokki (Namco license)	1979	shooter		sos
 G	a-sosterm	S.O.S.	セプテントリオン	セプテントリオン	m:Terminal		other		sosterm
 G	a-sotsugyo	Sotsugyo Shousho			m:Mitchell (Atlus license)	1995	other		sotsugyo
 G	a-sotsugyok	Jor-eop Jeungmyeongseo			m:Mitchell	1996	other		sotsugyok
-G	a-soukobdx	Souko Ban Deluxe			m:Namco	1990	puzzle		soukobdx
+G	a-soukobdx	Souko Ban Deluxe	倉庫番Deluxe	ソウコバンデラックス	m:Namco	1990	puzzle		soukobdx
 G	a-spacbat2	Space Battle			m:bootleg	1980	shooter		spacbat2
 G	a-spacbatt	Space Battle			m:bootleg	1980	shooter		spacbatt
 G	a-spacduel	Space Duel			m:Atari	1980	shooter		spacduel
@@ -8294,8 +8294,8 @@ G	a-srangerb	Super Ranger			m:bootleg (NYWA)	1988	action		srangerb
 G	a-srangern	Super Ranger			m:SunA (NOVA license)	1988	action		srangern
 G	a-srangero	Super Ranger			m:SunA	1988	action		srangero
 G	a-srangerw	Super Ranger			m:SunA (WDK license)	1988	action		srangerw
-G	a-srdarwin	SRD: Super Real Darwin			m:Data East Corporation	1987	shooter		srdarwin
-G	a-srdarwinj	SRD: Super Real Darwin			m:Data East Corporation	1987	shooter		srdarwinj
+G	a-srdarwin	SRD: Super Real Darwin	SRDスーパーリアルダーウィン	エスアールディースーパーリアルダーウィン	m:Data East Corporation	1987	shooter		srdarwin
+G	a-srdarwinj	SRD: Super Real Darwin	SRDスーパーリアルダーウィン	エスアールディースーパーリアルダーウィン	m:Data East Corporation	1987	shooter		srdarwinj
 G	a-srdmissn	S.R.D. Mission			m:Kyugo / Taito Corporation	1986	shooter		srdmissn
 G	a-srmp4	Super Real Mahjong PIV	スーパーリアル麻雀 P. IV		m:Seta	1993	table		srmp4
 G	a-srmp4o	Super Real Mahjong PIV	スーパーリアル麻雀 P. IV		m:Seta	1993	table		srmp4o
@@ -8462,7 +8462,7 @@ G	a-stratab	Strata Bowling			m:Strata / Incredible Technologies	1990	other		stra
 G	a-stratab1	Strata Bowling			m:Strata / Incredible Technologies	1990	other		stratab1
 G	a-stratgys	Strategy X	ストラテジーX		m:Konami (Stern Electronics license)	1981	shooter		stratgys
 G	a-stratgyx	Strategy X	ストラテジーX		m:Konami	1981	shooter		stratgyx
-G	a-stratof	Raiga - Strato Fighter			m:Tecmo	1991	shooter		stratof
+G	a-stratof	Raiga - Strato Fighter	雷牙	ライガ	m:Tecmo	1991	shooter		stratof
 G	a-stratvox	Stratovox	スピーク&レスキュー	スピークレスキュー	m:Sun Electronics (Taito license)	1980	shooter		stratvox
 G	a-stratvoxa	Stratovox	スピーク&レスキュー	スピークレスキュー	m:Sun Electronics (Taito license)	1980	shooter		stratvoxa
 G	a-stratvoxb	Stratovox	スピーク&レスキュー	スピークレスキュー	m:bootleg	1980	shooter		stratvoxb
@@ -8851,22 +8851,22 @@ G	a-tmht2p	Teenage Mutant Hero Turtles			m:Konami	1989	action		tmht2p
 G	a-tmht2pa	Teenage Mutant Hero Turtles			m:Konami	1989	action		tmht2pa
 G	a-tmhta	Teenage Mutant Hero Turtles			m:Konami	1989	action		tmhta
 G	a-tmhtb	Teenage Mutant Hero Turtles			m:Konami	1989	action		tmhtb
-G	a-tmnt	Teenage Mutant Ninja Turtles			m:Konami	1989	action		tmnt
+G	a-tmnt	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1989	action		tmnt
 G	a-tmnt2	Teenage Mutant Ninja Turtles - Turtles in Time	ティーンエイジ・ミュータント・ニンジャ・タートルズ：タートルズ・イン・タイム	ティーンエイジミュータントニンジャタートルズタートルズインタイム	m:Konami	1991	action		tmnt2
 G	a-tmnt22pu	Teenage Mutant Ninja Turtles - Turtles in Time	ティーンエイジ・ミュータント・ニンジャ・タートルズ：タートルズ・イン・タイム	ティーンエイジミュータントニンジャタートルズタートルズインタイム	m:Konami	1991	action		tmnt22pu
 G	a-tmnt24pu	Teenage Mutant Ninja Turtles - Turtles in Time	ティーンエイジ・ミュータント・ニンジャ・タートルズ：タートルズ・イン・タイム	ティーンエイジミュータントニンジャタートルズタートルズインタイム	m:Konami	1991	action		tmnt24pu
 G	a-tmnt2a	Teenage Mutant Ninja Turtles - Turtles in Time	ティーンエイジ・ミュータント・ニンジャ・タートルズ：タートルズ・イン・タイム	ティーンエイジミュータントニンジャタートルズタートルズインタイム	m:Konami	1991	action		tmnt2a
 G	a-tmnt2o	Teenage Mutant Ninja Turtles - Turtles in Time	ティーンエイジ・ミュータント・ニンジャ・タートルズ：タートルズ・イン・タイム	ティーンエイジミュータントニンジャタートルズタートルズインタイム	m:Konami	1991	action		tmnt2o
-G	a-tmnt2pj	Teenage Mutant Ninja Turtles			m:Konami	1990	action		tmnt2pj
-G	a-tmnt2po	Teenage Mutant Ninja Turtles			m:Konami	1989	action		tmnt2po
-G	a-tmnta	Teenage Mutant Ninja Turtles			m:Konami	1989	action		tmnta
+G	a-tmnt2pj	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1990	action		tmnt2pj
+G	a-tmnt2po	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1989	action		tmnt2po
+G	a-tmnta	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1989	action		tmnta
 G	a-tmnti	Teenage Mutant Ninja Turtles	TMNT		m:Sergi	2009	other		tmnti
 G	a-tmntia	Teenage Mutant Ninja Turtles	TMNT		m:Sergi	2009	other		tmntia
-G	a-tmntj	Teenage Mutant Ninja Turtles			m:Konami	1990	action		tmntj
-G	a-tmntu	Teenage Mutant Ninja Turtles			m:Konami	1989	action		tmntu
-G	a-tmntua	Teenage Mutant Ninja Turtles			m:Konami	1989	action		tmntua
-G	a-tmntub	Teenage Mutant Ninja Turtles			m:Konami	1989	action		tmntub
-G	a-tmntuc	Teenage Mutant Ninja Turtles			m:Konami	1989	action		tmntuc
+G	a-tmntj	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1990	action		tmntj
+G	a-tmntu	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1989	action		tmntu
+G	a-tmntua	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1989	action		tmntua
+G	a-tmntub	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1989	action		tmntub
+G	a-tmntuc	Teenage Mutant Ninja Turtles	T.M.N.T. 〜スーパー亀忍者〜	ティーンエージミュータントニンジャタートルズスーパーカメニンジャ	m:Konami	1989	action		tmntuc
 G	a-tndrcade	Thundercade	特殊部隊UAG		m:Seta (Taito license)	1987	shooter		tndrcade
 G	a-tndrcadej	Tokusyu Butai U.A.G.	特殊部隊UAG		m:Seta (Taito license)	1987	shooter		tndrcadej
 G	a-tnextspc	The Next Space			m:SNK	1989	shooter		tnextspc
@@ -9476,7 +9476,7 @@ G	a-wizzquiz	Wizz Quiz			m:Zilec-Zenitone (Konami license)	1985	other		wizzquiz
 G	a-wizzquiza	Wizz Quiz			m:Zilec-Zenitone	1985	other		wizzquiza
 G	a-wjammeb	Windjammers	フライングパワーディスク	フライングパワーディスク	m:Boomchil	2025	sports		wjammeb
 G	a-wjammers	Windjammers	フライングパワーディスク	フライングパワーディスク	m:Data East Corporation	1994	sports		wjammers
-G	a-wldcourt	Pro Tennis World Court			m:Namco	1988	sports		wldcourt
+G	a-wldcourt	Pro Tennis World Court	プロテニス ワールドコート	プロテニスワールドコート	m:Namco	1988	sports		wldcourt
 G	a-wlstar	Wonder League Star - Sok-Magicball Fighting			m:Mijin	1995	sports		wlstar
 G	a-wmatch	Water Match			m:Sega	1984	sports		wmatch
 G	a-wndrmomo	Wonder Momo	ワンダーモモ	ワンダーモモ	m:Namco	1987	action		wndrmomo
@@ -9628,19 +9628,19 @@ G	a-xmcotar1	X-Men: Children of the Atom	X-MEN Children of The Atom		m:Capcom	19
 G	a-xmcotar1d	X-Men: Children of the Atom	X-MEN Children of The Atom		m:bootleg	1994	fighting		xmcotar1d
 G	a-xmcotatag	X-Men: Children of the Atom			m:Morphus56K	2026	fighting		xmcotatag
 G	a-xmcotau	X-Men: Children of the Atom	X-MEN Children of The Atom		m:Capcom	1994	fighting		xmcotau
-G	a-xmen	X-Men			m:Konami	1992	action		xmen
-G	a-xmen2pa	X-Men			m:Konami	1992	action		xmen2pa
-G	a-xmen2pe	X-Men			m:Konami	1992	action		xmen2pe
-G	a-xmen2pj	X-Men			m:Konami	1992	action		xmen2pj
-G	a-xmen2pu	X-Men			m:Konami	1992	action		xmen2pu
-G	a-xmen6p	X-Men			m:Konami	1992	action		xmen6p
-G	a-xmen6pu	X-Men			m:Konami	1992	action		xmen6pu
-G	a-xmena	X-Men			m:Konami	1992	action		xmena
-G	a-xmenaa	X-Men			m:Konami	1992	action		xmenaa
-G	a-xmenj	X-Men			m:Konami	1992	action		xmenj
-G	a-xmenja	X-Men			m:Konami	1992	action		xmenja
-G	a-xmenu	X-Men			m:Konami	1992	action		xmenu
-G	a-xmenua	X-Men			m:Konami	1992	action		xmenua
+G	a-xmen	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmen
+G	a-xmen2pa	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmen2pa
+G	a-xmen2pe	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmen2pe
+G	a-xmen2pj	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmen2pj
+G	a-xmen2pu	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmen2pu
+G	a-xmen6p	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmen6p
+G	a-xmen6pu	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmen6pu
+G	a-xmena	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmena
+G	a-xmenaa	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmenaa
+G	a-xmenj	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmenj
+G	a-xmenja	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmenja
+G	a-xmenu	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmenu
+G	a-xmenua	X-Men	X-MEN	エックスメン	m:Konami	1992	action		xmenua
 G	a-xmultipl	X Multiply	Xマルチプライ		m:Irem	1989	shooter		xmultipl
 G	a-xmultiplm72	X Multiply	Xマルチプライ		m:Irem	1989	shooter		xmultiplm72
 G	a-xmvsf	X-Men Vs. Street Fighter	X-MEN VS. STREET FIGHTER		m:Capcom	1996	fighting		xmvsf
