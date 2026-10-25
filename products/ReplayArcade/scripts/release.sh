@@ -129,13 +129,14 @@ cmp -s "$ROOT/packaging/linux/replayarcade-repo.gpg.new" "$ROOT/packaging/linux/
 rm -f "$ROOT/packaging/linux/replayarcade-repo.gpg.new"
 GPGKEY_B64="$(base64 -w0 "$ROOT/packaging/linux/replayarcade-repo.gpg")"
 
+# The published repository: a standalone clone of gh-pages (the last release's OSTree repository is
+# kept for deltas and pruning), or a new repository for the first release.
 PAGES="$ROOT/build/gh-pages"
-git -C "$ROOT" fetch -q origin gh-pages 2>/dev/null || true
-if [ ! -d "$PAGES/.git" ] && [ ! -f "$PAGES/.git" ]; then
-  if git -C "$ROOT" rev-parse -q --verify origin/gh-pages >/dev/null; then
-    git -C "$ROOT" worktree add -q --detach "$PAGES" origin/gh-pages
+if [ ! -d "$PAGES/.git" ]; then
+  if git ls-remote --exit-code "https://github.com/$REPO.git" refs/heads/gh-pages >/dev/null 2>&1; then
+    git_gh clone -q --depth 1 --branch gh-pages "https://github.com/$REPO.git" "$PAGES"
   else
-    git -C "$ROOT" worktree add -q --orphan -b gh-pages-publish "$PAGES"
+    git init -q "$PAGES"
   fi
 fi
 DEST="$PAGES/flatpak"
