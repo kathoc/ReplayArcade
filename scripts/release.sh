@@ -35,6 +35,20 @@ grep -q "<release version=\"$VERSION\"" "$ROOT/packaging/linux/$APP_ID.metainfo.
   { echo "metainfo has no <release version=\"$VERSION\">"; exit 1; }
 [ -z "$(git -C "$ROOT" status --porcelain --ignore-submodules=dirty)" ] || { echo "uncommitted changes"; exit 1; }
 "$ROOT/scripts/fbneo-patches.sh" --check >/dev/null || { echo "FBNeo patch not applied"; exit 1; }
+# A new Flatpak permission stops the in-app update (the portal installs no update that asks for one): the
+# users must update once by hand (Discover / flatpak update). Say so in CHANGES, then NEW_PERMISSIONS=1.
+MANIFEST="packaging/linux/$APP_ID.yml"
+PREV_TAG="$(git -C "$ROOT" describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+if [ -n "$PREV_TAG" ]; then
+  perms() { sed -n '/^finish-args:/,/^[a-z]/p' | grep -E '^ *- --' | sed 's/^ *- //' | sort; }
+  ADDED="$(comm -13 <(git -C "$ROOT" show "$PREV_TAG:$MANIFEST" 2>/dev/null | perms) <(perms < "$ROOT/$MANIFEST"))"
+  if [ -n "$ADDED" ] && [ "${NEW_PERMISSIONS:-}" != 1 ]; then
+    echo "new Flatpak permissions since $PREV_TAG (the in-app update will refuse this version):"
+    echo "$ADDED" | sed 's/^/  /'
+    echo "tell the users to update once with Discover / flatpak update (CHANGES), then rerun with NEW_PERMISSIONS=1"
+    exit 1
+  fi
+fi
 [ -f "$ED_KEY" ] && [ -d "$GPG_HOME" ] || { echo "signing keys missing ($ED_KEY, $GPG_HOME)"; exit 1; }
 PUB="$(sed -n 's/^set(RN_PRODUCT_UPDATE_PUBLIC_KEY "\(.*\)")/\1/p' "$ROOT/cmake/product.cmake")"
 [ "$(openssl pkey -in "$ED_KEY" -pubout -outform DER | tail -c 32 | base64)" = "$PUB" ] ||
