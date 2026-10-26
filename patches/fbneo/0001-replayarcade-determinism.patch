@@ -1,5 +1,5 @@
 diff --git a/src/burn/burn.cpp b/src/burn/burn.cpp
-index 3674759df..86cedd708 100644
+index 3674759df..041bfb13b 100644
 --- a/src/burn/burn.cpp
 +++ b/src/burn/burn.cpp
 @@ -5,6 +5,38 @@
@@ -115,7 +115,7 @@ index 3674759df..86cedd708 100644
  INT32 BurnAreaScan(INT32 nAction, INT32* pnMin)
  {
  	INT32 nRet = 0;
-@@ -1212,6 +1297,24 @@ INT32 BurnAreaScan(INT32 nAction, INT32* pnMin)
+@@ -1212,6 +1297,27 @@ INT32 BurnAreaScan(INT32 nAction, INT32* pnMin)
  		nRet |= pDriver[nBurnDrvActive]->AreaScan(nAction, pnMin);
  	}
  
@@ -135,12 +135,15 @@ index 3674759df..86cedd708 100644
 +		if (nReplayArcadeScanVersion >= 3)
 +			for (INT32 i = 0; i < nBurnStreamCount; i++) BurnStreamList[i].scan(BurnStreamList[i].stream, nAction);
 +		pandora_scan(nAction);
++		// A driver's converted palette is kept up to date colour by colour as the game writes its palette RAM,
++		// and most drivers do not save it (Flipull): after a load, convert it all again on the next draw.
++		if ((nAction & ACB_WRITE) && pDriver[nBurnDrvActive]->pRecalcPal) *(pDriver[nBurnDrvActive]->pRecalcPal) = 1;
 +	}
 +
  #ifdef __LIBRETRO__
  	// standalone method to handle hiscores with runahead
  	// doesn't work with libretro's second instance or 2+ frames
-@@ -1814,11 +1917,9 @@ void BurnRandomSetSeed(UINT64 nSeed)
+@@ -1814,11 +1920,9 @@ void BurnRandomSetSeed(UINT64 nSeed)
  
  void BurnRandomInit()
  { // for states & input recordings - init before emulation starts
@@ -1698,39 +1701,67 @@ index 14d33a20e..f0d3653de 100644
  				ZetOpen(0);
  				ZetNmi();
 diff --git a/src/burn/drv/sega/d_segas32.cpp b/src/burn/drv/sega/d_segas32.cpp
-index e9ce314a4..99ecb8d59 100644
+index e9ce314a4..de35aca1d 100644
 --- a/src/burn/drv/sega/d_segas32.cpp
 +++ b/src/burn/drv/sega/d_segas32.cpp
-@@ -2935,6 +2935,23 @@ static INT32 compute_clipping_extents(INT32 enable, INT32 clipout, INT32 clipmas
+@@ -2935,6 +2935,37 @@ static INT32 compute_clipping_extents(INT32 enable, INT32 clipout, INT32 clipmas
  	return clipout;
  }
  
-+// ReplayArcade (state version 3): the tilemap cache as right after init (every entry free, every tile to be
-+// drawn, the list in init's order). It is a pure cache of the RAM, but which entry holds which page and the
-+// list's order (pointers) were not saved: a load drew pages from entries that held others in the last run.
-+static void tilemap_cache_reset()
++// ReplayArcade (state version 3): the tilemap cache as it was (which entry holds which page and bank, which
++// are dirty, and the list's order, as entry indices: it is a list of pointers). Its drawn bitmaps are saved with
++// the other bitmaps (BurnBitmapScan); a load kept the last run's cache, so pages were drawn from entries that
++// held others. Rebuilding the cache instead would draw them afresh, not as the run being replayed drew them.
++static void tilemap_cache_scan(INT32 nAction)
 +{
-+	cache_head = NULL;
-+	for (INT32 tmap = 0; tmap < 32; tmap++) {
-+		cache_entry *entry = &tmap_cache[tmap];
-+		entry->page = 0xff;
-+		entry->bank = 0;
-+		entry->dirty = 1;
-+		entry->next = cache_head;
-+		GenericTilemapAllTilesDirty(entry->tmap);
-+		cache_head = entry;
++	UINT8 page[32], bank[32], dirty[32];
++	INT8 order[32];
++	INT32 n = 0;
++	for (INT32 i = 0; i < 32; i++) { page[i] = tmap_cache[i].page; bank[i] = tmap_cache[i].bank; dirty[i] = tmap_cache[i].dirty; order[i] = -1; }
++	for (cache_entry *e = cache_head; e != NULL && n < 32; e = e->next) order[n++] = (INT8)(e - tmap_cache);
++	SCAN_VAR(page);
++	SCAN_VAR(bank);
++	SCAN_VAR(dirty);
++	SCAN_VAR(order);
++	if (nAction & ACB_WRITE) {
++		cache_head = NULL;
++		cache_entry **link = &cache_head;
++		for (INT32 i = 0; i < 32; i++) {
++			tmap_cache[i].page = page[i];
++			tmap_cache[i].bank = bank[i];
++			tmap_cache[i].dirty = dirty[i];
++			tmap_cache[i].next = NULL;
++		}
++		for (INT32 i = 0; i < 32 && order[i] >= 0 && order[i] < 32; i++) {
++			*link = &tmap_cache[order[i]];
++			link = &tmap_cache[order[i]].next;
++		}
 +	}
 +}
 +
  static INT32 find_cache_entry(INT32 page, INT32 bank)
  {
  	cache_entry *entry, *prev;
-@@ -4737,6 +4754,8 @@ static INT32 DrvScan(INT32 nAction, INT32 *pnMin)
+@@ -4720,6 +4751,14 @@ static INT32 DrvScan(INT32 nAction, INT32 *pnMin)
+ 		SCAN_VAR(nExtraCycles);
+ 
+ 		SCAN_VAR(sonic_delta);
++		if (nReplayArcadeScanVersion >= 3) {
++			tilemap_cache_scan(nAction);
++			// the background layer is filled only on lines whose colour or extent changed: what it last filled
++			// (a load compared with the last run's, and left lines unfilled: Arabian Fight's rewind)
++			SCAN_VAR(m_prev_bgstartx);
++			SCAN_VAR(m_prev_bgendx);
++			SCAN_VAR(m_bgcolor_line);
++		}
+ 
+ 		BurnRandomScan(nAction);
+ 	}
+@@ -4737,6 +4776,7 @@ static INT32 DrvScan(INT32 nAction, INT32 *pnMin)
  		if (is_multi32) {
  			pcm_bankswitch(pcm_bankdata);
  		}
 +
-+		if (nReplayArcadeScanVersion >= 3) tilemap_cache_reset();
  	}
  
  	return 0;
@@ -1905,16 +1936,39 @@ index 498df968c..688eac91a 100644
  	}
  
  	if (nAction & ACB_WRITE) {
+diff --git a/src/burn/drv/taito/d_taitol.cpp b/src/burn/drv/taito/d_taitol.cpp
+index 11b1ff421..8144cbccb 100644
+--- a/src/burn/drv/taito/d_taitol.cpp
++++ b/src/burn/drv/taito/d_taitol.cpp
+@@ -3154,8 +3154,14 @@ static INT32 DrvDraw()
+ 
+ static void scanline_update(INT32 scanline)
+ {
+-	if (ActiveZ80GetIM() != 2)
++	if (ActiveZ80GetIM() != 2) {
++		// ReplayArcade: the screen is drawn whatever the interrupt mode (the hardware always shows a picture).
++		// Before the game set IM 2 (Flipull's first frames) no frame was drawn, and the frontend showed the
++		// picture its buffer last held: another session's, or the one before a seek. Only the drawing: the
++		// sprite copy below still waits for IM 2, as the game state did.
++		if (scanline == 240 && pBurnDraw) DrvDraw();
+ 		return;
++	}
+ 
+ 	if (scanline == 120 && (irq_enable & 1))
+ 	{
 diff --git a/src/burn/drv/taito/d_taitomisc.cpp b/src/burn/drv/taito/d_taitomisc.cpp
-index bfa3e1234..db1e4c083 100644
+index bfa3e1234..0891f09c9 100644
 --- a/src/burn/drv/taito/d_taitomisc.cpp
 +++ b/src/burn/drv/taito/d_taitomisc.cpp
-@@ -6004,6 +6004,8 @@ static INT32 TaitoMiscScan(INT32 nAction, INT32 *pnMin)
+@@ -6004,6 +6004,11 @@ static INT32 TaitoMiscScan(INT32 nAction, INT32 *pnMin)
  	if (nAction & ACB_DRIVER_DATA) {
  		SekScan(nAction);
  		ZetScan(nAction);
 +		// ReplayArcade: the CPUs' cycles carried from frame to frame (state version 3)
 +		if (nReplayArcadeScanVersion >= 3) SCAN_VAR(nCyclesExtra);
++		// ReplayArcade (state version 3): Volfied's video control and mask, set as it plays; a load kept the last
++		// run's (a seek or a rewind drew the wrong layer bits).
++		if (nReplayArcadeScanVersion >= 3) { SCAN_VAR(VolfiedVidCtrl); SCAN_VAR(VolfiedVidMask); }
  
  		if (TaitoNumYM2151) BurnYM2151Scan(nAction, pnMin);
  		if (TaitoNumYM2203) BurnYM2203Scan(nAction, pnMin);
@@ -3361,10 +3415,10 @@ index c4d9bd8d5..b78cd3b78 100644
  void StateRewindInit();
  void StateRewindExit();
 diff --git a/src/burn/tilemap_generic.cpp b/src/burn/tilemap_generic.cpp
-index 8f5e48cd1..bd39afed4 100644
+index 8f5e48cd1..39e3b667d 100644
 --- a/src/burn/tilemap_generic.cpp
 +++ b/src/burn/tilemap_generic.cpp
-@@ -34,6 +34,28 @@ static GenericTilemap maps[MAX_TILEMAPS];
+@@ -34,6 +34,32 @@ static GenericTilemap maps[MAX_TILEMAPS];
  static GenericTilemap *cur_map;
  GenericTilesGfx GenericGfxData[MAX_TILEMAPS];
  
@@ -3387,6 +3441,10 @@ index 8f5e48cd1..bd39afed4 100644
 +		SCAN_VAR(t->transcolor);
 +		if (t->scrollx_table) ScanVar(t->scrollx_table, t->scroll_rows * sizeof(INT32), (char*)"tilemap scroll x");
 +		if (t->scrolly_table) ScanVar(t->scrolly_table, t->scroll_cols * sizeof(INT32), (char*)"tilemap scroll y");
++		// State version 3: which tiles are still to be drawn into a cached bitmap (GenericTilemapUseDirtyTiles:
++		// System 32); a load kept the last run's marks, so tiles were left undrawn or drawn again.
++		if (nReplayArcadeScanVersion >= 3 && t->dirty_tiles_enable && t->dirty_tiles)
++			ScanVar(t->dirty_tiles, t->mwidth * t->mheight, (char*)"tilemap dirty tiles");
 +	}
 +}
 +
