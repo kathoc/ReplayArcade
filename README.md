@@ -11,6 +11,10 @@ record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/F
 - Per-game button assignment and turbo, remembered separately for pads and arcade sticks
   (detected automatically, changeable on the Controller page).
 - Controller-only operation, Japanese and English UI.
+- Controllers and players: a controller connected while the Steam Deck's own controls are player 1 takes
+  player 1, and gives it back when disconnected; players 2-4 keep their controllers. While paused, squares
+  top left show which players have a controller and light up at a press.
+- Arcade games only: FinalBurn Neo's home-system sets (Mega Drive, PC Engine, NES ...) are not opened or listed.
 - Keyboard: arrows, buttons 1-6 on Z X C / A S D, coin 5 (player 2: 6), start 1 or Return (player 2: 2),
   as in MAME.
 - Mouse (Settings > Controls > More > Mouse, off by default), for games with analog controls: a trackball, dial or paddle follows the mouse's motion
@@ -19,8 +23,9 @@ record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/F
   Vulcan, missile, speed; Galaxy Force II). The game keeps the pointer while it runs; Esc gives it back.
   Pressing a pad or game key puts the mouse's stick and lever back in the middle.
 - Replays: a recording played straight through is identical on Linux and Windows. FinalBurn Neo is patched
-  to save the machine state its save states left out (`patches/fbneo/`); after a seek, a rewind or an export
-  some games still differ, and that work goes on.
+  to save the machine state its save states left out (`patches/fbneo/`); in a per-game test of 256 games,
+  a seek, a rewind or an export replays identically in all but a few (a rewind picture in Arabian Fight
+  and Volfied, Flipull), and that work goes on.
 
 Platforms: Steam Deck / Linux (Flatpak) and Windows x64.
 
