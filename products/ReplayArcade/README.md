@@ -24,8 +24,7 @@ record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/F
   Pressing a pad or game key puts the mouse's stick and lever back in the middle.
 - Replays: a recording played straight through is identical on Linux and Windows. FinalBurn Neo is patched
   to save the machine state its save states left out (`patches/fbneo/`); in a per-game test of 256 games,
-  a seek, a rewind or an export replays identically in all but a few (a rewind picture in Arabian Fight
-  and Volfied, Flipull), and that work goes on.
+  a seek, a rewind, an export or a reopened project replays identically in every one.
 
 Platforms: Steam Deck / Linux (Flatpak) and Windows x64.
 
