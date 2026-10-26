@@ -14,9 +14,11 @@ int contentId(const char* path, char* out, size_t cap, void*) {
   std::memcpy(out, id.c_str(), id.size() + 1);
   return 1;
 }
+int arcadeOnly(const char* path, void*) { return path && rac::isArcadeFile(path) ? 1 : 0; }
 }  // namespace
 
 extern "C" void rn_product_startup(void) {
   rac::registerFbneoCore();
   rnf_set_content_id_provider(contentId, nullptr);
+  rnf_set_rom_filter(arcadeOnly, nullptr);
 }

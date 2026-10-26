@@ -38,12 +38,27 @@ int BurnDrvGetRomInfo(struct BurnRomInfo* pri, unsigned int i);
 int BurnDrvGetAspect(int* pnXAspect, int* pnYAspect);
 int BurnDrvGetIndex(char* szName);
 extern unsigned int nBurnDrvActive;
-extern int nReplayArcadeScanVersion;  // patched FBNeo (state.h): 2 = this state layout, 1 = before 0.2.2
+extern unsigned int nBurnDrvCount;
+extern "C" int BurnDrvGetHardwareCode();
+extern int nReplayArcadeScanVersion;  // patched FBNeo (state.h): the state layout FBNeo scans (kStateLayout)
 }
 
 namespace rac {
 namespace {
 
+// ReplayArcade plays arcade games only: FinalBurn Neo's home systems (its HARDWARE_PREFIX_* of Mega Drive,
+// PC Engine, Master System, SG-1000, ColecoVision, Game Gear, MSX, ZX Spectrum, NES, FDS, Neo Geo Pocket,
+// Channel F, SNES, Bally Astrocade, GBA) are refused (burn.h).
+bool isHomeSystem(int hardware) {
+  switch ((unsigned(hardware) >> 24) & 0x7f) {
+    case 0x0c: case 0x12: case 0x17: case 0x18: case 0x19: case 0x1a: case 0x1c: case 0x1d:
+    case 0x1e: case 0x1f: case 0x20: case 0x21: case 0x22: case 0x24: case 0x25: return true;
+    default: return false;
+  }
+}
+
+// The state layout this build writes (patched FBNeo, state.h; burn.cpp sets nReplayArcadeScanVersion to it).
+constexpr int kStateLayout = 3;
 constexpr unsigned kDrvName = 0;             // DRV_NAME
 constexpr unsigned kRomNoDump = 1u << 28;    // BRF_NODUMP
 constexpr unsigned char kAnalogRel = 4;      // BIT_ANALOG_REL: a dial / trackball, read as a speed
@@ -73,7 +88,9 @@ struct Host {
   retro_system_av_info av{};
   unsigned rotation = 0;
   std::vector<uint8_t> powerOn;      // machine state right after loading, before any frame
-  size_t legacySize = 0;             // size of this content's states in layout version 1 (before 0.2.2)
+  // Size of this content's states in each layout version (state.h): 1 = 0.2.1 and earlier, 2 = 0.3.0 and
+  // 0.3.1, 3 = now. Index 0 unused.
+  size_t layoutSize[4] = {0, 0, 0, 0};
   rn::InputLayout layout;            // from FBNeo's input descriptors for the loaded content
   struct AxisSource { unsigned port, index, id; size_t layoutByte; };
   std::vector<AxisSource> axes;
@@ -363,7 +380,7 @@ class FbneoCore final : public rn::ICore {
     const uint8_t* payload;
     size_t n;
     RN_TRY(rn::stateenv::read(data, size, kCompat, frame, payload, n));
-    if (n != host().powerOn.size() && n != host().legacySize)
+    if (layoutOfSize(n) == 0)
       return rn::Error(rn::Err::StateError, "state belongs to other content");
     if (host().owner == this) {
       if (!unserialize(payload, n)) return rn::Error(rn::Err::StateError, "FinalBurn Neo refused the state");
@@ -429,17 +446,43 @@ class FbneoCore final : public rn::ICore {
       std::filesystem::create_directories(h.saveDir, ec);
     }
     h.rotation = 0;  // set again by the driver while loading (RETRO_ENVIRONMENT_SET_ROTATION)
+    // A home system's set is refused before FBNeo starts on it (its drivers can crash on a broken file:
+    // MegadriveExit after a failed init). The check after loading catches a set FBNeo picks by the folder.
+    {
+      const std::string set = std::filesystem::path(path).stem().string();
+      const int index = BurnDrvGetIndex(const_cast<char*>(set.c_str()));
+      if (index >= 0) {
+        const unsigned saved = nBurnDrvActive;
+        nBurnDrvActive = unsigned(index);
+        const bool home = isHomeSystem(BurnDrvGetHardwareCode());
+        nBurnDrvActive = saved;
+        if (home)
+          return rn::Error(rn::Err::UnsupportedFormat, "'" + path + "' is not an arcade game (ReplayArcade plays arcade games only)");
+      }
+    }
     retro_game_info gi{};
     const std::string native = nativePath(path);
     gi.path = native.c_str();
     if (!retro_load_game(&gi)) return rn::Error(rn::Err::RomInvalid, "FinalBurn Neo could not load '" + path + "'");
+    // FBNeo's libretro frontend can answer true with no driver selected (an empty or broken zip): nothing
+    // of the driver may be read then.
+    if (nBurnDrvActive >= nBurnDrvCount) {
+      unloadContent(h);
+      return rn::Error(rn::Err::RomInvalid, "FinalBurn Neo could not load '" + path + "'");
+    }
+    if (isHomeSystem(BurnDrvGetHardwareCode())) {
+      unloadContent(h);
+      return rn::Error(rn::Err::UnsupportedFormat, "'" + path + "' is not an arcade game (ReplayArcade plays arcade games only)");
+    }
     retro_get_system_av_info(&h.av);
     // Power-on state first; then one frame to receive the input descriptors (FBNeo sends them
     // on its first frame); then back to power-on.
     size_t size = retro_serialize_size();
-    nReplayArcadeScanVersion = 1;
-    h.legacySize = retro_serialize_size();
-    nReplayArcadeScanVersion = 2;
+    for (int v = 1; v <= kStateLayout; ++v) {
+      nReplayArcadeScanVersion = v;
+      h.layoutSize[v] = retro_serialize_size();
+    }
+    nReplayArcadeScanVersion = kStateLayout;
     h.powerOn.assign(size, 0);
     if (!size || !retro_serialize(h.powerOn.data(), size)) {
       unloadContent(h);
@@ -502,13 +545,22 @@ class FbneoCore final : public rn::ICore {
     audio_.assign(size_t(spf_ + 64) * 2, 0);
   }
 
-  // A state of this layout, or one saved before it (version 1: a project from 0.2.1 or earlier; its
-  // size tells, as the version-2 additions only add bytes). Loading one leaves out what version 1 did.
+  // The layout version of a state of n bytes, the newest that has that size (each version only adds
+  // bytes, so equal sizes have the same layout); 0 = none of this content's.
+  static int layoutOfSize(size_t n) {
+    for (int v = kStateLayout; v >= 1; --v)
+      if (host().layoutSize[v] == n) return v;
+    return 0;
+  }
+
+  // A state of this layout, or one saved before it (a project from an earlier version; its size tells).
+  // Loading one leaves out what its version did not save.
   static bool unserialize(const uint8_t* data, size_t n) {
-    if (n == host().powerOn.size()) return retro_unserialize(data, n);
-    nReplayArcadeScanVersion = 1;
+    const int v = layoutOfSize(n);
+    if (v == 0) return false;
+    nReplayArcadeScanVersion = v;
     const bool ok = retro_unserialize(data, n);
-    nReplayArcadeScanVersion = 2;
+    nReplayArcadeScanVersion = kStateLayout;
     return ok;
   }
 
@@ -622,6 +674,18 @@ int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) 
 
 }  // namespace
 
+bool isArcadeFile(const std::string& path) {
+  std::string name = std::filesystem::path(path).stem().string();
+  std::lock_guard<std::mutex> g(host().m);  // no frame runs while the driver selection is borrowed
+  int index = BurnDrvGetIndex(const_cast<char*>(name.c_str()));
+  if (index < 0) return true;
+  const unsigned saved = nBurnDrvActive;
+  nBurnDrvActive = unsigned(index);
+  const bool home = isHomeSystem(BurnDrvGetHardwareCode());
+  nBurnDrvActive = saved;
+  return !home;
+}
+
 std::string contentIdForPath(const std::string& path) {
   std::string name = std::filesystem::path(path).stem().string();
   std::lock_guard<std::mutex> g(host().m);  // no frame runs while the driver selection is borrowed
@@ -629,7 +693,7 @@ std::string contentIdForPath(const std::string& path) {
   if (index < 0) return {};
   const unsigned saved = nBurnDrvActive;
   nBurnDrvActive = unsigned(index);
-  std::string id = contentIdOfLoaded();
+  std::string id = isHomeSystem(BurnDrvGetHardwareCode()) ? std::string() : contentIdOfLoaded();
   nBurnDrvActive = saved;
   return id;
 }

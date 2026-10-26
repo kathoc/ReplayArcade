@@ -26,5 +26,8 @@ void registerFbneoCore(const FbneoSettings& settings = {});
 // reports once it has loaded that file; "" if FBNeo has no such set. Does not load the game, so a
 // library can identify its files cheaply.
 std::string contentIdForPath(const std::string& path);
+/// False for a file named after one of FinalBurn Neo's home-system sets (md_sonic.zip): ReplayArcade plays
+/// arcade games only, and the library leaves them out. True for every other name (also unknown ones).
+bool isArcadeFile(const std::string& path);
 
 }  // namespace rac
