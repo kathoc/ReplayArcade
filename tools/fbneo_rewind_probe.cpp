@@ -5,6 +5,7 @@
 //
 //   fbneo_rewind_probe <rom.zip> [frames=3000]
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -117,11 +118,15 @@ int main(int argc, char** argv) {
   rn_string_free(lj);
   std::vector<uint64_t> picture;
   std::vector<std::vector<std::pair<std::string, uint64_t>>> state;  // after each frame
+  double stepMs = 0;
   for (uint64_t f = 0; f < frames; ++f) {
     testInput(in, layoutJson, f);
     rn_input_record rec;
     rn_input_sample_record(in, f, &rec);
-    if (rn_step_record(s, &rec, nullptr) != RN_OK) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const rn_status st = rn_step_record(s, &rec, nullptr);
+    stepMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (st != RN_OK) {
       std::printf("record %llu: %s\n", (unsigned long long)f, rn_last_error());
       return 2;
     }
@@ -189,13 +194,19 @@ int main(int argc, char** argv) {
     std::printf("second session: all %llu frames equal\n", (unsigned long long)frames);
     return 0;
   }
+  std::printf("recording: %.2f ms a frame\n", stepMs / double(frames));
   rn_set_mode(s, RN_MODE_REPLAY);
   if (rn_seek(s, frames) != RN_OK) return 2;
   int tick = 0, compared = 0, wrong = 0, wrongPictures = 0;
+  double slowest = 0, total = 0;
   while (rn_frame(s) > 1000) {
     ++tick;
     uint64_t n = tick <= 30 ? 2 : tick <= 90 ? 3 : 4;
+    const auto t0 = std::chrono::steady_clock::now();
     if (rn_rewind(s, n) != RN_OK) break;
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    slowest = std::max(slowest, ms);
+    total += ms;
     const uint64_t f = rn_frame(s);
     if (f == 0) break;
     ++compared;
@@ -218,5 +229,6 @@ int main(int argc, char** argv) {
     }
   }
   std::printf("%s: %d rewind steps compared, %d differ (%d in the picture)\n", argv[1], compared, wrong, wrongPictures);
+  std::printf("rewind step: %.2f ms on average, %.2f ms at most\n", compared ? total / compared : 0.0, slowest);
   return wrongPictures ? 1 : wrong ? 3 : 0;
 }
