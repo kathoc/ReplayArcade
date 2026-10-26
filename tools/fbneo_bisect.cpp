@@ -47,6 +47,7 @@ bool retro_unserialize(const void* data, size_t size);
 }
 int BurnMallocBlocks(unsigned char** ptrs, int* sizes, int max);  // patched FBNeo (burn_memory.cpp)
 extern "C" int FMChipMemory(void** ptrs, int* sizes);             // patched FBNeo (snd/fm.c): malloc'd chips
+extern "C" int OPLChipMemory(void** ptrs, int* sizes);            // patched FBNeo (snd/fmopl.c): the OPL chips
 extern char __data_start[], _end[];
 
 namespace {
@@ -66,9 +67,10 @@ std::vector<std::pair<uint8_t*, size_t>> trackedMemory() {
   static int sizes[4096];
   int n = BurnMallocBlocks(ptrs, sizes, 4096);
   for (int i = 0; i < n; ++i) out.push_back({ptrs[i], size_t(sizes[i])});
-  void* fm[4];
-  int fmSizes[4];
+  void* fm[16];
+  int fmSizes[16];
   int m = FMChipMemory(fm, fmSizes);
+  m += OPLChipMemory(fm + m, fmSizes + m);
   for (int i = 0; i < m; ++i) out.push_back({static_cast<uint8_t*>(fm[i]), size_t(fmSizes[i])});
   return out;
 }
@@ -314,7 +316,7 @@ int main(int argc, char** argv) {
   if (const char* il = std::getenv("FBNEO_BISECT_INTERLEAVE")) {
     const int c0 = std::atoi(il);
     // A's states at every frame from `from`, and A at frame c0 for C.
-    rn_session_close(a);
+    rn_session_close(b);  // the live one: A, or the second session when FROM is 0 (A is closed then)
     a = open(zip);
     b = a;
     std::vector<uint8_t> st(retro_serialize_size());
@@ -464,10 +466,23 @@ int main(int argc, char** argv) {
     for (size_t o = 0; o + sizeof(uintptr_t) <= gn; o += sizeof(uintptr_t)) {
       uintptr_t v;
       std::memcpy(&v, g + o, sizeof v);
-      if (v == blockStart) { holder = long(o); break; }
+      if (v == blockStart && !excluded(g + o)) { holder = long(o); break; }  // not this tool's own lists
     }
-    std::printf("  block %d (held by global offset %lx) + %zu  %zu bytes\n", x.block,
-                holder < 0 ? 0L : long(reinterpret_cast<uintptr_t>(g + holder) - base), x.blockOffset, x.len);
+    // The driver's pointer nearest below the range (AllMem-style blocks hold many regions: Rom01, RamStart ...).
+    long nearest = -1;
+    uintptr_t nearestValue = 0;
+    for (size_t o = 0; o + sizeof(uintptr_t) <= gn; o += sizeof(uintptr_t)) {
+      uintptr_t v;
+      std::memcpy(&v, g + o, sizeof v);
+      if (v >= blockStart && v <= reinterpret_cast<uintptr_t>(x.at) && v >= nearestValue && !excluded(g + o)) {
+        nearest = long(o);
+        nearestValue = v;
+      }
+    }
+    std::printf("  block %d (held by global offset %lx) + %zu  %zu bytes (global offset %lx + %zu)\n", x.block,
+                holder < 0 ? 0L : long(reinterpret_cast<uintptr_t>(g + holder) - base), x.blockOffset, x.len,
+                nearest < 0 ? 0L : long(reinterpret_cast<uintptr_t>(g + nearest) - base),
+                nearest < 0 ? size_t(0) : size_t(reinterpret_cast<uintptr_t>(x.at) - nearestValue));
   }
   return 1;
 }

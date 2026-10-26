@@ -264,7 +264,13 @@ void testGame(const std::string& romDir, const std::string& game, const std::str
       std::fclose(f);
     }
   }
-  EXPECT(colours.size() > 4, "pictures have content (" + std::to_string(colours.size()) + " colours)");
+  // The game runs and draws: more than one colour, and pictures that change (Space Invaders and Lode
+  // Runner draw with three colours; a count of colours alone failed them).
+  std::set<uint64_t> pictures;
+  for (const Frame& fr : recorded) pictures.insert(fr.video);
+  EXPECT(colours.size() > 1 && pictures.size() >= 10,  // Double Dragon's attract mode: 31 in 3000 frames
+         "pictures have content (" + std::to_string(colours.size()) + " colours, " + std::to_string(pictures.size()) +
+             " different pictures)");
 
   // Seek to checkpoints and arbitrary frames in a scrambled order and replay 120 frames from each.
   const uint64_t starts_[] = {2500, 0, 1777, 300, 2999 - 120, 1200, 31, 2400};
@@ -339,10 +345,23 @@ void testGame(const std::string& romDir, const std::string& game, const std::str
 
 int main() {
   rac::registerFbneoCore();
+  // Arcade games only: FinalBurn Neo's home systems get no content id (the app does not open them).
+  // Set names alone, no ROM files needed.
+  for (const char* home : {"md_sonic", "nes_smb", "pce_deepblue", "sms_alexkidd", "ngp_samegame", "astro_pacman", "cv_dkong"})
+  {
+    EXPECT(rac::contentIdForPath(std::string("/roms/") + home + ".zip").empty(), std::string(home) + ": a home system");
+    EXPECT(!rac::isArcadeFile(std::string("/roms/") + home + ".zip"), std::string(home) + ": listed");
+  }
+  for (const char* arcade : {"sonic", "gradius", "1942"})
+  {
+    EXPECT(!rac::contentIdForPath(std::string("/roms/") + arcade + ".zip").empty(), std::string(arcade) + ": an arcade game");
+    EXPECT(rac::isArcadeFile(std::string("/roms/") + arcade + ".zip"), std::string(arcade) + ": not listed");
+  }
+  EXPECT(rac::isArcadeFile("/roms/notaset.zip"), "an unknown name stays listed (opening it says why it fails)");
   const char* roms = std::getenv("REPLAYARCADE_ROMS");
   if (!roms || !*roms) {
-    std::printf("REPLAYARCADE_ROMS is not set: nothing to test\n");
-    return 77;
+    std::printf("REPLAYARCADE_ROMS is not set: only the home-system checks ran (%d failure(s))\n", failures);
+    return failures ? 1 : 77;
   }
   std::string list = std::getenv("REPLAYARCADE_GAMES") ? std::getenv("REPLAYARCADE_GAMES")
                                                        : "aburner2 gforce2ja sharrier splatter ordyneje dspirit genpeitd "
