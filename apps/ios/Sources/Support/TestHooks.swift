@@ -7,7 +7,8 @@
 //   -openMenu <page>          open the Quick Menu at a page (top, retry, practice, display, ...) after 2 s
 //   -debugUnlockAll NO        free mode (the prototype switch off)
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
-//   -holdTouch <button>       press an on-screen button at 2 s for 0.3 s (e.g. l2 = rewind) to check touch input
+//   -holdTouch <button>       press an on-screen button at 2 s for 0.3 s (e.g. l2 = rewind) to check touch input;
+//                             -holdTouchAt <s>: at s seconds instead (an arcade board's boot takes longer)
 //   -setResumeCountdown NO    store Settings › Controls › Controls Details › Resume Countdown (YES / NO) before the start
 //   -setDefaults k:v,k:v      store settings in the app's domain before the start (YES / NO, numbers, text)
 //   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")
@@ -89,8 +90,9 @@ enum TestHooks {
         let probe = d.double(forKey: "pacingProbe")
         if probe > 0 { PacingProbe.shared.start(after: probe) }
         if let b = d.string(forKey: "holdTouch"), let button = TouchButton(rawValue: b) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { m.touchButtons(pressed: [button], released: []) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.3) { m.touchButtons(pressed: [], released: [button]) }
+            let at = d.double(forKey: "holdTouchAt") > 0 ? d.double(forKey: "holdTouchAt") : 2
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) { m.touchButtons(pressed: [button], released: []) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + at + 0.3) { m.touchButtons(pressed: [], released: [button]) }
         }
         if d.string(forKey: "orientation") == "landscape" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { rotate(to: .landscapeRight) }

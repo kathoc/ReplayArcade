@@ -165,6 +165,40 @@ final class InputManager {
 
     deinit { rn_input_free(handle) }
 
+    // MARK: the session's input layout (emulation thread)
+
+    /// The game actions of another core's layout are in use (not the NES pads).
+    private(set) var layoutActive = false
+
+    /// A session's input layout (rn_session_input_layout_json; nil or the NES layout = the NES pads and
+    /// the saved bindings). Another layout gets the frontend core's default bindings for it (pad 1 and
+    /// the keyboard, per-button turbo) plus `extra` (the touch controls), not saved: the bindings file
+    /// is the NES pads'. As the Linux app's EmulationController::install / InputRouter.
+    func useLayout(_ json: String?, extra: ((Set<String>) -> [(input: String, action: String)])? = nil) {
+        rnf_input_set_layout_json(json)
+        let nes = String(cString: rnf_input_layout_name()) == "nes"
+        if nes {
+            guard layoutActive else { return }
+            layoutActive = false
+            _ = rn_input_set_layout_json(handle, nil)
+            loadConfig()
+            return
+        }
+        layoutActive = true
+        _ = rn_input_set_layout_json(handle, json)
+        _ = rn_input_load_json(handle, rnfString(rnf_input_default_config_json_for_kind(InputCatalog.keyboardScheme, 0)))
+        var actions = Set<String>()
+        var info = rnf_action_info()
+        for i in 0..<rnf_input_action_count() where rnf_input_action_get(i, &info) != 0 && info.group != RNF_GROUP_HOTKEY {
+            actions.insert(String(cString: info.id))
+        }
+        let added = extra?(actions) ?? []
+        for b in added { _ = rn_input_bind(handle, b.input, b.action) }
+        NSLog("ReplayNES input layout: %@, %d game actions, %d extra bindings (%@)", String(cString: rnf_input_layout_name()),
+              actions.count, added.count, added.map { "\($0.input)=\($0.action)" }.joined(separator: " "))
+        refreshBindingState()
+    }
+
     // MARK: configuration (persisted as the engine's own JSON in Application Support)
 
     private func loadConfig() {

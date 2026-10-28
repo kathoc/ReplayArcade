@@ -359,8 +359,36 @@ final class EmulationController {
 
     // MARK: session lifecycle (emulation thread)
 
+    /// Bindings a frontend adds for another core's layout (iOS: the touch controls), from its game actions.
+    var layoutExtraBindings: ((Set<String>) -> [(input: String, action: String)])?
+    /// The session's input is the NES pads (rn_step with p1 / p2); otherwise whole records of its layout.
+    private var nesLayout = true
+
+    /// One frame's game input: the NES pads' bytes, or another layout's whole record (byte 2: events).
+    private struct GameInput {
+        var p1: UInt8 = 0, p2: UInt8 = 0
+        var record = rn_input_record()
+        var nes = true
+        /// Any game button held (the events byte aside).
+        var any: Bool {
+            if nes { return p1 | p2 != 0 }
+            return withUnsafeBytes(of: record.bytes) { b in b.enumerated().contains { $0.offset != 2 && $0.element != 0 } }
+        }
+    }
+
+    private func sampleGame(_ clock: UInt64) -> GameInput {
+        var g = GameInput(nes: nesLayout)
+        if nesLayout { rn_input_sample_game(input.handle, clock, &g.p1, &g.p2) } else { rn_input_sample_record(input.handle, clock, &g.record) }
+        return g
+    }
+
     func install(_ s: EngineSession?) {
         session = s
+        // The game input of the session's layout (the Linux app's EmulationController::install).
+        var layout: String?
+        if let s, let p = rn_session_input_layout_json(s.handle) { layout = String(cString: p); rn_string_free(p) }
+        input.useLayout(layout, extra: layoutExtraBindings)
+        nesLayout = !input.layoutActive
         // The game's frame rate and audio (docs/plans/2026-10-24-media-frontend.md): pacing, the
         // display cadence and the audio stream follow the core (the NES values without a session).
         if let s {
@@ -968,9 +996,7 @@ final class EmulationController {
             lastTakeoverSeq = takeover
             let winding = uiRewindHeld || uiFastForwardHeld || held & UInt32(RN_HK_REWIND | RN_HK_FAST_FORWARD) != 0
             if s.mode == RN_MODE_REPLAY && !ff.active && !modalHold && !winding {
-                var p1: UInt8 = 0, p2: UInt8 = 0
-                rn_input_sample_game(input.handle, s.frame, &p1, &p2)
-                if p1 | p2 != 0 { playFromHere(s) }
+                if sampleGame(s.frame).any { playFromHere(s) }
             }
         }
         if pressSeq != lastPressSeq {
@@ -1236,8 +1262,7 @@ final class EmulationController {
     /// The game input of a tick that emulates nothing (hold, sweep, countdown): sampled and dropped,
     /// so a tap there is not latched into the first frame afterwards.
     private func dropInput() {
-        var p1: UInt8 = 0, p2: UInt8 = 0
-        rn_input_sample_game(input.handle, practiceSeq, &p1, &p2)
+        _ = sampleGame(practiceSeq)
         practiceSeq &+= 1
     }
 
@@ -1303,14 +1328,14 @@ final class EmulationController {
         // Type-ahead (docs/design/VTR_UX.md): the game input is sampled and handed to the countdown; a
         // button held through counts from the first frame, one pressed and let go meanwhile is pressed
         // on it (stepOnce: ResumeCountdown.apply).
-        var p1: UInt8 = 0, p2: UInt8 = 0
+        let g: GameInput
         if isPracticing {
-            rn_input_sample_game(input.handle, practiceSeq, &p1, &p2)
+            g = sampleGame(practiceSeq)
             practiceSeq &+= 1
         } else {
-            rn_input_sample_game(input.handle, s.frame, &p1, &p2)
+            g = sampleGame(s.frame)
         }
-        resumeCountdown.input(p1: p1, p2: p2)
+        if g.nes { resumeCountdown.input(p1: g.p1, p2: g.p2) } else { resumeCountdown.input(record: g.record) }
         // The paused picture stays (shown again every tick: the viewport draws the numeral over it).
         if let v = s.video { show(v, meta: FrameMeta(frame: s.frame)) }
         return true
@@ -1541,15 +1566,18 @@ final class EmulationController {
         let live = mode == RN_MODE_RECORD || mode == RN_MODE_PRACTICE || mode == RN_MODE_LIVE
         let tSample = HostClock.now()
         lastSample = tSample
-        var p1: UInt8 = 0, p2: UInt8 = 0
+        var g = GameInput(nes: nesLayout)
         if live {
             // Practice: rn_frame is frozen, so a separate monotonic clock drives tap latching / turbo.
             let clock = mode == RN_MODE_PRACTICE ? practiceSeq : s.frame
             if mode == RN_MODE_PRACTICE { practiceSeq &+= 1 }
-            rn_input_sample_game(input.handle, clock, &p1, &p2)
+            g = sampleGame(clock)
             // The first frame after the resume countdown: plus the buttons typed ahead during it (once).
-            if !frameStep { resumeCountdown.apply(p1: &p1, p2: &p2) }
+            if !frameStep {
+                if g.nes { resumeCountdown.apply(p1: &g.p1, p2: &g.p2) } else { resumeCountdown.apply(record: &g.record) }
+            }
         }
+        let p1 = g.p1, p2 = g.p2
         let eventTime = input.consumeEventTime()
         let ev = live ? pendingEvents : 0
         pendingEvents = 0
@@ -1558,8 +1586,15 @@ final class EmulationController {
         let info: rn_step_info
         do {
             // Live play goes through the retry tracker (undo window, burst collapse).
-            info = try mode == RN_MODE_LIVE ? s.step(p1: p1, p2: p2, events: ev) : frameStep ? s.transportStep(p1: p1, p2: p2, events: ev)
-                                 : retry.step(s, now: HostClock.seconds(tSample), p1: p1, p2: p2, events: ev)
+            if g.nes {
+                info = try mode == RN_MODE_LIVE ? s.step(p1: p1, p2: p2, events: ev) : frameStep ? s.transportStep(p1: p1, p2: p2, events: ev)
+                                     : retry.step(s, now: HostClock.seconds(tSample), p1: p1, p2: p2, events: ev)
+            } else {
+                var r = g.record
+                withUnsafeMutableBytes(of: &r.bytes) { $0[2] = ev }
+                info = try mode == RN_MODE_LIVE ? s.step(record: r) : frameStep ? s.transportStep(record: r)
+                                     : retry.step(s, now: HostClock.seconds(tSample), record: r)
+            }
         } catch {
             paused = true
             advanceRemaining = 0

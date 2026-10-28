@@ -163,6 +163,21 @@ final class EngineSession {
         return info
     }
 
+    /// Another core's layout: the whole input record (its byte 2 = the events).
+    @discardableResult
+    func step(record: rn_input_record) throws -> rn_step_info {
+        var r = record, info = rn_step_info()
+        try rnCheck(rn_step_record(handle, &r, &info))
+        return info
+    }
+
+    @discardableResult
+    func transportStep(record: rn_input_record) throws -> rn_step_info {
+        var r = record, info = rn_step_info()
+        try rnCheck(rnf_transport_step_record(handle, &r, &info))
+        return info
+    }
+
     /// Paused frame step forward (rnf_transport_step): replays the recorded frame inside the take
     /// (never branches), records one frame only at the take end; replay / practice = step.
     @discardableResult

@@ -204,12 +204,20 @@ struct ResumeCountdown: Equatable {
     /// sampled for it (rn_input_sample_game). The first sample is the baseline; buttons pressed after
     /// it are latched for the first frame.
     mutating func input(p1: UInt8, p2: UInt8) { rnf_resume_countdown_input(RNFHandle.unique(&box), p1, p2) }
+    mutating func input(record: rn_input_record) {
+        var r = record
+        rnf_resume_countdown_input_record(RNFHandle.unique(&box), &r)
+    }
 
     /// Every live frame, after sampling and before rn_step: the first one after the countdown gets the
     /// buttons pressed (and let go) during it, once.
     mutating func apply(p1: inout UInt8, p2: inout UInt8) {
         guard pending else { return }
         rnf_resume_countdown_apply(RNFHandle.unique(&box), &p1, &p2)
+    }
+    mutating func apply(record: inout rn_input_record) {
+        guard pending else { return }
+        rnf_resume_countdown_apply_record(RNFHandle.unique(&box), &record)
     }
 
     /// Latched buttons wait for the first frame.
@@ -355,6 +363,14 @@ final class RetryTracker {
     func step(_ s: EngineSession, now: Double, p1: UInt8, p2: UInt8, events: UInt8) throws -> rn_step_info {
         var info = rn_step_info()
         try rnCheck(rnf_retry_step(handle, s.handle, now, p1, p2, events, &info))
+        return info
+    }
+
+    /// step for another core's layout (the whole input record).
+    @discardableResult
+    func step(_ s: EngineSession, now: Double, record: rn_input_record) throws -> rn_step_info {
+        var r = record, info = rn_step_info()
+        try rnCheck(rnf_retry_step_record(handle, s.handle, now, &r, &info))
         return info
     }
 

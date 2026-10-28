@@ -104,15 +104,24 @@ struct LibraryView: View {
 
     // MARK: Continue card
 
+    /// The game's title as its library card shows it (the game list's name, e.g. an arcade set's), or the
+    /// file name when the ROM is not in the library. Matched by the path under ROM/: the app's container
+    /// path in a saved record changes when the app is reinstalled.
+    private func gameTitle(romPath: String) -> String {
+        let url = URL(fileURLWithPath: romPath)
+        let rom = library.roms.first { romPath.hasSuffix("/" + RNF_LIBRARY_ROM_DIR + "/" + $0.relativePath) }
+        return rom?.title ?? url.deletingPathExtension().lastPathComponent
+    }
+
     @ViewBuilder
     private var hero: some View {
         if model.status.hasSession {
-            HeroCard(title: String(localized: "Resume"), subtitle: URL(fileURLWithPath: model.status.romPath).deletingPathExtension().lastPathComponent,
+            HeroCard(title: String(localized: "Resume"), subtitle: gameTitle(romPath: model.status.romPath),
                      detail: Engine.timecode(forFrame: model.status.frame), image: nil, focused: focus.index < 0 && !model.controllers.isEmpty) {
                 model.hideLibraryScreen()
             }
         } else if let r = model.pendingResume {
-            HeroCard(title: L("Continue"), subtitle: URL(fileURLWithPath: r.romPath).deletingPathExtension().lastPathComponent,
+            HeroCard(title: L("Continue"), subtitle: gameTitle(romPath: r.romPath),
                      detail: (r.isTemp ? L("Temporary session") : URL(fileURLWithPath: r.projectPath).deletingPathExtension().lastPathComponent)
                         + " · " + Engine.timecode(forFrame: r.frame ?? 0),
                      image: model.continueThumbnail(), focused: focus.index < 0 && !model.controllers.isEmpty) {

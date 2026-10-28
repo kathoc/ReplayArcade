@@ -71,6 +71,20 @@ enum TouchBindings {
         ("touch:l2", "hk.rewind"), ("touch:r2", "hk.fast_forward"),
     ]
 
+    /// Another core's layout (`actions`: its game action ids, "p1.b1" ...): the D-pad, B = button 1,
+    /// A = button 2, the turbo B / A keys = buttons 3 / 4 when the game has them, SELECT = coin,
+    /// START = start; L2 / R2 wind the tape as on the NES.
+    static func forLayout(actions: Set<String>) -> [(input: String, action: String)] {
+        var out: [(input: String, action: String)] = [
+            ("touch:dpad.up", "p1.up"), ("touch:dpad.down", "p1.down"),
+            ("touch:dpad.left", "p1.left"), ("touch:dpad.right", "p1.right"),
+            ("touch:b", "p1.b1"), ("touch:a", "p1.b2"), ("touch:turboB", "p1.b3"), ("touch:turboA", "p1.b4"),
+            ("touch:select", "p1.coin"), ("touch:start", "p1.start"),
+        ]
+        out = out.filter { actions.contains($0.action) }
+        return out + [("touch:l2", "hk.rewind"), ("touch:r2", "hk.fast_forward")]
+    }
+
     /// Bindings to add to a saved configuration that has none for the touch ids (first run or a
     /// configuration from before touch controls). An existing touch binding means the user's
     /// table is kept as it is.

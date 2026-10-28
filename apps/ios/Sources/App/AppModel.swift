@@ -210,6 +210,8 @@ final class AppModel: ObservableObject {
 
     private init() {
         emu = EmulationController(input: input)
+        // Another core's layout (ReplayArcade): the touch controls drive its buttons, coin and start.
+        emu.layoutExtraBindings = { TouchBindings.forLayout(actions: $0) }
         inputConfig = input.config
         emu.onStatus = { [weak self] st in
             guard let self else { return }
