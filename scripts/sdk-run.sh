@@ -7,11 +7,12 @@
 set -euo pipefail
 dir=$(cd "$1" && pwd); shift
 sdk=${SDK_VERSION:-25.08}
-root="$HOME/.local/share/flatpak/runtime/org.freedesktop.Sdk/x86_64/$sdk/active/files"
+arch=${SDK_ARCH:-$(uname -m)}
+root="$HOME/.local/share/flatpak/runtime/org.freedesktop.Sdk/$arch/$sdk/active/files"
 [ -d "$root" ] || { echo "SDK $sdk not installed at $root" >&2; exit 2; }
 ld=""
 if [ "${FFMPEG_EXTRA:-0}" = 1 ]; then
-  ld="$HOME/.local/share/flatpak/runtime/org.freedesktop.Platform.codecs-extra/x86_64/$sdk-extra/active/files/lib"
+  ld="$HOME/.local/share/flatpak/runtime/org.freedesktop.Platform.codecs-extra/$arch/$sdk-extra/active/files/lib"
 fi
 exec bwrap --ro-bind / / --ro-bind "$root" /usr --bind "$dir" "$dir" --bind /tmp /tmp \
   --proc /proc --dev-bind /dev /dev --chdir "$dir" \
