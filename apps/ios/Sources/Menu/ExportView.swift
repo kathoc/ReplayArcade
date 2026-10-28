@@ -130,7 +130,7 @@ private struct ExportProgressSection: View {
             if let e = job.error {
                 Text(e).foregroundStyle(.red)
             } else if job.result != nil {
-                Label(L("Exported to Files › ReplayNES › Exports"), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Label(L("Exported to Files › %@ › Exports", RNProduct.name), systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 Button(L("Share…")) { share(job.url) }
             } else {
                 ProgressView(value: job.total > 0 ? Double(job.done) / Double(job.total) : 0)

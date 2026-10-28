@@ -154,14 +154,19 @@ struct LibraryView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(L("No games yet")).font(.title3.weight(.semibold))
-            Text(L("Put your .nes ROM files into Files › On My iPhone › ReplayNES › ROM (from a Mac: Finder › your iPhone › Files › ReplayNES), or import them here."))
+            Text(RNProduct.isNES
+                 ? L("Put your .nes ROM files into Files › On My iPhone › %1$@ › ROM (from a Mac: Finder › your iPhone › Files › %2$@), or import them here.", RNProduct.name, RNProduct.name)
+                 : L("Put your ROM zips (FinalBurn Neo set names) into Files › On My iPhone › %1$@ › ROM (from a Mac: Finder › your iPhone › Files › %2$@), or import them here.", RNProduct.name, RNProduct.name))
                 .font(.subheadline).foregroundStyle(.secondary)
             HStack {
                 Button { importing = true } label: { Label(L("Import ROMs"), systemImage: "square.and.arrow.down") }
                     .buttonStyle(.borderedProminent)
-                Button { addTestCartridge() } label: { Label(L("Add Test Cartridge"), systemImage: "hammer") }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("addTestCartridge")
+                // The ReplayNES Test Cartridge is an NES ROM: only the NES product offers it.
+                if RNProduct.isNES {
+                    Button { addTestCartridge() } label: { Label(L("Add Test Cartridge"), systemImage: "hammer") }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("addTestCartridge")
+                }
             }
         }
         .padding(16)

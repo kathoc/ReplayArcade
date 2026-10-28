@@ -7,7 +7,7 @@ import Foundation
 enum ROMImport {
     enum Failure: Error, LocalizedError {
         case notAROM
-        var errorDescription: String? { L("Not an NES ROM (.nes)") }
+        var errorDescription: String? { RNProduct.isNES ? L("Not an NES ROM (.nes)") : L("Not a ROM zip (.zip)") }
     }
 
     /// Larger files are not ROMs: the biggest iNES images are a few MB; another product's ROM sets
@@ -175,7 +175,8 @@ struct ROMImportResult {
     var summary: String {
         var parts = [added.isEmpty ? L("No ROMs added") : L("Added %lld ROM(s)", Int64(added.count))]
         if !existing.isEmpty { parts.append(L("%lld already in the library", Int64(existing.count))) }
-        if skipped > 0 { parts.append(L("%lld skipped (not an NES ROM or unreadable)", Int64(skipped))) }
+        if skipped > 0 { parts.append(RNProduct.isNES ? L("%lld skipped (not an NES ROM or unreadable)", Int64(skipped))
+                                         : L("%lld skipped (not a ROM zip or unreadable)", Int64(skipped))) }
         return parts.joined(separator: " · ")
     }
 }

@@ -21,6 +21,16 @@
         }
       }
     },
+    "%lld skipped (not a ROM zip or unreadable)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件をスキップ（ROMのzipではないか読み込めません）"
+          }
+        }
+      }
+    },
     "+1 frame": {
       "localizations": {
         "ja": {
@@ -271,12 +281,12 @@
         }
       }
     },
-    "Exported to Files › ReplayNES › Exports": {
+    "Exported to Files › %@ › Exports": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ファイル › ReplayNES › Exports に書き出しました"
+            "value": "ファイル › %@ › Exports に書き出しました"
           }
         }
       }
@@ -551,6 +561,16 @@
         }
       }
     },
+    "Not a ROM zip (.zip)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMのzip（.zip）ではありません"
+          }
+        }
+      }
+    },
     "Nothing here yet": {
       "localizations": {
         "ja": {
@@ -571,12 +591,12 @@
         }
       }
     },
-    "Open it with the version of ReplayNES it was recorded with. See docs/COMPATIBILITY.md for details.": {
+    "Open it with the version of %@ it was recorded with. See docs/COMPATIBILITY.md for details.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "記録したときのバージョンの ReplayNES で開いてください。詳しくは docs/COMPATIBILITY.md を参照してください。"
+            "value": "記録したときのバージョンの %@ で開いてください。詳しくは docs/COMPATIBILITY.md を参照してください。"
           }
         }
       }
@@ -641,22 +661,32 @@
         }
       }
     },
-    "Put the ROM “%@” into the ROM folder (Files › On My iPhone › ReplayNES › ROM) and try again.\nSHA-256: %@": {
+    "Put the ROM “%1$@” into the ROM folder (Files › On My iPhone › %2$@ › ROM) and try again.\nSHA-256: %3$@": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ROM「%@」をROMフォルダ（ファイル › このiPhone内 › ReplayNES › ROM）に入れてから、もう一度試してください。\nSHA-256：%@"
+            "value": "ROM「%1$@」をROMフォルダ（ファイル › このiPhone内 › %2$@ › ROM）に入れてから、もう一度試してください。\nSHA-256：%3$@"
           }
         }
       }
     },
-    "Put your .nes ROM files into Files › On My iPhone › ReplayNES › ROM (from a Mac: Finder › your iPhone › Files › ReplayNES), or import them here.": {
+    "Put your .nes ROM files into Files › On My iPhone › %1$@ › ROM (from a Mac: Finder › your iPhone › Files › %2$@), or import them here.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": ".nes のROMファイルを「ファイル › このiPhone内 › ReplayNES › ROM」に入れるか（Macからは Finder › iPhone › ファイル › ReplayNES）、ここから読み込んでください。"
+            "value": ".nes のROMファイルを「ファイル › このiPhone内 › %1$@ › ROM」に入れるか（Macからは Finder › iPhone › ファイル › %2$@）、ここから読み込んでください。"
+          }
+        }
+      }
+    },
+    "Put your ROM zips (FinalBurn Neo set names) into Files › On My iPhone › %1$@ › ROM (from a Mac: Finder › your iPhone › Files › %2$@), or import them here.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMのzip（FinalBurn Neo のセット名）を「ファイル › このiPhone内 › %1$@ › ROM」に入れるか（Macからは Finder › iPhone › ファイル › %2$@）、ここから読み込んでください。"
           }
         }
       }
@@ -701,12 +731,12 @@
         }
       }
     },
-    "ReplayNES didn’t close normally last time, so the recording up to the last autosave was restored.": {
+    "%@ didn’t close normally last time, so the recording up to the last autosave was restored.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "前回 ReplayNES が正常に終了しなかったため、最後の自動保存までの記録を復元しました。"
+            "value": "前回 %@ が正常に終了しなかったため、最後の自動保存までの記録を復元しました。"
           }
         }
       }
