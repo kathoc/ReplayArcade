@@ -32,6 +32,7 @@ set(REPLAYNES_BUILD_TESTS ${RNL_ENGINE_TESTS} CACHE BOOL "" FORCE)
 set(REPLAYNES_BUILD_WINDOWS_APP OFF CACHE BOOL "" FORCE)
 set(RNL_DESKTOP_TESTS ${RNL_BUILD_TESTS})
 option(REPLAYNES_BUILD_CLI "Build replaynes-cli" ON)
+include(${REPLAYNES_ROOT}/cmake/Product.cmake)
 add_subdirectory(${REPLAYNES_ROOT} replaynes)
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -48,12 +49,14 @@ add_library(rnl_export STATIC src/export/mp4_export.cpp ${RNL_DESKTOP_DIR}/src/e
 target_include_directories(rnl_export PUBLIC ${RNL_DESKTOP_DIR}/src/export)
 target_link_libraries(rnl_export PUBLIC replaynes_frontend replaynes_engine PkgConfig::FFMPEG Threads::Threads)
 target_compile_options(rnl_export PRIVATE ${RNL_WARNINGS})
+rnl_test_no_flash_symbols(rnl_export)
 add_executable(replaynes-export ${RNL_DESKTOP_DIR}/src/export/export_cli.cpp)
 target_link_libraries(replaynes-export PRIVATE rnl_export)
 target_compile_definitions(replaynes-export PRIVATE RNL_EXPORT_FFMPEG=1)
 target_compile_options(replaynes-export PRIVATE ${RNL_WARNINGS})
 install(TARGETS replaynes-export RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(RNL_EXPORT_ONLY)
+  rn_check_no_nestopia_targets("${CMAKE_CURRENT_SOURCE_DIR}")
   return()
 endif()
 
@@ -84,17 +87,17 @@ foreach(sh blit.vert blit.frag)
   list(APPEND SHADER_INCS ${out})
 endforeach()
 
-# The version of the release (root CMakeLists.txt): --version, the update notice.
-file(STRINGS ${REPLAYNES_ROOT}/CMakeLists.txt RNL_ROOT_PROJECT REGEX "^project\\(ReplayNES VERSION")
-string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" RNL_APP_VERSION "${RNL_ROOT_PROJECT}")
+# Product release version: --version, About and update comparisons.
+set(RNL_APP_VERSION "${RN_PRODUCT_VERSION}")
 
 # The shared application (apps/desktop/app.cmake): rn_imgui + rnl_app.
 set(RNL_SDL3_TARGET SDL3::SDL3)
 set(RNL_APP_FEATURES RNL_HAVE_STEAM=1 RNL_HAVE_MP4_EXPORT=1 RNL_HAVE_CRT=1)
 include(${RNL_DESKTOP_DIR}/app.cmake)
+rnl_test_no_flash_symbols(rnl_app)
 target_include_directories(rnl_app PUBLIC src)  # steam_shortcut.h (RNL_HAVE_STEAM)
 
-add_executable(replaynes-linux
+add_executable(${RN_PRODUCT_EXECUTABLE}
   src/main_linux.cpp
   src/vk_renderer.cpp
   src/vk_ui_resources.cpp
@@ -102,15 +105,22 @@ add_executable(replaynes-linux
   src/update_service_flatpak.cpp
   ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
   ${SHADER_INCS})
-target_include_directories(replaynes-linux PRIVATE src ${SHADER_OUT})
-target_link_libraries(replaynes-linux PRIVATE rnl_app rnl_crt_export rnl_render rnl_export SDL3::SDL3 Vulkan::Vulkan
+target_include_directories(${RN_PRODUCT_EXECUTABLE} PRIVATE src ${SHADER_OUT})
+target_link_libraries(${RN_PRODUCT_EXECUTABLE} PRIVATE rnl_app rnl_crt_export rnl_render rnl_export SDL3::SDL3 Vulkan::Vulkan
   PkgConfig::FONTCONFIG Threads::Threads)
-target_compile_options(replaynes-linux PRIVATE ${RNL_WARNINGS})
+target_compile_options(${RN_PRODUCT_EXECUTABLE} PRIVATE ${RNL_WARNINGS})
+if(RN_PRODUCT_STARTUP_TARGET)
+  if(NOT TARGET ${RN_PRODUCT_STARTUP_TARGET})
+    message(FATAL_ERROR "RN_PRODUCT_STARTUP_TARGET must name an existing CMake target")
+  endif()
+  target_link_libraries(${RN_PRODUCT_EXECUTABLE} PRIVATE ${RN_PRODUCT_STARTUP_TARGET})
+  target_compile_definitions(${RN_PRODUCT_EXECUTABLE} PRIVATE RN_PRODUCT_HAS_STARTUP=1)
+endif()
 # In-app updates through the XDG Flatpak portal (GDBus; GLib is in org.freedesktop.Platform).
 pkg_check_modules(GIO IMPORTED_TARGET gio-2.0 gio-unix-2.0)
 if(GIO_FOUND)
-  target_link_libraries(replaynes-linux PRIVATE PkgConfig::GIO)
-  target_compile_definitions(replaynes-linux PRIVATE RNL_HAVE_GIO)
+  target_link_libraries(${RN_PRODUCT_EXECUTABLE} PRIVATE PkgConfig::GIO)
+  target_compile_definitions(${RN_PRODUCT_EXECUTABLE} PRIVATE RNL_HAVE_GIO)
 else()
   message(STATUS "gio-2.0 not found: in-app updates (Flatpak portal) disabled")
 endif()
@@ -118,12 +128,14 @@ endif()
 set(RNL_TEST_TMP ${CMAKE_CURRENT_BINARY_DIR}/tmp)
 file(MAKE_DIRECTORY ${RNL_TEST_TMP})
 
-install(TARGETS replaynes-linux RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS ${RN_PRODUCT_EXECUTABLE} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(REPLAYNES_BUILD_CLI)
   install(TARGETS replaynes-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
-set(APP_ID io.github.replaynes.ReplayNES)
-install(FILES flatpak/${APP_ID}.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES flatpak/${APP_ID}.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+set(APP_ID "${RN_PRODUCT_APP_ID}")
+install(FILES "${RN_PRODUCT_LINUX_DESKTOP_FILE}" DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES "${RN_PRODUCT_LINUX_METAINFO_FILE}" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 # App icons (hicolor 64-512 + scalable), Steam artwork, Add to Steam module + test.
 include(steam/steam.cmake)
+
+rn_check_no_nestopia_targets("${CMAKE_CURRENT_SOURCE_DIR}")

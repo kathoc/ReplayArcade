@@ -8,6 +8,7 @@
 //   replaynes-export --list-presets | --encoders
 // Prints progress on stderr and one JSON result line on stdout.
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include <algorithm>
 #include <chrono>
 #include <cinttypes>
@@ -137,6 +138,7 @@ RunOut runExport(rn_session* s, const ExportOptions& opt, const std::string& out
   uint64_t lastShown = 0, doneNow = 0;
   const double t0 = now();
   ExportOptions eo = opt;
+  eo.audioSampleRate = rnl::exportAudioSampleRate(s);
   if (eo.encoder.empty() && !eo.retryRenderer) eo.retryRenderer = rnl::makeRetryRenderer(s, opt.settings.start_frame, opt.settings.end_frame);
   o.ok = rnl::exportProject(
       r, eo, out,
@@ -445,7 +447,7 @@ int selfTest(const Args& a) {
   const int quality = a.get("--quality") ? std::atoi(a.get("--quality")) : RNF_QUALITY_STANDARD;
   std::error_code ec;
   fs::create_directories(dir, ec);
-  const fs::path rom = dir / "selftest.nes", proj = dir / "selftest.nesrec";
+  const fs::path rom = dir / "selftest.nes", proj = dir / "selftest" RN_PRODUCT_PROJECT_EXT;
   fs::remove_all(proj, ec);
   std::printf("replaynes-export self-test in %s (%" PRIu64 " frames)\n", dir.u8string().c_str(), frames);
 #ifdef RNL_EXPORT_FFMPEG
@@ -705,7 +707,11 @@ int selfTest(const Args& a) {
   badCrop.settings.crop_top = 230;  // + 8 bottom > 224
   fs::remove(dir / "bad.mp4", ec);
   RunOut bad = runExport(s, badCrop, (dir / "bad.mp4").u8string(), false);
+#if RN_PRODUCT_OVERSCAN_CROP
   expectTrue(!bad.ok && !fs::exists(dir / "bad.mp4"), "invalid crop: rejected");
+#else
+  expectTrue(bad.ok && fs::exists(dir / "bad.mp4"), "product without overscan: explicit crop ignored");
+#endif
 
   // 7) ExportJob (worker thread, polled)
   {
@@ -790,10 +796,12 @@ int exportCmd(const Args& a) {
   if (o.ok) {
     // Estimated vs actual size (rnf_export_predict_size; reported only).
     rnf_export_geometry g{};
-    rnf_export_geometry_compute(&opt.settings, &g);
+    rn_media_info media{};
+    rn_session_media_info(s, &media);
+    rnf_export_geometry_compute_media(&opt.settings, &media, 0, 0, &g);
     std::error_code ec;
     const auto actual = fs::file_size(fs::u8path(out), ec);
-    const int64_t predicted = rnf_export_predict_size(&g, 0, opt.quality, o.res.frames, nullptr);
+    const int64_t predicted = rnf_export_predict_size_media(&g, 0, opt.quality, o.res.frames, &media, rnl::exportAudioSampleRate(s), nullptr);
     char b[128];
     std::snprintf(b, sizeof b, ",\"predicted_bytes\":%" PRId64 ",\"actual_bytes\":%" PRIu64 ",\"error_percent\":%.2f}", predicted,
                   uint64_t(actual), predicted > 0 ? (double(actual) - double(predicted)) * 100.0 / double(predicted) : 0.0);

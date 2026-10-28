@@ -5,10 +5,15 @@
 #include <cstring>
 #include <exception>
 #include <new>
+#include <limits>
 #include <string>
+#include <vector>
 
 #include "core/ICore.h"
+#include "replaynes/product.h"
+#if RN_PRODUCT_NES
 #include "core/NestopiaCore.h"
+#endif
 #include "input/InputPipeline.h"
 #include "persist/ProjectStore.h"
 #include "render/OfflineRenderer.h"
@@ -18,10 +23,6 @@
 #include "util/Fs.h"
 #include "util/Hash.h"
 #include "video/FlashFilter.h"
-
-#ifndef RN_ENGINE_VERSION
-#define RN_ENGINE_VERSION "0.0.0"
-#endif
 
 static_assert(int(RN_ERR_CORE_MISMATCH) == int(rn::Err::CoreMismatch), "status codes must match");
 static_assert(int(RN_ERR_END_OF_TAKE) == int(rn::Err::EndOfTake), "status codes must match");
@@ -42,6 +43,7 @@ struct rn_renderer {
 };
 struct rn_flash_filter {
   rn::FlashFilter f;
+  std::vector<uint32_t> packed;
 };
 
 namespace {
@@ -116,14 +118,22 @@ rn_core_kind rn_session_core_kind(const rn_session* s) {
   return s ? static_cast<rn_core_kind>(s->s->coreKind()) : static_cast<rn_core_kind>(-1);
 }
 
-const char* rn_version(void) { return RN_ENGINE_VERSION; }
+const char* rn_version(void) { return RN_PRODUCT_VERSION; }
 const char* rn_core_compat_id(void) {
+#if RN_PRODUCT_NES
   static const std::string id = rn::NestopiaCore::staticCompatId();
   return id.c_str();
+#else
+  return "";
+#endif
 }
 const char* rn_core_build_id(void) {
+#if RN_PRODUCT_NES
   static const std::string id = rn::NestopiaCore().buildId();
   return id.c_str();
+#else
+  return "";
+#endif
 }
 const char* rn_last_error(void) { return tlError.c_str(); }
 const char* rn_status_name(rn_status s) { return rn::errName(rn::Err(int(s))); }
@@ -164,7 +174,7 @@ void rn_session_options_init(rn_session_options* o) {
   if (!o) return;
   std::memset(o, 0, sizeof *o);
   o->struct_size = sizeof *o;
-  o->core = RN_CORE_NESTOPIA;
+  o->core = static_cast<rn_core_kind>(rn::defaultCoreKind());
   o->dense_interval = 30;
   o->dense_capacity = 1200;
   o->sparse_interval = 600;
@@ -252,11 +262,19 @@ rn_status rn_set_mode(rn_session* s, rn_mode mode) {
 }
 rn_mode rn_get_mode(const rn_session* s) { return s ? toCMode(s->s->mode()) : RN_MODE_RECORD; }
 
-rn_status rn_step(rn_session* s, uint8_t p1, uint8_t p2, uint8_t events, rn_step_info* info) {
-  return guard([&] {
-    if (!s) return invalid("null session");
+static rn::InputRecord fromC(const rn_input_record& c) {
+  rn::InputRecord r;
+  for (size_t i = 0; i < rn::kInputRecordBytes; ++i) r.setByte(i, c.bytes[i]);
+  return r;
+}
+static void toC(const rn::InputRecord& r, rn_input_record& c) {
+  for (size_t i = 0; i < rn::kInputRecordBytes; ++i) c.bytes[i] = r.byte(i);
+}
+static_assert(RN_INPUT_RECORD_BYTES == rn::kInputRecordBytes, "input record sizes must match");
+
+static rn_status stepWith(rn_session* s, const rn::InputRecord& in, rn_step_info* info) {
     rn::StepInfo si;
-    rn::Status st = s->s->step(p1, p2, events, &si);
+    rn::Status st = s->s->stepInput(in, &si);
     if (!st.ok()) return fail(st);
     if (info) {
       info->frame = si.frame;
@@ -267,15 +285,51 @@ rn_status rn_step(rn_session* s, uint8_t p1, uint8_t p2, uint8_t events, rn_step
       info->p2 = si.applied.p2;
       info->events = si.applied.events;
       info->take_id = si.take;
+      toC(si.applied, info->applied_record);
     }
     return RN_OK;
-  });
+}
+
+rn_status rn_step(rn_session* s, uint8_t p1, uint8_t p2, uint8_t events, rn_step_info* info) {
+  return guard([&] { return s ? stepWith(s, rn::InputRecord{p1, p2, events}, info) : invalid("null session"); });
+}
+rn_status rn_step_record(rn_session* s, const rn_input_record* in, rn_step_info* info) {
+  return guard([&] { return s && in ? stepWith(s, fromC(*in), info) : invalid("null argument"); });
+}
+char* rn_session_input_layout_json(const rn_session* s) {
+  if (!s) return nullptr;
+  try {
+    return dupString(s->s->inputLayout().toJson(true));
+  } catch (...) {
+    return nullptr;
+  }
 }
 
 const uint32_t* rn_video(const rn_session* s) { return s ? s->s->video() : nullptr; }
 rn_status rn_video_indices(const rn_session* s, rn_video_indices_info* out) {
   return guard([&] { return videoIndices(s ? s->s.get() : nullptr, out); });
 }
+static void mediaToC(const rn::MediaInfo& m, rn_media_info* out) {
+  *out = rn_media_info{m.maxWidth, m.maxHeight, m.fpsNum, m.fpsDen, m.audioChannels,
+                       m.pixelAspectNum, m.pixelAspectDen, m.rotation};
+}
+static rn_status frameToC(const rn::VideoFrame& v, rn_video_frame_info* out) {
+  if (!v.pixels) return fail(rn::Error(rn::Err::NotFound, "no picture yet"));
+  *out = rn_video_frame_info{v.pixels, v.width, v.height, v.stride};
+  return RN_OK;
+}
+rn_status rn_session_media_info(const rn_session* s, rn_media_info* out) {
+  return guard([&] {
+    if (!s || !out) return invalid("null argument");
+    mediaToC(s->s->mediaInfo(), out);
+    return RN_OK;
+  });
+}
+rn_status rn_session_video_frame(const rn_session* s, rn_video_frame_info* out) {
+  return guard([&] { return s && out ? frameToC(s->s->videoFrame(), out) : invalid("null argument"); });
+}
+uint64_t rn_session_samples_before(const rn_session* s, uint64_t frame) { return s ? s->s->samplesBefore(frame) : 0; }
+
 const int16_t* rn_audio(const rn_session* s, size_t* count) {
   size_t n = 0;
   const int16_t* a = s ? s->s->audio(&n) : nullptr;
@@ -289,6 +343,9 @@ rn_status rn_seek(rn_session* s, uint64_t frame) {
 }
 rn_status rn_rewind(rn_session* s, uint64_t n) {
   return guard([&] { return s ? ret(s->s->rewind(n)) : invalid("null session"); });
+}
+rn_status rn_session_idle_work(rn_session* s, uint32_t budget_frames) {
+  return guard([&] { return s ? ret(s->s->idleWork(budget_frames)) : invalid("null session"); });
 }
 uint64_t rn_state_hash(rn_session* s) { return s ? s->s->stateHash() : 0; }
 uint64_t rn_video_hash(const rn_session* s) { return s ? s->s->videoHash() : 0; }
@@ -440,6 +497,32 @@ char* rn_input_save_json(const rn_input* in) {
 rn_status rn_input_set_turbo(rn_input* in, uint32_t period, uint32_t duty) {
   return guard([&] { return in ? ret(in->p.setTurbo(period, duty)) : invalid("null input"); });
 }
+rn_status rn_input_set_layout_json(rn_input* in, const char* json) {
+  return guard([&] {
+    if (!in) return invalid("null input");
+    rn::InputLayout layout = rn::InputLayout::nes();
+    if (json) {
+      rn::Status st = rn::InputLayout::fromJson(json, layout);
+      if (!st.ok()) return fail(st);
+    }
+    return ret(in->p.setLayout(layout));
+  });
+}
+rn_status rn_input_set_button_turbo(rn_input* in, const char* button, uint32_t period, uint32_t duty) {
+  return guard([&] { return in && button ? ret(in->p.setButtonTurbo(button, period, duty)) : invalid("null argument"); });
+}
+void rn_input_set_axis_value(rn_input* in, const char* source, float value) {
+  if (!in || !source) return;
+  try { in->p.setAxisValue(source, value); } catch (...) {}
+}
+void rn_input_sample_record(rn_input* in, uint64_t frame, rn_input_record* out) {
+  if (!out) return;
+  rn::InputRecord r;
+  if (in) {
+    try { in->p.sampleRecord(frame, r); } catch (...) {}
+  }
+  toC(r, *out);
+}
 rn_status rn_input_set_socd(rn_input* in, rn_socd policy) {
   if (!in) return invalid("null input");
   if (policy != RN_SOCD_NEUTRAL && policy != RN_SOCD_LAST_WINS && policy != RN_SOCD_ALLOW) return invalid("bad policy");
@@ -506,22 +589,43 @@ rn_status rn_renderer_video_indices(const rn_renderer* r, rn_video_indices_info*
   return guard([&] { return videoIndices(r ? r->r.get() : nullptr, out); });
 }
 uint64_t rn_renderer_hash(const rn_renderer* r) { return r ? r->r->hash() : 0; }
+rn_status rn_renderer_media_info(const rn_renderer* r, rn_media_info* out) {
+  return guard([&] {
+    if (!r || !out) return invalid("null argument");
+    mediaToC(r->r->mediaInfo(), out);
+    return RN_OK;
+  });
+}
+rn_status rn_renderer_video_frame(const rn_renderer* r, rn_video_frame_info* out) {
+  return guard([&] { return r && out ? frameToC(r->r->videoFrame(), out) : invalid("null argument"); });
+}
 void rn_renderer_free(rn_renderer* r) { delete r; }
 
 // ------------------------------------------------------------------ flash reduction
 static bool validFlashLevel(rn_flash_level l) { return int(l) >= RN_FLASH_OFF && int(l) <= RN_FLASH_HIGH; }
 
 rn_flash_filter* rn_flash_filter_new(rn_flash_level level) {
-  if (!validFlashLevel(level)) {
-    invalid("invalid flash reduction level");
+  return rn_flash_filter_new_sized(level, 256, 240);
+}
+rn_flash_filter* rn_flash_filter_new_sized(rn_flash_level level, uint32_t width, uint32_t height) {
+  if (!validFlashLevel(level) || !rn::FlashFilter::validSize(width, height)) {
+    invalid("invalid flash reduction level or picture size");
     return nullptr;
   }
   try {
-    return new rn_flash_filter{rn::FlashFilter(rn::FlashLevel(int(level)))};
+    return new rn_flash_filter{rn::FlashFilter(rn::FlashLevel(int(level)), width, height), {}};
   } catch (...) {
     fail(rn::Error(rn::Err::Internal, "out of memory"));
     return nullptr;
   }
+}
+rn_status rn_flash_filter_set_size(rn_flash_filter* f, uint32_t width, uint32_t height) {
+  return guard([&] {
+    if (!f || !rn::FlashFilter::validSize(width, height)) return invalid("invalid filter or picture size");
+    f->f.setSize(width, height);
+    f->packed.clear();
+    return RN_OK;
+  });
 }
 void rn_flash_filter_free(rn_flash_filter* f) { delete f; }
 void rn_flash_filter_reset(rn_flash_filter* f) {
@@ -546,7 +650,29 @@ static void fillFlashInfo(const rn::FlashFrameInfo& r, rn_flash_info* info) {
 rn_status rn_flash_filter_process(rn_flash_filter* f, const uint32_t* in, uint32_t* out, rn_flash_info* info) {
   return guard([&] {
     if (!f || !in || !out) return invalid("null argument");
+    if (f->f.width() != 256 || f->f.height() != 240) return invalid("legacy flash API requires 256x240");
     fillFlashInfo(f->f.process(in, out), info);
+    return RN_OK;
+  });
+}
+rn_status rn_flash_filter_process_frame(rn_flash_filter* f, const rn_video_frame_info* in,
+                                       uint32_t* out, rn_flash_info* info) {
+  return guard([&] {
+    if (!f || !in || !in->pixels || !out) return invalid("null argument");
+    if (in->width != f->f.width() || in->height != f->f.height() || in->stride < in->width)
+      return invalid("invalid flash frame dimensions or stride");
+    const uint64_t span = uint64_t(in->height - 1) * in->stride + in->width;
+    if (span > uint64_t(std::numeric_limits<std::ptrdiff_t>::max()) / sizeof(uint32_t))
+      return invalid("flash frame stride overflows address range");
+    const uint32_t* pixels = in->pixels;
+    if (in->stride != in->width) {
+      f->packed.resize(size_t(in->width) * in->height);
+      for (uint32_t y = 0; y < in->height; ++y)
+        std::memcpy(f->packed.data() + size_t(y) * in->width,
+                    in->pixels + size_t(y) * in->stride, size_t(in->width) * sizeof(uint32_t));
+      pixels = f->packed.data();
+    }
+    fillFlashInfo(f->f.process(pixels, out), info);
     return RN_OK;
   });
 }
@@ -554,6 +680,7 @@ rn_status rn_flash_filter_process_codes(rn_flash_filter* f, const uint32_t* in, 
                                         uint16_t* codes_out, rn_flash_info* info, int* codes_ok) {
   return guard([&] {
     if (!f || !in || !out || !codes_in || !codes_out) return invalid("null argument");
+    if (f->f.width() != 256 || f->f.height() != 240) return invalid("flash codes API requires 256x240");
     rn::FlashFrameInfo r = f->f.process(in, out, codes_in, codes_out);
     fillFlashInfo(r, info);
     if (codes_ok) *codes_ok = r.codesOk ? 1 : 0;

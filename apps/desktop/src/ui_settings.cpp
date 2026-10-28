@@ -37,6 +37,20 @@ std::string str(char* p) {
 }
 const char* txt(const char* key) { return !key || !*key ? "" : key[0] == '=' ? key + 1 : TR(key); }
 
+bool buttonTurboRow(const std::string& id, std::string& action, std::string& field) {
+  const std::string prefix = "controls.button_turbo.";
+  if (id.compare(0, prefix.size(), prefix) != 0) return false;
+  const size_t dot = id.find('.', prefix.size());
+  if (dot == std::string::npos) return false;
+  char* end = nullptr;
+  const std::string index = id.substr(prefix.size(), dot - prefix.size());
+  const unsigned long n = std::strtoul(index.c_str(), &end, 10);
+  if (index.empty() || *end || n >= rnf_input_button_count()) return false;
+  action = rnf_input_button_id(n);
+  field = id.substr(dot + 1);
+  return true;
+}
+
 const int kCrtLines[] = {110, 120, 140, 160, 180, 200, 220, 240};
 const double kAutosave[] = {2, 3, 5, 10, 30};
 
@@ -63,8 +77,13 @@ int choiceIndex(const Settings& s, const InputRouter& in, const std::string& id)
   if (id == "controls.osk") return s.onScreenKeyboard == "builtin" ? 1 : s.onScreenKeyboard == "steam" ? 2 : 0;
   if (id == "controls.socd") return in.socd() == "last_wins" ? 1 : in.socd() == "allow" ? 2 : 0;
   if (id == "controls.confirm") return s.southConfirm ? 1 : 0;
-  if (id == "system.core") return s.core == "replaynescore" ? 1 : 0;
+  if (id == "system.core") {
+    for (size_t i = 0; i < rnf_product_core_count(); ++i)
+      if (s.core == rnf_product_core_id(i)) return int(i);
+    return 0;
+  }
   if (id == "system.language") return s.language == "ja" ? 1 : s.language == "en" ? 2 : 0;
+  if (id == "system.resume_countdown") return s.countdownSeconds >= 3 ? 0 : s.countdownSeconds >= 1 ? 1 : 2;  // 3 / 1 / none
   if (id == "system.autosave") {
     for (int i = 0; i < 5; ++i)
       if (s.autosaveInterval <= kAutosave[i] + 0.01) return i;
@@ -77,10 +96,23 @@ int choiceIndex(const Settings& s, const InputRouter& in, const std::string& id)
 std::string UI::itemValue(const std::string& id) const {
   const Settings& s = *d_.settings;
   const InputRouter& in = *d_.input;
-  if (id == "system.core" && s.core != "nestopia" && s.core != "replaynescore") return s.core;
+  std::string action, field;
+  if (buttonTurboRow(id, action, field)) {
+    int period, duty;
+    const bool custom = in.buttonTurbo(action, period, duty);
+    if (field == "mode") return custom ? TR("Custom") : TR("Global");
+    if (field == "duty") return TRF("%lld frames", {duty});
+    return TRF("%.1f/s", {1.0 / d_.emu->framePeriod() / std::max(1, period)});
+  }
+  if (id == "system.core") {
+    bool available = false;
+    for (size_t i = 0; i < rnf_product_core_count(); ++i)
+      if (s.core == rnf_product_core_id(i)) available = true;
+    if (!available) return s.core;
+  }
   if (id == "system.core_status") {
-    if (s.core != "nestopia" && s.core != "replaynescore") return TR("Unknown core; select a supported core");
-    rn_core_kind core = s.core == "replaynescore" ? RN_CORE_REPLAYNESCORE : RN_CORE_NESTOPIA;
+    if (s.core != "nestopia" && s.core != "replaynescore" && s.core != "external") return TR("Unknown core; select a supported core");
+    rn_core_kind core = s.core == "external" ? RN_CORE_EXTERNAL : s.core == "replaynescore" ? RN_CORE_REPLAYNESCORE : RN_CORE_NESTOPIA;
     if (!rn_core_available(core)) return TR("Not included in this build");
     return core == RN_CORE_REPLAYNESCORE ? TR("Development: no recording or saves") : TR("Available");
   }
@@ -97,7 +129,9 @@ std::string UI::itemValue(const std::string& id) const {
     return b;
   }
   if (id == "controls.turbo") {
-    std::snprintf(b, sizeof b, "%.1f/s", 60.0988 / std::max(1, in.turboPeriod()));
+    if (std::strcmp(rnf_input_layout_name(), "nes") != 0)
+      return TRF("%.1f/s", {1.0 / d_.emu->framePeriod() / std::max(1, in.turboPeriod())});
+    std::snprintf(b, sizeof b, "%.1f/s", 1.0 / d_.emu->framePeriod() / std::max(1, in.turboPeriod()));
     return b;
   }
   if (id == "controls.turbo_duty") return TRF("%lld frames", {in.turboDuty()});
@@ -129,18 +163,19 @@ std::string UI::itemValue(const std::string& id) const {
 
 bool UI::itemOn(const std::string& id) const {
   const Settings& s = *d_.settings;
-  if (id == "display.crt") return s.crt && d_.renderer->postProcessStatus().crtAvailable;
+  if (id == "display.crt") return s.crt && d_.renderer->postProcessStatus().crtAvailable && (!hasSession() || d_.emu->crtAvailable());
   if (id == "display.par87") return s.par87;
-  if (id == "display.overscan") return s.hideOverscan;
+  if (id == "display.overscan") return RN_PRODUCT_OVERSCAN_CROP && s.hideOverscan;
   if (id == "display.vtr") return s.vtrEffect;
   if (id == "crt.beam") return s.crtBeamGrowth;
   if (id == "crt.persistence") return s.crtPersistence;
   if (id == "crt.supply") return s.crtSupply;
   if (id == "controls.dpad_paused") return s.dpadStepWhenPaused;
+  if (id == "controls.mouse") return s.mouseControls;
   if (id == "controls.rewind_pause") return s.pauseAfterRewind;
   if (id == "system.fullscreen") return isFullscreen && isFullscreen();
   if (id == "system.flash_badge") return s.showFlashIndicator;
-  if (id == "system.resume_countdown") return s.resumeCountdown;
+  if (id == "system.background") return s.playInBackground;
   if (id == "system.stats") return s.showStats;
   if (id == "updates.auto") return d_.updates && d_.updates->ownsDialogs() ? d_.updates->autoCheckEnabled() : s.checkForUpdates;
   if (id == "retry.playback") return hasSession() && !d_.emu->status().recording && !d_.emu->status().practicing;
@@ -150,6 +185,13 @@ bool UI::itemOn(const std::string& id) const {
 float UI::itemFraction(const std::string& id) const {
   const Settings& s = *d_.settings;
   const InputRouter& in = *d_.input;
+  std::string action, field;
+  if (buttonTurboRow(id, action, field)) {
+    int period, duty;
+    in.buttonTurbo(action, period, duty);
+    if (field == "period") return float(30 - std::clamp(period, 2, 30)) / 28.0f;
+    if (field == "duty") return period > 2 ? float(duty - 1) / float(period - 2) : 0.0f;
+  }
   if (id == "crt.lines") return float(std::clamp(s.crtLines, 110, 240) - 110) / 130.0f;
   if (id == "crt.antenna") return float((s.crtAntenna - 20) / 70);
   if (id == "controls.turbo") return float(30 - std::clamp(in.turboPeriod(), 2, 30)) / 28.0f;
@@ -164,7 +206,7 @@ bool UI::itemEnabled(const std::string& id) const {
   const EmuStatus& st = d_.emu->status();
   if (st.live && (id.rfind("retry.", 0) == 0 || id == "retry" || id == "practice" ||
                   id == "share.export" || id == "game.save" || id == "game.save_as" || id == "game.reset")) return false;
-  bool crt = d_.renderer->postProcessStatus().crtAvailable;
+  bool crt = d_.renderer->postProcessStatus().crtAvailable && (!hasSession() || d_.emu->crtAvailable());
   if (id == "retry.playback") return !st.practicing && st.takeLength > 0;
   if (id == "retry.rerecord" || id == "retry.bookmarks" || id == "retry.restart") return hasSession();
   if (id == "share.export") return RNL_HAVE_MP4_EXPORT && st.takeLength > 0;
@@ -186,6 +228,20 @@ void UI::adjustItem(const std::string& id, int dir) {
   if (!itemEnabled(id)) return;
   Settings& s = *d_.settings;
   InputRouter& in = *d_.input;
+  std::string action, field;
+  if (buttonTurboRow(id, action, field)) {
+    int period, duty;
+    const bool custom = in.buttonTurbo(action, period, duty);
+    if (field == "mode") in.setButtonTurbo(action, custom ? 0 : period, custom ? 0 : duty);
+    else if (dir != 0) {
+      if (field == "period") {
+        period = std::clamp(period - dir, 2, 30);
+        duty = std::min(duty, period - 1);
+      } else if (field == "duty") duty = std::clamp(duty + dir, 1, std::max(1, period - 1));
+      in.setButtonTurbo(action, period, duty);
+    }
+    return;
+  }
   rnf_menu_item_info info{};
   size_t page = 0, index = 0;
   if (!findItem(menu_, id, &page, &index, &info)) return;
@@ -193,18 +249,19 @@ void UI::adjustItem(const std::string& id, int dir) {
   if (info.kind == RNF_MENU_ITEM_TOGGLE) {
     if (id == "display.crt") s.crt = !s.crt;
     else if (id == "display.par87") s.par87 = !s.par87;
-    else if (id == "display.overscan") s.hideOverscan = !s.hideOverscan;
+    else if (id == "display.overscan") s.hideOverscan = RN_PRODUCT_OVERSCAN_CROP && !s.hideOverscan;
     else if (id == "display.vtr") s.vtrEffect = !s.vtrEffect;
     else if (id == "crt.beam") s.crtBeamGrowth = !s.crtBeamGrowth;
     else if (id == "crt.persistence") s.crtPersistence = !s.crtPersistence;
     else if (id == "crt.supply") s.crtSupply = !s.crtSupply;
     else if (id == "controls.dpad_paused") s.dpadStepWhenPaused = !s.dpadStepWhenPaused;
+    else if (id == "controls.mouse") s.mouseControls = !s.mouseControls;
     else if (id == "controls.rewind_pause") s.pauseAfterRewind = !s.pauseAfterRewind;
     else if (id == "system.fullscreen") {
       if (onFullscreen) onFullscreen(!(isFullscreen && isFullscreen()));
       return;
     } else if (id == "system.flash_badge") s.showFlashIndicator = !s.showFlashIndicator;
-    else if (id == "system.resume_countdown") s.resumeCountdown = !s.resumeCountdown;
+    else if (id == "system.background") s.playInBackground = !s.playInBackground;
     else if (id == "system.stats") s.showStats = !s.showStats;
     else if (id == "updates.auto") {
       if (d_.updates && d_.updates->ownsDialogs()) {
@@ -230,13 +287,14 @@ void UI::adjustItem(const std::string& id, int dir) {
       in.setSOCD(next == 1 ? "last_wins" : next == 2 ? "allow" : "neutral");
       return;
     } else if (id == "system.core") {
-      s.core = next == 1 ? "replaynescore" : "nestopia";
+      if (const char* core = rnf_product_core_id(size_t(next))) s.core = core;
     } else if (id == "system.language") {
       s.language = next == 1 ? "ja" : next == 2 ? "en" : "auto";
       changed();
       if (onLanguage) onLanguage(s.language);
       return;
     } else if (id == "system.autosave") s.autosaveInterval = kAutosave[next];
+    else if (id == "system.resume_countdown") s.countdownSeconds = next == 0 ? 3 : next == 1 ? 1 : 0;
     changed();
     return;
   }
@@ -289,7 +347,8 @@ void UI::activateItem(const std::string& id) {
   } else if (id == "controls.reset") {
     Dialog d;
     d.title = TR("Reset Controls");
-    d.message = TR("Every key and button back to the defaults");
+    d.message = d_.input->usesDeviceKinds() ? TR("Reset only this title and controller kind to defaults")
+                                          : TR("Every key and button back to the defaults");
     d.buttons = {TR("Reset"), TR("Cancel")};
     d.destructiveIndex = 0;
     d.cancelIndex = 1;
@@ -404,12 +463,14 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
   ImVec2 o(area.x + (area.w - cw) / 2, area.y + (area.h - legendH - ch) / 2);
   auto P = [&](double x, double y) { return ImVec2(o.x + float(x) * k, o.y + float(y) * k); };
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  const auto geometry = rnf_diagram_family_for_layout(family, in.usesDeviceKinds(), in.deviceKind(slot) == DeviceKind::stick);
+  const bool arcadeStick = geometry == RNF_FAMILY_ARCADE_STICK;
   rnf_diagram_info info{};
-  rnf_diagram_info_get(family, &info);
+  rnf_diagram_info_get(geometry, &info);
   // The outline (rnf_diagram_decor): a rounded body without grips, the Steam Deck's screen, pads.
-  for (size_t i = 0, nd = rnf_diagram_decor_count(family); i < nd; ++i) {
+  for (size_t i = 0, nd = rnf_diagram_decor_count(geometry); i < nd; ++i) {
     rnf_diagram_decor d{};
-    if (!rnf_diagram_decor_get(family, i, &d)) continue;
+    if (!rnf_diagram_decor_get(geometry, i, &d)) continue;
     ImVec2 a = P(d.x, d.y), z = P(d.x + d.width, d.y + d.height);
     float r = float(d.radius) * k;
     switch (d.kind) {
@@ -427,43 +488,67 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
         break;
     }
   }
-  for (auto [x, y] : {std::pair<double, double>{info.left_stick_x, info.left_stick_y}, {info.right_stick_x, info.right_stick_y}}) {
-    dl->AddCircleFilled(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 36));
-    dl->AddCircle(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 110));
+  if (arcadeStick) {
+    dl->AddCircleFilled(P(info.dpad_x, info.dpad_y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 36));
+    dl->AddCircle(P(info.dpad_x, info.dpad_y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 110));
+  } else {
+    for (auto [x, y] : {std::pair<double, double>{info.left_stick_x, info.left_stick_y}, {info.right_stick_x, info.right_stick_y}}) {
+      dl->AddCircleFilled(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 36));
+      dl->AddCircle(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 110));
+    }
+    dl->AddRectFilled(P(info.dpad_x - RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y - RNF_DIAGRAM_DPAD_ARM / 2),
+                      P(info.dpad_x + RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y + RNF_DIAGRAM_DPAD_ARM / 2), IM_COL32(255, 255, 255, 80));
   }
-  dl->AddRectFilled(P(info.dpad_x - RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y - RNF_DIAGRAM_DPAD_ARM / 2),
-                    P(info.dpad_x + RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y + RNF_DIAGRAM_DPAD_ARM / 2), IM_COL32(255, 255, 255, 80));
   std::map<std::string, std::pair<rnf_group_summary, std::string>> groups;
   for (const char* g : {"dpad", "lstick", "rstick"}) {
+    if (arcadeStick && std::strcmp(g, "dpad") != 0) continue;
     char* text = nullptr;
     rnf_group_summary gs = rnf_input_group_summary(b.data(), b.size(), g, slot, &text);
     groups[g] = {gs, str(text)};
   }
   std::string prefix = "gc" + std::to_string(slot) + ":";
-  size_t n = rnf_diagram_element_count(family);
+  size_t n = rnf_diagram_element_count(geometry);
   float fs = std::max(m.hint() * 0.85f, 12 * k);
+  const bool kindFocused = in.usesDeviceKinds() && diagramFocus_ >= 0 &&
+      size_t(diagramFocus_) < diagramIds_.size() && diagramIds_[size_t(diagramFocus_)] == "__kind__";
   diagramIds_.clear();
   diagramCenters_.clear();
-  if (diagramFocus_ >= int(n)) diagramFocus_ = 0;
+  diagramHubs_.clear();
+  std::vector<std::string> diagramGroups;  // each focusable element's group ("lstick" ...), for the hubs
+  size_t focusable = n;
+  for (size_t i = 0; i < n; ++i) {
+    rnf_diagram_element e{};
+    if (rnf_diagram_element_get(geometry, i, &e) && rnf_input_element_ignored(e.element)) --focusable;
+  }
+  if (kindFocused) diagramFocus_ = int(focusable);
+  if (diagramFocus_ >= int(focusable) + (in.usesDeviceKinds() ? 1 : 0)) diagramFocus_ = 0;
   LRect focusRect;
   for (size_t i = 0; i < n; ++i) {
     rnf_diagram_element e{};
-    if (!rnf_diagram_element_get(family, i, &e)) continue;
+    if (!rnf_diagram_element_get(geometry, i, &e)) continue;
     std::string el = e.element, id = prefix + el;
     ImVec2 c = P(e.cx, e.cy);
     float w = float(e.width) * k, h = float(e.height) * k;
     ImVec2 a(c.x - w / 2, c.y - h / 2), z(c.x + w / 2, c.y + h / 2);
     float hw = std::max(w, S(30)), hh = std::max(h, S(30));
-    ImGui::SetCursorScreenPos(ImVec2(c.x - hw / 2, c.y - hh / 2));
-    ImGui::PushID(el.c_str());
-    bool clicked = ImGui::InvisibleButton("##el", ImVec2(hw, hh));
-    bool hovered = ImGui::IsItemHovered();
-    ImGui::PopID();
+    const bool bindable = !rnf_input_element_ignored(el.c_str());
+    bool clicked = false, hovered = false;
+    if (bindable) {
+      ImGui::SetCursorScreenPos(ImVec2(c.x - hw / 2, c.y - hh / 2));
+      ImGui::PushID(el.c_str());
+      clicked = ImGui::InvisibleButton("##el", ImVec2(hw, hh));
+      hovered = ImGui::IsItemHovered();
+      ImGui::PopID();
+    }
     int index = int(diagramIds_.size());
-    diagramIds_.push_back(id);
-    diagramCenters_.push_back(c);
+    if (bindable) {
+      diagramIds_.push_back(id);
+      diagramCenters_.push_back(c);
+      diagramGroups.push_back(e.kind == RNF_DIAGRAM_STICK_CLICK ? (el == "leftThumb" ? "lstick" : "rstick")
+                              : e.kind == RNF_DIAGRAM_STICK_DIRECTION && e.group ? e.group : "");
+    }
     if (hovered && (ImGui::GetIO().MouseDelta.x != 0 || ImGui::GetIO().MouseDelta.y != 0)) diagramFocus_ = index;
-    bool focused = index == diagramFocus_;
+    bool focused = bindable && index == diagramFocus_;
     bool reserved = InputRouter::isReserved(el);
     if (clicked) {
       diagramFocus_ = index;
@@ -546,6 +631,14 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
     dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + S(10), bp.y + ts.y + S(3)), IM_COL32(40, 110, 230, 230), (ts.y + S(3)) / 2);
     dl->AddText(ImGui::GetFont(), fs, ImVec2(bp.x + S(5), bp.y + S(1.5f)), IM_COL32(255, 255, 255, 255), v.second.c_str());
   }
+  // A stick's arrows and its click: the click is their hub (diagramFocusNext).
+  diagramHubs_.assign(diagramIds_.size(), -1);
+  for (size_t i = 0; i < diagramIds_.size(); ++i) {
+    const std::string click = diagramGroups[i] == "lstick" ? "leftThumb" : diagramGroups[i] == "rstick" ? "rightThumb" : "";
+    if (click.empty()) continue;
+    for (size_t j = 0; j < diagramIds_.size(); ++j)
+      if (diagramIds_[j] == prefix + click) diagramHubs_[i] = int(j);
+  }
   if (focusRect.w > 0) drawFocus(focusRect, focusRect.h / 2, now);
   // Legend: game / hotkeys, and the Quick Menu chord (not a single button on the picture).
   float y = area.bottom() - legendH + m.hint() * 0.6f, x = area.x + S(6);
@@ -557,7 +650,21 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
   };
   chip(IM_COL32(40, 110, 230, 230), TR("Game input (recorded)"));
   chip(IM_COL32(255, 149, 0, 235), TR("Hotkeys (not recorded)"));
-  std::string menuHint = menuChordGlyph(family, true) + ": " + TR("Quick Menu");
+  const std::string chord = in.usesDeviceKinds() && in.deviceKind(slot) == DeviceKind::stick
+      ? padGlyph(family, "leftShoulder") + "+" + padGlyph(family, "leftTrigger") : menuChordGlyph(family, true);
+  std::string menuHint = chord + ": " + TR("Quick Menu");
+  // The Undo of a retry's chord (L3+R3 by default): not on the picture either.
+  for (const rnf_binding& bd : b) {
+    char *ca = nullptr, *cb = nullptr;
+    if (std::strcmp(bd.action, "hk.undo_take") != 0 || !rnf_input_combo_split(bd.input, &ca, &cb)) continue;
+    const std::string sa = ca, sb = cb;
+    rnf_string_free(ca);
+    rnf_string_free(cb);
+    if (sa.rfind(prefix, 0) != 0 || sb.rfind(prefix, 0) != 0) continue;
+    menuHint += "    " + padGlyph(family, sa.substr(prefix.size()).c_str()) + "+" + padGlyph(family, sb.substr(prefix.size()).c_str()) +
+                ": " + TR("Undo");
+    break;
+  }
   dl->AddText(ImGui::GetFont(), m.hint(), ImVec2(x, y), kTextDim, menuHint.c_str());
   description_ = diagramFocus_ < int(diagramIds_.size())
                      ? str(rnf_input_element_title(diagramIds_[size_t(diagramFocus_)].substr(prefix.size()).c_str(), family, nullptr))

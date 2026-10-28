@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include "render/crt_display_policy.h"
 
 #include <algorithm>
@@ -51,14 +52,14 @@ void CrtDisplayPolicy::store(const uint32_t* pixels, const FrameSignal* signal) 
 
 CrtInput CrtDisplayPolicy::input(double antennaDbuv) const {
   CrtInput in;
-  if (crtReceptionAt(signal_.receptionStep, signal_.receptionCounter, signal_.flashReduced, antennaDbuv, &reception_)) {
+  if (crtReceptionAt(signal_.receptionStep, signal_.receptionCounter, RN_PRODUCT_FLASH_FILTER && signal_.flashReduced, antennaDbuv, &reception_)) {
     in.reception = &reception_;
     if (reception_.noSignal) {  // no carrier: the picture does not matter (snow)
       in.kind = CrtInputKind::noSignal;
       return in;
     }
   }
-  if (hasCodes_ && !signal_.flashAltered) {
+  if (hasCodes_ && !(RN_PRODUCT_FLASH_FILTER && signal_.flashAltered)) {
     in.kind = CrtInputKind::codes;
     in.codes = codes_.data();
     in.burstPhase = signal_.burstPhase;
@@ -88,7 +89,7 @@ void CrtDisplayPolicy::update(const std::vector<double>& gpuTimes, double budget
     p50_ = s[s.size() / 2];
     p90_ = s[size_t(std::round(double(s.size() - 1) * 0.9))];
   }
-  static const bool forceAhead = std::getenv("REPLAYNES_CRT_BUILD_AHEAD") != nullptr;  // verification
+  static const bool forceAhead = std::getenv(productEnvName("CRT_BUILD_AHEAD").c_str()) != nullptr;  // verification
   if (forceAhead) {
     pipelined_ = true;
   } else if (allowBuildAhead && budget > 0) {

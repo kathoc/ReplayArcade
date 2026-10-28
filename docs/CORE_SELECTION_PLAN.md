@@ -333,13 +333,140 @@ offscreen UIを新core有効/無効の両buildで実行しPASS、設定画面・
   ReplayNESはcoreの試験をbuildしないので統合には影響しない。Codex側で対応。
 - コミット: 独立コアの上記修正は作業ツリーからCodexが`94a9b62`として取り込み済み（内容同一）。
   ReplayNES側は`ccb48ac`（未追跡だったpalette header）と`db5bdd9`（`FlashFilter.h`の`<cstddef>`）。
+
+## 2026-10-23 ReplayNESCore 0.5.0 / DMC sample DMA
+
+ReplayNESCore commit `602f8df`でDMC sample DMA、CPU read停止、OAM DMA競合仲裁、DMC IRQ/status、MACH schema 5を完成した。adapterは既存のDMA/APU有効化を維持し、`$4015` D4で17-byte sampleを開始する合成ROMについて、別instanceへのstate復元後3 frameのmachine hashとPCM列が一致する試験を追加した。
+
+再現結果とmachine stateが変わるためcompat IDを`replaynescore/nrom-live/dmc-dma-v11`、build IDを`replaynescore-0.5.0+adapter-v11`へ更新した。adapter envelope自体は変わらないためstate format versionは1を維持する。Release統合build後、`test_core_selection`と`test_replaynescore_adapter`の2/2が成功した。ReplayNES反映commitは`ecd76b0`。
+
+## 2026-10-23 ReplayNESCore 0.6.0 / soft reset
+
+ReplayNESCore 0.6.0（機能commit `cc9edd2`、版上げcommit `2c13a17`）は実行中RESET線、7-read列後の保持、OAM/DMC DMA取消、APU reset、MACH schema 6を実装した。adapterの`softReset()`はRESETをassertして7 CPU slot進め、release後にhost tick、音声slot、RAM観測をmachine stateへ同期する。frame番号、RAM、映像は保持し、古い音声bufferは破棄する。
+
+machine stateと再現条件が変わるためcompat IDを`replaynescore/nrom-live/reset-v12`、build IDを`replaynescore-0.6.0+adapter-v12`へ更新した。adapter envelopeはschema 1を維持する。4081-byte DMC sample DMA中の別instance復元後、両instanceをsoft resetし、machine hashと以後3 frameのPCM一致を確認した。Debug統合buildで`test_core_selection`と`test_replaynescore_adapter`の2/2が成功した。
   後者はclean checkoutで判明: GCC 11.4では既定buildでも`FlashFilter.cpp`が`size_t`未宣言で失敗していた。
 - clean checkout検証: ReplayNES `ccb48ac`＋`FlashFilter.h`修正と独立コア`c0e6cfa`を別の場所へ取り出し、
   新core有効Release（警告error ON）build成功・33/33。
 
+## 2026-10-24 ReplayNESCore 0.7.0 / PPU C3
+
+ReplayNESCore 0.7.0（版上げcommit `1df5782`）は描画中`$2000/$2003/$2004/$2005/$2006/$2007`、
+scroll copy競合、非0 OAMADDR、OAM corruption、render fetchとのPPUDATA共有をownerへ統合した。
+portable port stateはPPC3、machine stateはMACH schema 6.2。adapter envelopeはschema 1を維持する。
+
+再現結果とmachine stateが変わるためcompat IDを`replaynescore/nrom-live/ppu-c3-v13`、build IDを
+`replaynescore-0.7.0+adapter-v13`へ更新した。Debug統合buildで`test_core_selection`と
+`test_replaynescore_adapter`の2/2が成功した（162.88秒）。
+
+## 2026-10-24 ReplayNESCore 0.8.0 / power・reset・state C4
+
+ReplayNESCore 0.8.0（版上げcommit `6819dea`）はpower-on/RESET時のPPU write inhibit、
+MACH schema 6.3、RESET途中state行列、複数所有NROMのsnapshot fork gateを追加した。
+adapterはhardware profileを選び、hard powerで残存していたframe番号を0へ戻す。soft resetは
+RAM/video/frameを保持する。
+
+machine stateとhard power後の再現結果が変わるためcompat IDを
+`replaynescore/nrom-live/power-c4-v14`、build IDを`replaynescore-0.8.0+adapter-v14`へ更新した。
+adapter envelopeはschema 1を維持する。hard power後のfresh instanceとのstate/PCM一致、
+soft resetの保持差、既存描画fixtureとの画素差分0を確認した。
+
+## 2026-10-24 ReplayNESCore 0.9.0 / accuracy C5
+
+ReplayNESCore 0.9.0（版上げcommit `7a51a94`）へ同期した。C5はMASK OFF後の発行済み
+PPU read完了、STATUS/NMIの有限11位相、pre-renderを跨ぐ遅延PPUDATA、APUのQ/H-MMIO・
+DMC/OAM競合と整数mixer oracleを閉じ、所有ROM 3本の有限実行とsnapshot forkを通した。
+
+host audioはframe-local平均をNTSC CPU clock `39375000/22 Hz`から48 kHzへの連続整数面積
+resamplerへ変更した。phase、area、入力値、出力cursor、DC blocker履歴、pending PCMをadapter
+stateへ保存し、frameごとの798/799 sample列を`audioSamplesForFrame()`と一致させる。DC blockerは
+実機analog modelとはせず、従来係数を固定したprofile 1として保持する。
+
+compat IDを`replaynescore/nrom-live/accuracy-c5-v15`、build IDを
+`replaynescore-0.9.0+adapter-v15`、公開state formatとadapter内部payload schemaを2へ更新した。
+連続resamplerの状態追加によりv14/schema 1のaudio payloadとは非互換で、旧stateを暗黙に
+読み替えない。Release相当で`test_core_selection` 4件、`test_replaynescore_audio` 3件、
+`test_replaynescore_adapter` 8件（計15件、assertion failure 0）を実行し、ctest 3/3が成功した。
+
+### 描画オフ時の音声ドリフト修正（同日）
+
+描画オフは29780 2/3 CPU cycle/frameとなるため、固定CPUクロックでの積分では
+固定フレーム時間29780.5 cycleとのずれが累積し、SMBなどで15フレーム目に停止した。
+各フレームの実測CPU slot列を幅 `655171*48000` の整数時間へ写し、
+`audioSamplesBefore(f)`から`audioSamplesBefore(f+1)`までの出力を返す方式へ修正した。
+slot境界は `floor(i*655171*48000/N)` とし、端数位相・面積・DC履歴は保持する。
+soft reset中のslotも未写像PCMとして保存し、次のフレーム終了時にまとめて写す。
+無制限の出力繰越は、暗転が長いと遅延が累積するため採用しない。
+
+pendingの意味変更に合わせてpayload schemaとstateFormatVersionを3、audio state versionを2、
+compat IDを`replaynescore/nrom-live/accuracy-c5-v16`、build IDを
+`replaynescore-0.9.0+adapter-v16`へ更新した。DC profileは1を維持し、旧stateは拒否する。
+検証結果は `docs/reviews/replaynescore-audio-drift-2.md` に記録する。
+
 ## 2026-10-20 Codex への依頼（ReplayNEScore 側）
 
 ReplayNEScore の修正は Codex の担当で、ReplayNES はコミットされた成果物を組み込むだけにする（利用者決定）。
+
+### 2026-10-24 音量差の修正依頼（初回調査、方針は下記0.9.1統合で更新）
+
+コア `dc47d121cd39b8758294983fd6bd505f45e72ec0` に対する依頼。詳細な測定条件・チャンネル別数値・受け入れ結果は
+`docs/reviews/replaynescore-volume-2.md`、コードと独立プローブの根拠は `docs/reviews/replaynescore-volume-code.md`。
+
+- 再現: Release / Make、SMBを600 frames、`--press start@120+4` で `dump-audio`。
+  秒4〜8のReplayNESCore/Nestopia RMS比は0.650841 / 0.513894 / 0.476724 / 0.463632 / 0.516151。
+- 確定した原因: `include/replaynes/apu_mixer.hpp` の32767尺度と、Nestopiaの49152尺度が異なる。
+  pulse=15の実 `mix_level` は4895、Nestopia整数LUTは7314（比0.669264）。
+  既知pulse1 ROMのコア直出力AC RMS2447.50はアダプタ後2431.59（比0.99350）で、
+  同じチャンネル値をNestopia式で再混合すると3635.95になる。差はホストへ渡る前から存在する。
+- チャンネル間の差も解消すること: pulse定数95.88対95.52、TND個別分母式対 `3*t+2*n+d` のLUT近似が異なる。
+  また `src/nrom_cpu_ppu.cpp:888` は停止triangleを0にするがNestopiaは最終DACを保持するため、
+  noise/DMCの非線形ミキサーの増分ゲインも変わる。単一倍率だけでは揃わない。
+- SMB全量の原因は未確定: 同一CPU slotのチャンネル値をNestopia式へ再混合しても、秒5〜8は実Nestopiaの
+  約0.80 / 0.75 / 0.73 / 0.81倍。ホストDCを逆変換してNestopiaのDC再帰へ置換すると、逆に約1.57 / 1.32 / 1.29 / 1.33倍となる。
+  ホストの19HzとNestopiaの0.70Hzの差はSMBで無視できず、停止triangle等によるDC変動との相互作用を含めて調べること。
+  上記の尺度・式差は確定だが、残差のすべてを本体へ帰属したとの結論ではない。ホスト単独でフィルタを合わせるだけでも受け入れを満たさない。
+- 要求: Nestopiaを基準とするPCM出力の尺度・ミキサープロファイルと停止triangleの仕様を本体で定義して修正する。
+  unipolar PCMを49152尺度へ変えるだけでは混合時にint16が飽和し得るため、DC基準とヘッドルームも設計する。
+  mixer policy/version・core build/compat/state識別子に必要な更新を行い、ホストへ戻す際にadapterの互換識別も点検する。
+- 追加の再現条件: 既知全混合ROMでもRMS比0.520503。単独pulse/triangleの位相関係とmixedの基音振幅にも差がある
+  （`replaynescore-volume-code.md`末尾）。同一mixed ROMの両コアのチャンネル別DAC列を採取し、シーケンサ起動位相・
+  同周波数成分の打ち消しを調べる。単独ROM間の位相差だけで原因確定とはしない。
+- 受け入れ: `test_replaynescore_volume` の9種既知波形でRMS比0.90〜1.10、無音・DCのみ・クリップなし。
+  新コアありと既定の全ctest、およびSMB秒別RMSの再測定。SMBの残差を尺度差だけで説明済みとは扱わない。
+
+本タスクでは外部本体を変更せず、ReplayNES側の倍率・フィルタ・state/compat/build IDも変更していない。
+回帰試験の失敗をWILL_FAILや閾値緩和で隠さず、別ジョブの本体修正後に再検証する。
+
+### 2026-10-24 ReplayNESCore 0.9.1 / ホスト音量尺度の統一
+
+上の初回依頼のうち「本体をNestopia尺度・近似式へ合わせる」方向は利用者の確定方針により採用しない。
+本体 `19abd413fa9984ca9300bd063d9d3e1ea24511ee`（0.9.1、停止triangle DAC保持、APM4/mixer v4、MACH 6.4）を参照して統合する。
+nesdev正確式と32767 unipolar PCMは本体に維持し、再生尺度の責任はホストへ置く。
+
+アダプタはDC除去後の出力だけに49152/32767を掛け、64-bit整数の対称最近接丸めと最終int16飽和を行う。
+DC再帰・面積平均・フィードバック履歴の尺度は変えない。初回pushFrame直前だけ最初の実PCMでdcInputを初期化し、
+起動DC過渡による全混合29 samplesのクリップを除く。診断では最大27415・クリップ0、定常後半は完全一致した。
+既に再生したsoft RESETでは履歴を保持する。compat IDは `replaynescore/nrom-live/accuracy-c5-v17`、
+build IDは `replaynescore-0.9.1+adapter-v17`、audio profileは2。構造不変の公開state format/payload schemaは3、audio state versionは2を維持する。
+旧compat/profileは拒否し、本体のMACH 6.4は外部codecを通して保存復元する。
+
+検証と残差調査の最終結果は `docs/reviews/replaynescore-volume-3.md`、仕様は `docs/plans/2026-10-24-replaynescore-volume.md`。
+最終結果は既定33/33、新コア34/35（411.07秒）、音量8/9。全混合だけRMS比0.780780で不合格。許容範囲0.90〜1.10は維持した。
+全混合の残差はpulse起動dividerによるtriangleとの位相差と、同一ROMのDAC分離・診断Nestopiaへの単一介入で確認した。
+本体・Nestopia・基準ROMへ位相を合わせる変更は行わず、実機に妥当な起動仕様の判断を別作業へ残す。
+SMB秒4〜8の比は0.899077 / 0.703287 / 0.658119 / 0.653438 / 0.716852。
+主因はホスト19HzとNestopia0.70HzのDC処理差で、DCだけ診断交換すれば正確式のまま0.962〜0.994となる。
+今回の製品は既存19Hzを維持し、尺度統一・初期DC整合までを採用した。初期化後の全混合95842 samplesとSMB479210 samplesのクリップは0。
+したがって尺度統一と飽和解消は完了だが、全試験合格という受け入れ条件は未達（FAIL）。sources.md・外部本体は変更せず、コミット・pushなし。
+
+### 全混合試験の修正とSMBの帯域内評価（2026-10-24、Claude）
+
+- 全混合の不合格は試験の設計の誤り。試験ROMのtriangle周期126（32·127 cycles、約440.4 Hz）がpulse1周期253（16·254 cycles、約440.4 Hz）と同じ周波数で、混合RMSが音量ではなく両コアの起動位相（強め合いか打ち消しか）を測っていた。triangleを周期150（32·151 cycles、約370.4 Hz）へ変えた。周期比127:151は互いに素で、共通高調波はナイキストより上だけになる。許容範囲0.90〜1.10は変えていない。
+- 変更後、新コアありctest 35/35、既定33/33。9種のRMS比（後半、WAVから独立計算）: pulse1-15 1.0060、pulse1-7 1.0044、pulse2-15 1.0068、pulse2-7 1.0058、triangle 0.9646、noise 0.9772、dmc 1.0389、pulse-pair 1.0077、mixed 1.0066。全区間クリップ0。
+- pulseの起動divider（Nestopia 2048、core 0）のどちらが実機どおりかは未判定。音量の問題ではなく精度の問題として本体側の別件に残す。
+- SMBの素のRMS比0.65〜0.72は、ホストの19 Hz DC除去がNestopia（0.70 Hz）の残す19 Hz未満の成分を落とすことによる。両出力に同じ2段1次ハイパスを掛けた秒4〜8の比は、20 Hzで0.963〜0.971、40 Hzで0.968〜0.977、100 Hzで0.978〜0.989。可聴帯域の音量はそろっている。実機NES-001の出力にも約90 Hzのハイパスがあるので、19 Hzは維持し、素のRMSを受け入れ指標にしない。
+
+### 既存の依頼
 
 1. clang の `-Wsign-conversion` 5件で、警告 error 扱い（既定）の clang build（Windows llvm-mingw、AppleClang）が止まる:
    `src/ppu_scroll.cpp:37`、`src/ppu_background_pixel.cpp:36,38,40`、`src/cpu.cpp:1583`。`uint16_t`/`uint8_t` の

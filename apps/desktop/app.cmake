@@ -3,7 +3,7 @@
 # Included by apps/linux/CMakeLists.txt and apps/windows/CMakeLists.txt after rnl_logic exists
 # (apps/desktop/CMakeLists.txt, added through the root CMakeLists.txt). Inputs:
 #   RNL_SDL3_TARGET    SDL3::SDL3 (Linux, the runtime's) / SDL3::SDL3-static (Windows, third_party/SDL)
-#   RNL_APP_VERSION    the release version (root CMakeLists.txt)
+#   RNL_APP_VERSION    the product release version (or Windows update-test override)
 #   RNL_APP_FEATURES   compile definitions of ui_features.h (RNL_HAVE_STEAM=1, RNL_HAVE_MP4_EXPORT=0 ...)
 # The platform executable adds: main(), a Renderer, fonts.h, the MP4 export (export/mp4_export.h)
 # and the CRT export processor (render/crt_export.h), or their "not available" stubs.
@@ -29,7 +29,6 @@ add_custom_command(
 add_library(rnl_app STATIC
   ${RNL_APP_SRC}/app.cpp
   ${RNL_APP_SRC}/audio_out.cpp
-  ${RNL_APP_SRC}/game_rect.cpp
   ${RNL_APP_SRC}/icons.cpp
   ${RNL_ICON_FONT_CPP}
   ${RNL_APP_SRC}/input_router.cpp
@@ -51,4 +50,11 @@ target_compile_definitions(rnl_app PUBLIC RNL_APP_VERSION="${RNL_APP_VERSION}" $
 target_compile_options(rnl_app PRIVATE ${RNL_WARNINGS})
 if(WIN32)
   target_link_libraries(rnl_app PUBLIC shell32)
+endif()
+
+if(RNL_DESKTOP_TESTS OR REPLAYNES_BUILD_TESTS)
+  add_test(NAME product_overscan_export_checkbox
+    COMMAND ${CMAKE_COMMAND} -DARCHIVE=$<TARGET_FILE:rnl_app>
+            -DEXPECT_CROP=${RN_PRODUCT_OVERSCAN_CROP}
+            -P ${RNL_DESKTOP_DIR}/../../tests/check_overscan_checkbox.cmake)
 endif()

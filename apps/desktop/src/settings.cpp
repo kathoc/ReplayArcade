@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include "settings.h"
 
 #include <cmath>
@@ -37,6 +38,9 @@ Settings Settings::parse(const std::string& text) {
   std::istringstream in(text);
   std::string line;
   while (std::getline(in, line)) {
+#if !RN_PRODUCT_FLASH_FILTER || !RN_PRODUCT_OVERSCAN_CROP
+    const std::string rawLine = line;
+#endif
     line = trim(line);
     if (line.empty() || line[0] == '#') continue;
     size_t eq = line.find('=');
@@ -46,12 +50,25 @@ Settings Settings::parse(const std::string& text) {
     bool num = parseNumber(v, &d);
     if (k == "integerScale") s.integerScale = parseBool(v, s.integerScale);
     else if (k == "par87") s.par87 = parseBool(v, s.par87);
+#if RN_PRODUCT_OVERSCAN_CROP
     else if (k == "hideOverscan") s.hideOverscan = parseBool(v, s.hideOverscan);
+#else
+    else if (k == "hideOverscan") s.preservedOverscanLines += rawLine + "\n";
+#endif
     else if (k == "vtrEffect") s.vtrEffect = parseBool(v, s.vtrEffect);
     else if (k == "practiceCountdown") s.practiceCountdown = parseBool(v, s.practiceCountdown);
     else if (k == "resumeCountdown") s.resumeCountdown = parseBool(v, s.resumeCountdown);
+    else if (k == "countdownSeconds") {
+      const int n = std::atoi(v.c_str());
+      s.countdownSeconds = n >= 3 ? 3 : n >= 1 ? 1 : 0;
+    }
+    else if (k == "playInBackground") s.playInBackground = parseBool(v, s.playInBackground);
     else if (k == "showStats") s.showStats = parseBool(v, s.showStats);
+#if RN_PRODUCT_FLASH_FILTER
     else if (k == "flash" && num && d >= 0 && d <= 3 && d == std::floor(d)) s.flash = int(d);
+#else
+    else if (k == "flash") s.preservedFlashLines += rawLine + "\n";
+#endif
     else if (k == "showFlashIndicator") s.showFlashIndicator = parseBool(v, s.showFlashIndicator);
     else if (k == "uiScale" && num && d >= 0.5 && d <= 2.5) s.uiScale = float(d);
     else if (k == "volume" && num && d >= 0 && d <= 1) s.volume = float(d);
@@ -64,6 +81,7 @@ Settings Settings::parse(const std::string& text) {
     else if (k == "pauseAfterRewind2") s.pauseAfterRewind = parseBool(v, s.pauseAfterRewind);  // "pauseAfterRewind" (<= 0.5.0): ignored, settings.h
     else if (k == "autosaveInterval" && num && d >= 1 && d <= 600) s.autosaveInterval = d;
     else if (k == "dpadStepWhenPaused") s.dpadStepWhenPaused = parseBool(v, s.dpadStepWhenPaused);
+    else if (k == "mouseControls") s.mouseControls = parseBool(v, s.mouseControls);
     else if (k == "southConfirm") s.southConfirm = parseBool(v, s.southConfirm);
     else if (k == "onScreenKeyboard" && (v == "auto" || v == "builtin" || v == "steam")) s.onScreenKeyboard = v;
     else if (k == "checkForUpdates") s.checkForUpdates = parseBool(v, s.checkForUpdates);
@@ -81,15 +99,25 @@ Settings Settings::parse(const std::string& text) {
 
 std::string Settings::serialize() const {
   std::ostringstream o;
-  o << "# ReplayNES (Linux) settings\n";
+  o << "# " RN_PRODUCT_NAME " (Linux) settings\n";
   o << "integerScale=" << int(integerScale) << "\n";
   o << "par87=" << int(par87) << "\n";
+#if RN_PRODUCT_OVERSCAN_CROP
   o << "hideOverscan=" << int(hideOverscan) << "\n";
+#else
+  o << preservedOverscanLines;
+#endif
   o << "vtrEffect=" << int(vtrEffect) << "\n";
   o << "practiceCountdown=" << int(practiceCountdown) << "\n";
   o << "resumeCountdown=" << int(resumeCountdown) << "\n";
+  o << "countdownSeconds=" << countdownSeconds << "\n";
+  o << "playInBackground=" << int(playInBackground) << "\n";
   o << "showStats=" << int(showStats) << "\n";
+#if RN_PRODUCT_FLASH_FILTER
   o << "flash=" << flash << "\n";
+#else
+  o << preservedFlashLines;
+#endif
   o << "showFlashIndicator=" << int(showFlashIndicator) << "\n";
   char buf[64];
   std::snprintf(buf, sizeof buf, "%.2f", double(uiScale));
@@ -107,6 +135,7 @@ std::string Settings::serialize() const {
   std::snprintf(buf, sizeof buf, "%g", autosaveInterval);
   o << "autosaveInterval=" << buf << "\n";
   o << "dpadStepWhenPaused=" << int(dpadStepWhenPaused) << "\n";
+  o << "mouseControls=" << int(mouseControls) << "\n";
   o << "southConfirm=" << int(southConfirm) << "\n";
   o << "onScreenKeyboard=" << onScreenKeyboard << "\n";
   o << "checkForUpdates=" << int(checkForUpdates) << "\n";

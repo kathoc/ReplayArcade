@@ -23,6 +23,7 @@ endif()
 add_library(rnl_logic STATIC
   src/app_model.cpp
   src/emulation.cpp
+  src/game_rect.cpp
   src/l10n.cpp
   src/library.cpp
   src/manifest.cpp
@@ -55,7 +56,18 @@ endif()
 
 # Windows executables declare UTF-8 as their code page (narrow file APIs, std::filesystem and
 # fopen then take the UTF-8 paths the frontend uses) - the tests too.
-set(RNL_WINDOWS_MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/../windows/resources/replaynes.manifest CACHE INTERNAL "")
+# XML attributes need escaping independently of the generated C/C++ product header.
+set(RNL_PRODUCT_APP_ID_XML "${RN_PRODUCT_APP_ID}")
+string(REPLACE "&" "&amp;" RNL_PRODUCT_APP_ID_XML "${RNL_PRODUCT_APP_ID_XML}")
+string(REPLACE "\"" "&quot;" RNL_PRODUCT_APP_ID_XML "${RNL_PRODUCT_APP_ID_XML}")
+string(REPLACE "<" "&lt;" RNL_PRODUCT_APP_ID_XML "${RNL_PRODUCT_APP_ID_XML}")
+string(REPLACE ">" "&gt;" RNL_PRODUCT_APP_ID_XML "${RNL_PRODUCT_APP_ID_XML}")
+string(REPLACE "'" "&apos;" RNL_PRODUCT_APP_ID_XML "${RNL_PRODUCT_APP_ID_XML}")
+set(RNL_WINDOWS_MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/generated/replaynes.manifest" CACHE INTERNAL "")
+if(WIN32)  # other platforms build without apps/windows
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../windows/resources/replaynes.manifest.in
+    "${RNL_WINDOWS_MANIFEST}" @ONLY)
+endif()
 function(rnl_windows_manifest target)
   if(NOT WIN32)
     return()
@@ -79,6 +91,9 @@ if(RNL_DESKTOP_TESTS)
   set(RNL_TEST_TMP ${CMAKE_CURRENT_BINARY_DIR}/tmp)
   file(MAKE_DIRECTORY ${RNL_TEST_TMP})
   add_executable(test_desktop_frontend tests/test_desktop_frontend.cpp ${RNL_REPO_ROOT}/tests/support/rn_test_main.cpp
+    tests/test_thumbnail_scheduling.cpp tests/test_media_audio.cpp tests/test_export_media.cpp tests/test_media_geometry.cpp tests/test_input_layout.cpp
+    ../windows/tests/test_d3d11_media.cpp
+    tests/test_mf_export_media.cpp
     tests/sparse_file.cpp src/export/export_frame.cpp src/export/mp4_retime.cpp src/export/mp4_check.cpp)
   target_include_directories(test_desktop_frontend PRIVATE ${RNL_REPO_ROOT}/tests)
   target_link_libraries(test_desktop_frontend PRIVATE rnl_logic)
@@ -90,5 +105,32 @@ if(RNL_DESKTOP_TESTS)
     set_target_properties(test_desktop_frontend PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
   endif()
   add_test(NAME test_desktop_frontend COMMAND test_desktop_frontend)
+  set_tests_properties(test_desktop_frontend PROPERTIES SKIP_RETURN_CODE 77)
   set_tests_properties(test_desktop_frontend PROPERTIES TIMEOUT 300)
+endif()
+
+# A disabled product must not create, configure, process or destroy a flash filter.
+function(rnl_test_no_flash_symbols target)
+  if(RNL_DESKTOP_TESTS AND NOT RN_PRODUCT_FLASH_FILTER AND CMAKE_NM AND NOT MSVC)
+    add_test(NAME noflash_symbols_${target}
+      COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DARCHIVE=$<TARGET_FILE:${target}>
+              -P ${RNL_DESKTOP_DIR}/../../tests/check_no_flash_symbols.cmake)
+  endif()
+endfunction()
+rnl_test_no_flash_symbols(rnl_logic)
+# Integration coverage for SDL device identity, routing, and per-kind persistence.
+# The portable logic suite remains available when SDL is not installed.
+if(RNL_DESKTOP_TESTS)
+  find_package(SDL3 QUIET CONFIG)
+  if(TARGET SDL3::SDL3)
+    add_executable(test_input_profiles tests/test_input_profiles.cpp src/input_router.cpp
+      ${RNL_REPO_ROOT}/tests/support/rn_test_main.cpp)
+    target_include_directories(test_input_profiles PRIVATE ${RNL_REPO_ROOT}/tests)
+    target_link_libraries(test_input_profiles PRIVATE rnl_logic SDL3::SDL3)
+    target_compile_definitions(test_input_profiles PRIVATE RNL_TEST_TMP="${RNL_TEST_TMP}")
+    target_compile_options(test_input_profiles PRIVATE ${RNL_WARNINGS})
+    rnl_windows_manifest(test_input_profiles)
+    add_test(NAME test_input_profiles COMMAND test_input_profiles)
+    set_tests_properties(test_input_profiles PROPERTIES TIMEOUT 60)
+  endif()
 endif()

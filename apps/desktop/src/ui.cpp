@@ -98,17 +98,39 @@ float keycap(ImDrawList* dl, ImVec2 p, float h, const std::string& label, bool r
 // ------------------------------------------------------------------ setup
 
 UI::UI(Deps d) : d_(d) {
-  menuFeatures_ = RNF_MENU_FEATURE_QUIT | RNF_MENU_FEATURE_FULLSCREEN | RNF_MENU_FEATURE_UI_SCALE;
+  menuFeatures_ = RNF_MENU_FEATURE_QUIT | RNF_MENU_FEATURE_FULLSCREEN | RNF_MENU_FEATURE_UI_SCALE | RNF_MENU_FEATURE_BACKGROUND;
   if (RNL_HAVE_MP4_EXPORT) menuFeatures_ |= RNF_MENU_FEATURE_EXPORT;
   if (RNL_HAVE_CRT) menuFeatures_ |= RNF_MENU_FEATURE_CRT;
   if (RNL_HAVE_STEAM) menuFeatures_ |= RNF_MENU_FEATURE_STEAM | RNF_MENU_FEATURE_OSK;
   if (d_.updates) menuFeatures_ |= RNF_MENU_FEATURE_UPDATES;
-  // Only a build with a second core offers the choice; a stale non-default setting stays visible so it can be fixed.
-  if (rn_core_available(RN_CORE_REPLAYNESCORE) || d_.settings->core != "nestopia") menuFeatures_ |= RNF_MENU_FEATURE_CORE;
+  // Offer a choice only when multiple product cores are available.
+  if (rnf_product_core_count() > 1) menuFeatures_ |= RNF_MENU_FEATURE_CORE;
   menu_ = rnf_menu_new(menuFeatures_);
+  inputLayoutChanged();
   markers_ = rnf_markers_new();
   markerRepeat_ = rnf_step_repeater_new();
   coach_ = rnf_coach_new(d_.settings ? d_.settings->coachShown : 0);
+}
+
+void UI::inputLayoutChanged() {
+  menuFeatures_ &= ~uint32_t(RNF_MENU_FEATURE_LAYOUT_TURBO | RNF_MENU_FEATURE_MOUSE);
+  if (std::strcmp(rnf_input_layout_name(), "nes") != 0) menuFeatures_ |= RNF_MENU_FEATURE_LAYOUT_TURBO | RNF_MENU_FEATURE_MOUSE;
+  std::string catalog = rnf_input_layout_name();
+  for (size_t i = 0; i < rnf_input_action_count(); ++i) {
+    rnf_action_info action{};
+    rnf_input_action_get(i, &action);
+    catalog += "\n";
+    catalog += action.id;
+    char* label = rnf_input_action_label(action.id);
+    catalog += label ? label : "";
+    rnf_string_free(label);
+  }
+  if (catalog == inputCatalog_) return;
+  inputCatalog_ = std::move(catalog);
+  const std::string page = menuPageId();
+  rnf_menu_free(menu_);
+  menu_ = rnf_menu_new(menuFeatures_);
+  if (menuOpen_) openPage(page.empty() ? "quick" : page);
 }
 
 UI::~UI() {
@@ -233,6 +255,7 @@ void UI::setMenu(bool open) {
   double now = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0;
   (void)now;
   if (open) {
+    controlsEditingSelected_ = false;
     // Nothing reaches the game while the menu is up; the emulation waits paused.
     d_.emu->setRewindHeld(false);
     d_.emu->setFastForwardHeld(false);
@@ -341,7 +364,7 @@ void UI::changed() {
 GameRect UI::gameRect(int w, int h) const {
   if (!hasSession()) return GameRect{};
   const Settings& st = *d_.settings;
-  return computeGameRect(w, h, st.integerScale, st.par87, st.hideOverscan);
+  return computeGameRect(w, h, d_.emu->media(), d_.emu->videoFrame(), st.integerScale, st.par87, RN_PRODUCT_OVERSCAN_CROP && st.hideOverscan);
 }
 
 void UI::slack(double now) {
@@ -358,7 +381,7 @@ void UI::saveLibraryThumb(double now) {
   const EmuStatus& st = d_.emu->status();
   if (st.frame == 0 && st.takeLength == 0) return;  // nothing shown yet
   lastThumbSave_ = now;
-  d_.libraryThumbs->save(d_.app->isTempSession() ? std::string() : st.projectPath, st.romPath, d_.emu->picture());
+  d_.libraryThumbs->save(d_.app->isTempSession() ? std::string() : st.projectPath, st.romPath, d_.emu->videoFrame(), d_.emu->media(), rn_session_core_kind(d_.emu->session()) != RN_CORE_EXTERNAL);
 }
 
 void UI::showResetChoices() {
@@ -431,6 +454,7 @@ void UI::build(double now) {
 
   updateMarkers(now);
   tickCoach(now);
+  if (d_.libraryThumbs) d_.libraryThumbs->setPicturesPaused(hasSession());  // a game has the machine to itself
   if (!hasSession()) buildLibrary(now);
   else if (!menuOpen_ && seekBarShown()) buildSeekBar(now);
   if (menuOpen_) buildMenu(now);
@@ -451,7 +475,9 @@ void UI::build(double now) {
 
 void UI::buildOverlays(double now) {
   bool session = hasSession();
+  playersW_ = 0;
   if (session && !menuOpen_) {
+    buildPlayers(now);
     buildBadges();
     if (d_.emu->status().practicing && !d_.emu->status().paused) buildPracticePill();
     if (!seekBarShown()) buildPlayOverlay(now);
@@ -483,7 +509,10 @@ void UI::buildMenuPill(double now) {
   ImGuiIO& io = ImGui::GetIO();
   const UiMetrics& m = metrics_;
   rnf_controller_family fam = promptFamily();
-  std::string chord = menuChordGlyph(fam, controllerConnected());
+  std::string chord = d_.input->usesDeviceKinds() && controllerConnected() &&
+                              d_.input->deviceKind(std::max(0, d_.input->lastSlot())) == DeviceKind::stick
+      ? padGlyph(fam, "leftShoulder") + "+" + padGlyph(fam, "leftTrigger")
+      : menuChordGlyph(fam, controllerConnected());
   std::string icon = icons::glyph("menu-2");
   std::string label = TR("Menu");
   float fs = m.label(), hs = m.hint();

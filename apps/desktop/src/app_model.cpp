@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include "app_model.h"
 
 #include <chrono>
@@ -45,11 +46,13 @@ std::string chooserProjectFileName(const std::string& typed) {
     s = s.substr(a, s.find_last_not_of(chars) - a + 1);
   };
   trim(out, " ");
-  const std::string ext = ".nesrec";
+  const std::string ext = RN_PRODUCT_PROJECT_EXT;
   if (out.size() >= ext.size()) {
     std::string tail = out.substr(out.size() - ext.size());
     for (char& ch : tail) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-    if (tail == ext) out.resize(out.size() - ext.size());
+    std::string lowerExt = ext;
+    for (char& ch : lowerExt) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    if (tail == lowerExt) out.resize(out.size() - ext.size());
   }
   trim(out, " .");
   return out.empty() ? std::string() : out + ext;
@@ -271,7 +274,7 @@ std::string AppModel::romName() const {
 
 std::string AppModel::windowTitle() const {
   const EmuStatus& st = emu_->status();
-  if (!st.hasSession) return "ReplayNES";
+  if (!st.hasSession) return RN_PRODUCT_NAME;
   if (!st.projectPath.empty() && !isTempPath(st.projectPath)) return fileName(st.projectPath) + (st.unsaved ? " •" : "");
   return fileName(st.romPath) + TR(" (Unsaved)");
 }
@@ -416,7 +419,7 @@ void AppModel::prepareTempSlot(std::function<void()> then) {
 void AppModel::playFromLibrary(const LibraryROM& rom) {
   LibraryROM r = rom;
   confirmDiscardIfNeeded([this, r] {
-    if (selectedCore != "nestopia") return createSession(r.path, "", false);
+    if (selectedCore != "nestopia" && selectedCore != "external") return createSession(r.path, "", false);
     settlePendingTemp([this, r] {
       if (!library_->ensureFolders()) {
         error(TR("The library folder isn’t available"), library_->folderError());
@@ -432,7 +435,7 @@ void AppModel::playFromLibrary(const LibraryROM& rom) {
 
 void AppModel::tryRom(const std::string& romPath) {
   confirmDiscardIfNeeded([this, romPath] {
-    if (selectedCore != "nestopia") return createSession(romPath, "", false);
+    if (selectedCore != "nestopia" && selectedCore != "external") return createSession(romPath, "", false);
     if (!persist_) return createSession(romPath, "", true);
     prepareTempSlot([this, romPath] { createSession(romPath, paths_.tempProject(), true); });
   });
@@ -461,6 +464,7 @@ void AppModel::createSession(const std::string& rom, const std::string& projectD
   rn_session_options_init(&opt);
   if (selectedCore == "nestopia") opt.core = RN_CORE_NESTOPIA;
   else if (selectedCore == "replaynescore") opt.core = RN_CORE_REPLAYNESCORE;
+  else if (selectedCore == "external") opt.core = RN_CORE_EXTERNAL;
   else { error(TR("Couldn’t create the project"), TR("Unknown core; select a supported core")); return; }
   if (!rn_core_available(opt.core)) { error(TR("Couldn’t create the project"), TR("Selected core is not included in this build")); return; }
   bool dirExisted = projectDir.empty() || exists(projectDir);
@@ -761,7 +765,7 @@ void AppModel::performProjectReset(bool keepSlots, bool backup) {
       if (!copyTree(dir, copy, &err)) {
         // The project's folder is not writable: copy into the temporary folder instead.
         std::error_code ec;
-        std::string tmp = fs::temp_directory_path(ec).string() + "/replaynes-backup-" +
+        std::string tmp = fs::temp_directory_path(ec).string() + "/" RN_PRODUCT_TEMP_PREFIX "-backup-" +
                           std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         fs::create_directories(tmp, ec);
         copy = tmp + "/" + fileName(copy);

@@ -36,8 +36,28 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+std::mutex contentIdLock;
+rnf_content_id_fn contentIdProvider = nullptr;
+rnf_rom_filter_fn romFilter = nullptr;
+void* romFilterContext = nullptr;
+void* contentIdContext = nullptr;
+uint64_t contentIdGeneration = 0;
+
 // Date.distantPast (0001-01-01) in seconds since 1970.
 constexpr double kDistantPast = -62135769600.0;
+
+bool isRomExtension(const std::string& extension) {
+  const std::string extensions = lower(RN_PRODUCT_ROM_EXTS);
+  const std::string wanted = lower(extension);
+  size_t start = 0;
+  while (start < extensions.size()) {
+    const size_t end = extensions.find(';', start);
+    if (extensions.substr(start, end - start) == wanted) return true;
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return false;
+}
 
 struct Entry {
   bool ok = false;
@@ -272,11 +292,25 @@ struct rnf_project_list {
 
 struct rnf_rom_hash_cache {
   std::mutex lock;
+  uint64_t identityGeneration = 0;
   std::map<std::tuple<std::string, int64_t, double>, std::string> cache;
   std::map<std::tuple<std::string, int64_t, double>, std::pair<rnf_game_match, rnf_game_info>> games;
 };
 
 extern "C" {
+
+void rnf_set_content_id_provider(rnf_content_id_fn fn, void* ctx) {
+  std::lock_guard<std::mutex> guard(contentIdLock);
+  contentIdProvider = fn;
+  contentIdContext = ctx;
+  ++contentIdGeneration;
+}
+
+void rnf_set_rom_filter(rnf_rom_filter_fn fn, void* ctx) {
+  std::lock_guard<std::mutex> guard(contentIdLock);
+  romFilter = fn;
+  romFilterContext = ctx;
+}
 
 rn_status rnf_library_ensure(const char* root, char** failed_path) {
   if (failed_path) *failed_path = nullptr;
@@ -313,9 +347,13 @@ rn_status rnf_library_scan_roms(const char* dir_c, rnf_name_compare compare, voi
   if (!listDir(dir, names, err)) return fail(RN_ERR_IO, err);
   auto list = std::make_unique<rnf_rom_list>();
   auto add = [&](const std::string& path, const std::string& name, const std::string& relative) {
-    if (lower(extensionOf(name)) != "nes") return;
+    if (!isRomExtension(extensionOf(name))) return;
     Entry e = inspect(path);
     if (!e.ok || !e.isRegular) return;
+    {
+      std::lock_guard<std::mutex> guard(contentIdLock);
+      if (romFilter && !romFilter(path.c_str(), romFilterContext)) return;
+    }
     list->items.push_back({path, stem(name), relative, e.size, e.modified});
   };
   for (auto& n : names) {
@@ -363,7 +401,7 @@ rn_status rnf_library_scan_projects(const char* dir_c, rnf_project_list** out) {
   if (!listDir(dir, names, err)) return fail(RN_ERR_IO, err);
   auto list = std::make_unique<rnf_project_list>();
   for (auto& n : names) {
-    if (lower(extensionOf(n)) != "nesrec") continue;
+    if (lower(extensionOf(n)) != lower(RN_PRODUCT_PROJECT_EXT + 1)) continue;
     std::string path = join(dir, n);
     char* text = nullptr;
     if (rn_project_manifest_json(path.c_str(), &text) != RN_OK || !text) continue;
@@ -380,7 +418,8 @@ rn_status rnf_library_scan_projects(const char* dir_c, rnf_project_list** out) {
       Entry de = inspect(path);
       if (de.ok) date = de.modified;
     }
-    list->items.push_back({path, stem(n), lower(rom["sha256"].asString()),
+    list->items.push_back({path, stem(n), rom["identity"].asString() == "content"
+                               ? rom["sha256"].asString() : lower(rom["sha256"].asString()),
                            rom["name"].isString() ? rom["name"].asString() : "", date});
   }
   std::stable_sort(list->items.begin(), list->items.end(),
@@ -422,7 +461,7 @@ char* rnf_library_new_project_path(const char* projects_dir, const char* rom_nam
   std::string dir = stripTrailing(projects_dir);
   for (int n = 1;; ++n) {
     std::string name = n == 1 ? base : base + " " + std::to_string(n);
-    std::string path = join(dir, name + ".nesrec");
+    std::string path = join(dir, name + RN_PRODUCT_PROJECT_EXT);
     if (!exists(path)) return dup(path);
   }
   RNF_GUARD_END(nullptr)
@@ -433,30 +472,58 @@ rnf_rom_hash_cache* rnf_rom_hash_cache_new(void) {
 }
 void rnf_rom_hash_cache_free(rnf_rom_hash_cache* c) { delete c; }
 
-rn_status rnf_rom_hash_cache_sha256(rnf_rom_hash_cache* c, const char* path, int64_t size, double modified,
-                                    char out_hex[65]) {
-  if (!c || !path || !out_hex) return fail(RN_ERR_INVALID_ARG, "null argument");
+rn_status rnf_rom_hash_cache_content_id(rnf_rom_hash_cache* c, const char* path, int64_t size, double modified,
+                                    char** out_id) {
+  if (out_id) *out_id = nullptr;
+  if (!c || !path || !out_id) return fail(RN_ERR_INVALID_ARG, "null argument");
   RNF_GUARD_BEGIN
+  // Hold the provider lock through the callback so replacing a context cannot race its use.
+  std::lock_guard<std::mutex> providerGuard(contentIdLock);
   auto key = std::make_tuple(std::string(path), size, modified);
   {
     std::lock_guard<std::mutex> g(c->lock);
+    if (c->identityGeneration != contentIdGeneration) {
+      c->cache.clear();
+      c->identityGeneration = contentIdGeneration;
+    }
     auto it = c->cache.find(key);
     if (it != c->cache.end()) {
-      std::memcpy(out_hex, it->second.c_str(), it->second.size() + 1);
+      *out_id = dup(it->second);
+      if (!*out_id) return fail(RN_ERR_INTERNAL, "allocation failed");
       return RN_OK;
     }
   }
-  char hex[65] = {0};
-  rn_status st = rn_sha256_file(path, hex);
-  if (st != RN_OK) return fail(st, rn_last_error());
-  std::string h = lower(hex);
+  char hex[65536] = {0};
+  if (contentIdProvider) {
+    if (!contentIdProvider(path, hex, sizeof hex, contentIdContext) || !hex[0] ||
+        !std::memchr(hex, 0, sizeof hex))
+      return fail(RN_ERR_IO, "content identity provider failed");
+  } else {
+    rn_status st = rn_sha256_file(path, hex);
+    if (st != RN_OK) return fail(st, rn_last_error());
+  }
+  std::string h = contentIdProvider ? std::string(hex) : lower(hex);
   {
     std::lock_guard<std::mutex> g(c->lock);
     c->cache[key] = h;
   }
-  std::memcpy(out_hex, h.c_str(), std::min<size_t>(h.size(), 64) + 1);
+  *out_id = dup(h);
+  if (!*out_id) return fail(RN_ERR_INTERNAL, "allocation failed");
   return RN_OK;
   RNF_GUARD_END(RN_ERR_INTERNAL)
+}
+
+rn_status rnf_rom_hash_cache_sha256(rnf_rom_hash_cache* c, const char* path, int64_t size, double modified,
+                                    char out_hex[65]) {
+  if (!out_hex) return fail(RN_ERR_INVALID_ARG, "null argument");
+  out_hex[0] = 0;
+  char* id = nullptr;
+  rn_status status = rnf_rom_hash_cache_content_id(c, path, size, modified, &id);
+  if (status != RN_OK) return status;
+  const size_t length = std::strlen(id);
+  if (length <= 64) std::memcpy(out_hex, id, length + 1);
+  std::free(id);
+  return length <= 64 ? RN_OK : fail(RN_ERR_INVALID_ARG, "content identity exceeds SHA-256 buffer");
 }
 
 rnf_game_match rnf_rom_hash_cache_identify(rnf_rom_hash_cache* c, const char* path, int64_t size, double modified,
@@ -492,7 +559,7 @@ char* rnf_backup_path(const char* project_path, double date, rnf_exists_fn exist
   std::string file = lastComponent(project_path);
   std::string name = stem(file);
   std::string ext = extensionOf(file);
-  if (ext.empty()) ext = "nesrec";
+  if (ext.empty()) ext = RN_PRODUCT_PROJECT_EXT + 1;
   // Sibling of the project, spelled with the project path's own separator ("C:/x/a" stays "/").
   std::string trimmed = stripTrailing(project_path);
   size_t slash = lastPathSep(trimmed);

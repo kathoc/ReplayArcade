@@ -5,6 +5,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "replaynes/product.h"
+
 #include <cstdint>
 #include <string>
 
@@ -14,9 +16,15 @@ struct Settings {
   // Display
   bool integerScale = true;  // Integer (largest integer scale) vs FILL
   bool par87 = false;
-  bool hideOverscan = true;
+  bool hideOverscan = RN_PRODUCT_OVERSCAN_CROP;
+#if !RN_PRODUCT_OVERSCAN_CROP
+  std::string preservedOverscanLines;  // opaque settings lines, as for the flash option
+#endif
   bool showStats = false;
-  int flash = 2;  // rn_flash_level: 0 off, 1 low, 2 standard (default: safety first), 3 high
+  int flash = RN_PRODUCT_FLASH_FILTER ? 2 : 0;  // rn_flash_level: 0 off, 1 low, 2 standard (default: safety first), 3 high
+#if !RN_PRODUCT_FLASH_FILTER
+  std::string preservedFlashLines;  // opaque settings lines: ignore the value without rewriting it
+#endif
   bool showFlashIndicator = true;
   bool vtrEffect = true;  // the VTR tape look while rewinding / returning to A (rnf_vtr; display only)
   float uiScale = 1.0f;  // multiplies the automatic scale (window height / 800)
@@ -37,16 +45,26 @@ struct Settings {
   bool pauseAfterRewind = false;
   double autosaveInterval = 2.0;  // seconds
   bool dpadStepWhenPaused = true;
+  // The mouse plays games with analog controls (sticks, dials, levers; Controls > More). Off by default: a
+  // mouse moved by accident would leave the lever pushed.
+  bool mouseControls = false;
   bool practiceCountdown = true;  // 3, 2, 1 after the practice run returned to A (Practice page, View)
   // 3, 2, 1 before play resumes from a pause (System > More); independent of practiceCountdown.
   bool resumeCountdown = true;
+  // The countdown before play resumes and before each practice run: 3 or 1 second(s) (1: the ring
+  // alone, no numeral), 0 = none. It decides both countdowns (resumeCountdown / practiceCountdown
+  // above are kept in the file but no longer used).
+  int countdownSeconds = 1;
+  // Another window in front (focus lost): off = pause and take no controller input until it comes
+  // back; on = keep playing with the controllers (the keyboard is the focused window's in any case).
+  bool playInBackground = false;
   // UI confirm / cancel (rnf_ui_confirm_element): false = east confirms, south goes back (default).
   bool southConfirm = false;
   // Text fields: "auto" (Steam's keyboard where it can be asked for, else the built-in one),
   // "builtin" (ReplayNES's controller keyboard), "steam" (Steam's only). See osk.h.
   std::string onScreenKeyboard = "auto";
   // System
-  std::string core = "nestopia";  // next new game; existing projects retain their core
+  std::string core = RN_PRODUCT_DEFAULT_CORE;  // next new game; existing projects retain their core
   bool checkForUpdates = true;  // keep the Flatpak portal's update monitor open (update_service.h)
   std::string language = "auto";  // "auto" (the system's), "ja", "en"
   bool menuHintShown = false;     // the Menu pill pulsed on the first launch

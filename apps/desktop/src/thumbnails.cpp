@@ -28,23 +28,75 @@ constexpr double kFadeDuration = 0.3;
 }  // namespace
 
 ThumbImage* ThumbImage::make(const uint32_t* frame) {
+  const rn_video_frame_info f{frame, RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_VIDEO_WIDTH};
+  const rn_media_info m{RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_FPS_NUM, RN_FPS_DEN, 1, 1, 1, 0};
+  return make(f, m);
+}
+
+namespace {
+rn_media_info thumbnailMedia(rn_media_info m, bool nesPicture) {
+  // NES thumbnails historically use square pixels, independently of the 8:7 display toggle.
+  if (nesPicture && m.max_width == RN_VIDEO_WIDTH && m.max_height == RN_VIDEO_HEIGHT && m.rotation == 0 &&
+      m.pixel_aspect_num == 8 && m.pixel_aspect_den == 7)
+    m.pixel_aspect_num = m.pixel_aspect_den = 1;
+  return m;
+}
+}
+
+bool thumbnailSize(const rn_video_frame_info& frame, const rn_media_info& media, uint32_t* width, uint32_t* height, bool nesPicture) {
+  const rn_media_info m = thumbnailMedia(media, nesPicture);
+  uint32_t w = 0, h = 0;
+  if (!width || !height || !rnf_thumb_size(&frame, &m, &w, &h)) return false;
+  *width = w; *height = h;
+  return true;
+}
+
+ThumbImage* ThumbImage::make(const rn_video_frame_info& frame, const rn_media_info& media, bool nesPicture) {
+  const rn_media_info m = thumbnailMedia(media, nesPicture);
+  uint32_t w = 0, h = 0;
+  if (!rnf_thumb_size(&frame, &m, &w, &h)) return nullptr;
   auto* t = new ThumbImage;
   t->serial = gSerial.fetch_add(1);
-  rnf_thumb_downscale(frame, t->px);
+  t->width = w;
+  t->height = h;
+  t->px.resize(size_t(w) * h);
+  if (!rnf_thumb_downscale_frame(&frame, &m, t->px.data(), t->px.size())) { delete t; return nullptr; }
   return t;
 }
 
-ThumbImage* ThumbImage::fromThumb(const uint32_t* px) {
+ThumbImage* ThumbImage::fromThumb(const uint32_t* px, uint32_t width, uint32_t height) {
+  if (!px || !width || !height) return nullptr;
   auto* t = new ThumbImage;
   t->serial = gSerial.fetch_add(1);
-  std::memcpy(t->px, px, sizeof t->px);
+  t->width = width;
+  t->height = height;
+  t->px.assign(px, px + size_t(width) * height);
   return t;
 }
 
 ThumbnailManager::ThumbnailManager() : cache_(rnf_thumb_cache_new(&retainFn, &releaseFn)) {
   unsigned hw = std::thread::hardware_concurrency();
   int n = int(std::max(1u, std::min(3u, hw > 2 ? hw - 2 : 1u)));
-  for (int i = 0; i < n; ++i) workers_.emplace_back([this] { workerLoop(); });
+  resizeWorkers(unsigned(n));
+}
+
+void ThumbnailManager::resizeWorkers(unsigned count) {
+  if (workers_.size() == count) return;
+  {
+    std::lock_guard<std::mutex> lk(qMutex_);
+    stop_ = true;
+  }
+  qCv_.notify_all();
+  for (auto& worker : workers_) worker.join();
+  workers_.clear();
+  for (Task& task : queue_) {
+    rn_renderer_free(task.renderer);
+    finishOne(task.job, task.frame, nullptr, false);
+    --inFlight_;
+  }
+  queue_.clear();
+  stop_ = false;
+  for (unsigned i = 0; i < count; ++i) workers_.emplace_back([this] { workerLoop(); });
 }
 
 ThumbnailManager::~ThumbnailManager() {
@@ -56,8 +108,7 @@ ThumbnailManager::~ThumbnailManager() {
   qCv_.notify_all();
   for (auto& t : workers_) t.join();
   for (Task& t : queue_) rn_renderer_free(t.renderer);
-  for (auto& j : finished_)
-    for (auto& r : j->results) r.second->release();
+  finished_.clear();
   rnf_thumb_cache_free(cache_);
 }
 
@@ -73,7 +124,7 @@ void ThumbnailManager::workerLoop() {
     Task t;
     {
       std::unique_lock<std::mutex> lk(qMutex_);
-      qCv_.wait(lk, [&] { return stop_ || !queue_.empty(); });
+      qCv_.wait(lk, [&] { return stop_ || (!queue_.empty() && (!sharesMachine_ || !coreBusy_)); });
       if (stop_) return;
       t = queue_.front();
       queue_.pop_front();
@@ -84,11 +135,16 @@ void ThumbnailManager::workerLoop() {
       const int16_t* audio = nullptr;
       size_t n = 0;
       uint64_t idx = 0;
-      if (rn_renderer_next(t.renderer, &video, &audio, &n, &idx) == RN_OK && idx + 1 == t.frame && video)
-        img = ThumbImage::make(video);
+      if (rn_renderer_next(t.renderer, &video, &audio, &n, &idx) == RN_OK && idx + 1 == t.frame && video) {
+        rn_video_frame_info frame{};
+        rn_media_info media{};
+        if (rn_renderer_video_frame(t.renderer, &frame) == RN_OK && rn_renderer_media_info(t.renderer, &media) == RN_OK)
+          img = ThumbImage::make(frame, media, t.nesPicture);
+      }
     }
     rn_renderer_free(t.renderer);
     finishOne(t.job, t.frame, img, img == nullptr && !t.job->cancelled.load());
+    --inFlight_;
   }
 }
 
@@ -107,6 +163,13 @@ void ThumbnailManager::finishOne(const std::shared_ptr<Job>& j, uint64_t frame, 
 void ThumbnailManager::sessionInstalled(rn_session* s) {
   if (job_) job_->cancelled = true;
   job_.reset();
+  {
+    std::lock_guard<std::mutex> lk(qMutex_);
+    sharesMachine_ = s && (rn_core_capabilities(rn_session_core_kind(s)) & RN_CORE_CAP_SHARES_MACHINE);
+    coreBusy_ = false;
+  }
+  unsigned hw = std::thread::hardware_concurrency();
+  resizeWorkers(sharesMachine_ ? 1u : std::max(1u, std::min(3u, hw > 2 ? hw - 2 : 1u)));
   rnf_thumb_cache_reset(cache_, s ? rn_active_take(s) : 0);
   if (step_ > 0) rnf_thumb_cache_set_step(cache_, step_);
   hasTarget_ = false;
@@ -137,9 +200,11 @@ void ThumbnailManager::frameShown(rn_session* s, uint64_t frame) {
   syncTake(s);
   uint64_t take = rn_active_take(s);
   if (!rnf_thumb_cache_wants(cache_, frame, take)) return;
-  const uint32_t* v = rn_video(s);
-  if (!v) return;
-  ThumbImage* img = ThumbImage::make(v);
+  rn_video_frame_info f{};
+  rn_media_info m{};
+  if (rn_session_video_frame(s, &f) != RN_OK || rn_session_media_info(s, &m) != RN_OK) return;
+  ThumbImage* img = ThumbImage::make(f, m, rn_session_core_kind(s) != RN_CORE_EXTERNAL);
+  if (!img) return;
   rnf_thumb_cache_insert(cache_, frame, take, 0, 0, img);
   img->release();
 }
@@ -199,7 +264,12 @@ void ThumbnailManager::reconcile(double now) {
   job_ = j;
 }
 
-void ThumbnailManager::pump(rn_session* s, double now) {
+void ThumbnailManager::pump(rn_session* s, double now, bool coreBusy) {
+  {
+    std::lock_guard<std::mutex> lk(qMutex_);
+    coreBusy_ = coreBusy;
+  }
+  qCv_.notify_all();
   if (!enabled) return;
   // Finished batches: committed in one update (rejected by the cache if stale).
   std::vector<std::shared_ptr<Job>> done;
@@ -230,7 +300,10 @@ void ThumbnailManager::pump(rn_session* s, double now) {
   }
   std::shared_ptr<Job> j = job_;
   if (!j || j->next >= j->targets.size()) return;
-  size_t end = std::min(j->next + kRenderersPerPump, j->targets.size());
+  // Admit at most one shared-machine renderer (including its queued and running phases).
+  // Core creation/seeking is lazy in the worker; an admitted picture may finish once started.
+  if (sharesMachine_ && (coreBusy || inFlight_.load() != 0)) return;
+  size_t end = std::min(j->next + (sharesMachine_ ? 1 : kRenderersPerPump), j->targets.size());
   std::vector<Task> tasks;
   for (; j->next < end; ++j->next) {
     uint64_t f = j->targets[j->next];
@@ -240,7 +313,8 @@ void ThumbnailManager::pump(rn_session* s, double now) {
       finishOne(j, f, nullptr, !j->cancelled.load());
       continue;
     }
-    tasks.push_back(Task{j, r, f});
+    ++inFlight_;
+    tasks.push_back(Task{j, r, f, rn_session_core_kind(s) != RN_CORE_EXTERNAL});
   }
   if (!tasks.empty()) {
     {

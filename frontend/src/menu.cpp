@@ -4,10 +4,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <algorithm>
 #include <memory>
+#include <deque>
 #include <string>
 #include <vector>
 
 #include "common.hpp"
+#include "replaynes/product.h"
+#include "replaynes/replaynes.h"
 
 using namespace rnf;
 
@@ -44,7 +47,9 @@ constexpr uint32_t F_EXPORT = RNF_MENU_FEATURE_EXPORT, F_STREAM = RNF_MENU_FEATU
                    F_STEAM = RNF_MENU_FEATURE_STEAM, F_OSK = RNF_MENU_FEATURE_OSK, F_UPDATES = RNF_MENU_FEATURE_UPDATES,
                    F_SLOW_AUDIO = RNF_MENU_FEATURE_SLOW_AUDIO, F_LOW_LATENCY = RNF_MENU_FEATURE_LOW_LATENCY,
                    F_QUIT = RNF_MENU_FEATURE_QUIT, F_FULLSCREEN = RNF_MENU_FEATURE_FULLSCREEN,
-                   F_UI_SCALE = RNF_MENU_FEATURE_UI_SCALE, F_CORE = RNF_MENU_FEATURE_CORE;
+                   F_UI_SCALE = RNF_MENU_FEATURE_UI_SCALE, F_CORE = RNF_MENU_FEATURE_CORE,
+                   F_LAYOUT_TURBO = RNF_MENU_FEATURE_LAYOUT_TURBO, F_BACKGROUND = RNF_MENU_FEATURE_BACKGROUND,
+                   F_MOUSE = RNF_MENU_FEATURE_MOUSE;
 // The Share page needs one of these.
 constexpr uint32_t F_SHARE_ANY = F_EXPORT | F_STREAM;
 
@@ -67,6 +72,8 @@ const PageDef kPages[] = {
     {"controls.controller", RNF_L("Controller"), "device-gamepad", RNF_MENU_PAGE_CUSTOM, "", 0},
     {"controls.assign", RNF_L("Button Action"), "list", RNF_MENU_PAGE_LIST, "", 0},
     {"controls.keyboard", RNF_L("Keyboard"), "keyboard", RNF_MENU_PAGE_LIST, "", 0},
+    {"controls.turbo_buttons", RNF_L("Buttons"), "device-gamepad", RNF_MENU_PAGE_LIST, "", F_LAYOUT_TURBO},
+    {"controls.turbo_page", RNF_L("Turbo"), "bolt", RNF_MENU_PAGE_SETTINGS, "", F_LAYOUT_TURBO},
     {"controls.detail", RNF_L("More Controls"), "adjustments", RNF_MENU_PAGE_SETTINGS, "", 0},
     {"system.about", RNF_L("ReplayNES Version"), "info-circle", RNF_MENU_PAGE_SETTINGS, "", 0},
     {"about.folders", RNF_L("Folders and License"), "folder", RNF_MENU_PAGE_SETTINGS, "", 0},
@@ -115,19 +122,29 @@ const std::vector<ItemDef>& items() {
        "maximize", CHOICE, "", 0, {RNF_L("Integer"), RNF_L("FILL")}},
       {"settings.display", "display.crt", RNF_L("CRT"), RNF_L("Looks like a CRT TV (display only)"), "device-tv-old", TOGGLE,
        "", F_CRT, {}},
+#if RN_PRODUCT_FLASH_FILTER
       {"settings.display", "display.flash", RNF_L("Reduce Flashing"), RNF_L("Dims hard full-screen flashes (photosensitivity)"),
        "bolt-off", CHOICE, "", 0, {RNF_L("Off"), RNF_L("Low"), RNF_L("Standard"), RNF_L("High")}},
+#endif
       {"settings.display", "display.vtr", RNF_L("VTR Effect"), RNF_L("Videotape-style noise while rewinding (display only)"),
        "rewind-backward-5", TOGGLE, "", 0, {}},
-      {"settings.display", "display.shape", RNF_L("Picture Shape"), RNF_L("8:7 pixels, hide the edges"), "aspect-ratio", PAGE,
+      {"settings.display", "display.shape", RNF_L("Picture Shape"),
+#if RN_PRODUCT_OVERSCAN_CROP
+       RNF_L("8:7 pixels, hide the edges"),
+#else
+       RNF_L("8:7 Pixels"),
+#endif
+       "aspect-ratio", PAGE,
        "display.shape", 0, {}},
       {"settings.display", "display.crt_detail", RNF_L("CRT Details"), RNF_L("Scanlines, afterglow, signal"), "adjustments",
        PAGE, "display.crt", F_CRT, {}},
       // Display > Picture Shape.
       {"display.shape", "display.par87", RNF_L("8:7 Pixels"), RNF_L("The pixel shape of a CRT TV"), "aspect-ratio", TOGGLE,
        "", 0, {}},
+#if RN_PRODUCT_OVERSCAN_CROP
       {"display.shape", "display.overscan", RNF_L("Hide Edges"), RNF_L("Hides 8 pixels on each side, like a TV"),
        "crop", TOGGLE, "", 0, {}},
+#endif
       // Display > CRT details.
       {"display.crt", "crt.lines", RNF_L("Scanlines"), RNF_L("240 = standard; fewer lines is an experiment"), "line-scan", SLIDER,
        "", F_CRT, {}},
@@ -151,6 +168,11 @@ const std::vector<ItemDef>& items() {
        "keyboard", CHOICE, "", F_OSK, {RNF_L("Automatic"), RNF_L("Built-in"), "=Steam"}},
       {"settings.controls", "controls.detail", RNF_L("More"), RNF_L("Turbo, opposite directions, stick"),
        "adjustments", PAGE, "controls.detail", 0, {}},
+      {"settings.controls", "controls.turbo_page", RNF_L("Turbo"), RNF_L("Global and per-button turbo timing"), "bolt",
+       PAGE, "controls.turbo_page", F_LAYOUT_TURBO, {}},
+      {"controls.turbo_page", "controls.turbo", RNF_L("Turbo Speed"), RNF_L("Presses per second"), "bolt", SLIDER, "", 0, {}},
+      {"controls.turbo_page", "controls.turbo_duty", RNF_L("Turbo Press Length"), RNF_L("Frames each turbo press is held"), "clock", SLIDER, "", 0, {}},
+      {"controls.turbo_page", "controls.turbo_buttons", RNF_L("Buttons"), RNF_L("Per-button turbo timing"), "device-gamepad", PAGE, "controls.turbo_buttons", 0, {}},
       // Controls > More.
       {"controls.detail", "controls.rewind_pause", RNF_L("Pause After Rewind"), RNF_L("Pause when rewind / fast-forward is released"),
        "player-pause", TOGGLE, "", 0, {}},
@@ -158,6 +180,8 @@ const std::vector<ItemDef>& items() {
        SLIDER, "", 0, {}},
       {"controls.detail", "controls.turbo_duty", RNF_L("Turbo Press Length"), RNF_L("Frames each turbo press is held"), "clock",
        SLIDER, "", 0, {}},
+      {"controls.detail", "controls.mouse", RNF_L("Mouse"), RNF_L("The mouse moves the sticks, dials and levers of games with analog controls"),
+       "target", TOGGLE, "", F_MOUSE, {}},
       {"controls.detail", "controls.socd", RNF_L("Opposite Directions"), RNF_L("← and → (or ↑ and ↓) pressed together"),
        "arrows-diff", CHOICE, "", 0, {RNF_L("Neutral"), RNF_L("Last Wins"), RNF_L("Both")}},
       {"controls.detail", "controls.stick", RNF_L("Stick Threshold"), RNF_L("How far the stick moves before it counts"),
@@ -195,7 +219,7 @@ const std::vector<ItemDef>& items() {
       {"system.about", "about.folders", RNF_L("Folders and License"), RNF_L("ROM and project folders, settings file"),
        "folder", PAGE, "about.folders", 0, {}},
       // System > ReplayNES Version > Folders and License.
-      {"about.folders", "about.roms", RNF_L("ROM Folder"), RNF_L("Put .nes files here"), "folder", ACTION, "", 0, {}},
+      {"about.folders", "about.roms", RNF_L("ROM Folder"), RN_PRODUCT_NES ? RNF_L("Put .nes files here") : RNF_L("Put ROM zips here (FinalBurn Neo set names)"), "folder", ACTION, "", 0, {}},
       {"about.folders", "about.projects", RNF_L("Projects Folder"), RNF_L("Your recordings are saved here"), "folder", ACTION,
        "", 0, {}},
       {"about.folders", "about.settings", RNF_L("Settings File"), "", "file-text", INFO, "", 0, {}},
@@ -208,10 +232,18 @@ const std::vector<ItemDef>& items() {
       {"system.detail", "system.autosave", RNF_L("Autosave"), RNF_L("How often the recording is saved"), "device-floppy",
        CHOICE, "", 0, {RNF_L("2 s"), RNF_L("3 s"), RNF_L("5 s"), RNF_L("10 s"), RNF_L("30 s")}},
       // Here, not under Controls: Controls and Controls > More are full on Linux (docs/design/UI_REDESIGN.md).
-      {"system.detail", "system.resume_countdown", RNF_L("Resume Countdown"), RNF_L("3, 2, 1 before play resumes after a pause"),
-       "player-play", TOGGLE, "", 0, {}},
+      {"system.detail", "system.resume_countdown", RNF_L("Countdown"),
+       RNF_L("Before play resumes after a pause, and before each practice run (1: the ring alone)"), "player-play", CHOICE,
+       "", 0, {"=3", "=1", RNF_L("None")}},
+#if RN_PRODUCT_FOCUS_PAUSE
+      {"system.detail", "system.background", RNF_L("Play in the Background"),
+       RNF_L("Keep playing and take the controllers while another window is in front"), "player-play", TOGGLE, "",
+       F_BACKGROUND, {}},
+#endif
+#if RN_PRODUCT_FLASH_FILTER
       {"system.detail", "system.flash_badge", RNF_L("Flash Badge"), RNF_L("Show a badge while flashes are reduced"), "bolt-off",
        TOGGLE, "", 0, {}},
+#endif
       {"system.detail", "system.stats", RNF_L("Latency Stats"), RNF_L("Measured latency and timing (F3)"), "chart-line", TOGGLE,
        "", 0, {}},
       // Game.
@@ -255,6 +287,9 @@ const GroupDef* groupOf(const char* id) {
 }  // namespace
 
 struct rnf_menu {
+  std::deque<std::string> ownedText;
+  std::deque<ItemDef> ownedItems;
+  std::deque<PageDef> ownedPages;
   std::vector<Page> pages;
   std::vector<Level> stack;
 
@@ -316,17 +351,75 @@ std::vector<Crumb> crumbsOf(const rnf_menu* m) {
 
 extern "C" {
 
+size_t rnf_product_core_count(void) {
+  size_t count = 0;
+  if (RN_PRODUCT_NES && rn_core_available(RN_CORE_NESTOPIA)) ++count;
+  if (RN_PRODUCT_NES && rn_core_available(RN_CORE_REPLAYNESCORE)) ++count;
+  if (rn_core_available(RN_CORE_EXTERNAL)) ++count;
+  return count;
+}
+
+const char* rnf_product_core_id(size_t index) {
+  if (RN_PRODUCT_NES && rn_core_available(RN_CORE_NESTOPIA)) {
+    if (index == 0) return "nestopia";
+    --index;
+  }
+  if (RN_PRODUCT_NES && rn_core_available(RN_CORE_REPLAYNESCORE)) {
+    if (index == 0) return "replaynescore";
+    --index;
+  }
+  return index == 0 && rn_core_available(RN_CORE_EXTERNAL) ? "external" : nullptr;
+}
+
 rnf_menu* rnf_menu_new(uint32_t features) {
   RNF_GUARD_BEGIN
+  if (rnf_product_core_count() <= 1) features &= ~uint32_t(RNF_MENU_FEATURE_CORE);
   auto m = std::make_unique<rnf_menu>();
   for (const PageDef& d : kPages) {
     if (!featureOK(d.features, features)) continue;
     Page p;
     p.def = &d;
     if (d.kind == RNF_MENU_PAGE_CARDS) p.count = RNF_MENU_MAX_CARDS;
-    for (const ItemDef& it : items())
-      if (std::strcmp(it.page, d.id) == 0 && featureOK(it.features, features)) p.items.push_back({&it});
+    for (const ItemDef& it : items()) {
+      const bool layoutTurbo = (features & F_LAYOUT_TURBO) != 0;
+      const bool globalTurbo = std::strcmp(it.id, "controls.turbo") == 0 || std::strcmp(it.id, "controls.turbo_duty") == 0;
+      if (layoutTurbo && globalTurbo && std::strcmp(it.page, "controls.detail") == 0) continue;
+      // Only layout-aware menus relocate OSK; legacy menus retain their exact row order.
+      const bool moveOsk = layoutTurbo && std::strcmp(it.id, "controls.osk") == 0;
+      const char* page = moveOsk ? "controls.detail" : it.page;
+      if (std::strcmp(page, d.id) != 0 || !featureOK(it.features, features)) continue;
+      if (moveOsk) {
+        m->ownedItems.push_back(it);
+        m->ownedItems.back().page = page;
+        p.items.push_back({&m->ownedItems.back()});
+      } else p.items.push_back({&it});
+    }
     m->pages.push_back(std::move(p));
+  }
+  auto text = [&](std::string value) { m->ownedText.push_back(std::move(value)); return m->ownedText.back().c_str(); };
+  const int buttonList = m->find("controls.turbo_buttons");
+  for (size_t i = 0; buttonList >= 0 && i < rnf_input_button_count(); ++i) {
+    const char* button = rnf_input_button_id(i);
+    char* raw = rnf_input_action_label(button);
+    std::string label = raw ? raw : button;
+    rnf_string_free(raw);
+    if (button[0] == 'p' && button[1] >= '1' && button[1] <= '4' && button[2] == '.')
+      label = trf(RNF_L("%lldP %@"), {argI(button[1] - '0'), argS(label)});
+    std::string id = "controls.button_turbo." + std::to_string(i);
+    const char* pageId = text(id);
+    m->ownedPages.push_back({pageId, text("=" + label), "bolt", RNF_MENU_PAGE_SETTINGS, "", 0});
+    Page child;
+    child.def = &m->ownedPages.back();
+    m->ownedItems.push_back({pageId, text(id + ".mode"), RNF_L("Turbo timing"), RNF_L("Use global or custom timing"), "bolt", CHOICE, "", 0, {RNF_L("Global"), RNF_L("Custom")}});
+    child.items.push_back({&m->ownedItems.back()});
+    m->ownedItems.push_back({pageId, text(id + ".period"), RNF_L("Period"), RNF_L("Frames per turbo cycle"), "clock", SLIDER, "", 0, {}});
+    child.items.push_back({&m->ownedItems.back()});
+    m->ownedItems.push_back({pageId, text(id + ".duty"), RNF_L("Press Length"), RNF_L("Frames held per cycle"), "clock", SLIDER, "", 0, {}});
+    child.items.push_back({&m->ownedItems.back()});
+    m->pages.push_back(std::move(child));
+    m->ownedItems.push_back({"controls.turbo_buttons", pageId, text("=" + label), RNF_L("Per-button turbo timing"), "bolt", PAGE, pageId, 0, {}});
+    m->pages[size_t(buttonList)].items.push_back({&m->ownedItems.back()});
+    ++m->pages[size_t(buttonList)].count;
   }
   // Items opening pages left out by the features are left out too.
   for (Page& p : m->pages)
@@ -365,7 +458,7 @@ int rnf_menu_item_get(const rnf_menu* m, size_t page, size_t item, rnf_menu_item
   out->icon = d->icon;
   out->kind = d->kind;
   out->target = d->target;
-  out->choice_count = d->choices.size();
+  out->choice_count = std::strcmp(d->id, "system.core") == 0 ? rnf_product_core_count() : d->choices.size();
   return 1;
 }
 
@@ -380,6 +473,11 @@ int rnf_menu_item_find(const rnf_menu* m, size_t page, const char* id) {
 const char* rnf_menu_item_choice(const rnf_menu* m, size_t page, size_t item, size_t choice) {
   if (!m || page >= m->pages.size() || item >= m->pages[page].items.size()) return nullptr;
   const ItemDef* d = m->pages[page].items[item].def;
+  if (std::strcmp(d->id, "system.core") == 0) {
+    const char* id = rnf_product_core_id(choice);
+    if (!id) return nullptr;
+    return std::strcmp(id, "nestopia") == 0 ? "=Nestopia" : std::strcmp(id, "replaynescore") == 0 ? "=ReplayNEScore" : "=External";
+  }
   return choice < d->choices.size() ? d->choices[choice] : nullptr;
 }
 

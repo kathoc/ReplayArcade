@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include "vk_renderer.h"
 
 #include <SDL3/SDL_vulkan.h>
@@ -24,7 +25,6 @@ const uint32_t kBlitVert[] = {
 const uint32_t kBlitFrag[] = {
 #include "blit.frag.spv.inc"
 };
-constexpr VkDeviceSize kPictureBytes = VkDeviceSize(RN_VIDEO_WIDTH) * RN_VIDEO_HEIGHT * 4;
 
 PFN_vkWaitForPresentKHR pfnWaitForPresent = nullptr;
 
@@ -71,16 +71,16 @@ bool VkRenderer::init(SDL_Window* window, std::string* error) {
   apiVersion_ = loaderVersion >= VK_API_VERSION_1_3 ? VK_API_VERSION_1_3 : VK_API_VERSION_1_1;
 
   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-  app.pApplicationName = "ReplayNES";
+  app.pApplicationName = RN_PRODUCT_NAME;
   app.applicationVersion = VK_MAKE_VERSION(0, 2, 0);
-  app.pEngineName = "ReplayNES";
+  app.pEngineName = RN_PRODUCT_NAME;
   app.apiVersion = apiVersion_;
   VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
   ici.pApplicationInfo = &app;
   ici.enabledExtensionCount = uint32_t(exts.size());
   ici.ppEnabledExtensionNames = exts.data();
   const char* layers[] = {"VK_LAYER_KHRONOS_validation"};
-  if (const char* v = std::getenv("REPLAYNES_VK_VALIDATION"); v && *v == '1') {
+  if (const char* v = std::getenv(productEnvName("VK_VALIDATION").c_str()); v && *v == '1') {
     ici.enabledLayerCount = 1;
     ici.ppEnabledLayerNames = layers;
   }
@@ -114,20 +114,8 @@ bool VkRenderer::initDevice(std::string* error) {
     vkCreateFence(device_, &fci, nullptr, &s.fence);
     VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     vkCreateSemaphore(device_, &sci, nullptr, &s.acquired);
-    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    // The game picture, then up to kAtlasUploadsPerFrame thumbnails (vk_ui_resources.cpp).
-    bci.size = kPictureBytes + kAtlasUploadsPerFrame * kThumbBytes;
-    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    vkCreateBuffer(device_, &bci, nullptr, &s.staging);
-    VkMemoryRequirements mr;
-    vkGetBufferMemoryRequirements(device_, s.staging, &mr);
-    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    mai.allocationSize = mr.size;
-    mai.memoryTypeIndex = findMemory(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    vkAllocateMemory(device_, &mai, nullptr, &s.stagingMem);
-    vkBindBufferMemory(device_, s.staging, s.stagingMem, 0);
-    vkMapMemory(device_, s.stagingMem, 0, bci.size, 0, &s.stagingPtr);
   }
+  createStaging();
   if (presentWait_) waiter_ = std::thread([this] { waiterLoop(); });
   if (!createGameTexture()) { *error = "game texture"; return false; }
   if (!createAtlas()) { *error = "thumbnail atlas"; return false; }
@@ -173,7 +161,7 @@ bool VkRenderer::createDevice(std::string* error) {
   VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
   f2.pNext = &idF;
   vkGetPhysicalDeviceFeatures2(phys_, &f2);
-  bool disable = std::getenv("REPLAYNES_NO_PRESENT_WAIT") != nullptr;
+  bool disable = std::getenv(productEnvName("NO_PRESENT_WAIT").c_str()) != nullptr;
   presentWait_ = !disable && hasExtension(avail, VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
                  hasExtension(avail, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) && idF.presentId && waitF.presentWait;
   if (presentWait_) {
@@ -239,11 +227,29 @@ uint32_t VkRenderer::findMemory(uint32_t typeBits, VkMemoryPropertyFlags props) 
   return 0;
 }
 
+void VkRenderer::createStaging() {
+  for (Slot& s : slots_) {
+    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    // The game picture, then up to kAtlasUploadsPerFrame thumbnails (vk_ui_resources.cpp).
+    bci.size = pictureBytes() + kAtlasUploadsPerFrame * kThumbBytes;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    vkCreateBuffer(device_, &bci, nullptr, &s.staging);
+    VkMemoryRequirements mr;
+    vkGetBufferMemoryRequirements(device_, s.staging, &mr);
+    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    mai.allocationSize = mr.size;
+    mai.memoryTypeIndex = findMemory(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkAllocateMemory(device_, &mai, nullptr, &s.stagingMem);
+    vkBindBufferMemory(device_, s.staging, s.stagingMem, 0);
+    vkMapMemory(device_, s.stagingMem, 0, bci.size, 0, &s.stagingPtr);
+  }
+}
+
 bool VkRenderer::createGameTexture() {
   VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   ici.imageType = VK_IMAGE_TYPE_2D;
   ici.format = VK_FORMAT_B8G8R8A8_UNORM;  // rn_video is BGRA8: bytes copied unchanged
-  ici.extent = {RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, 1};
+  ici.extent = {media_.max_width, media_.max_height, 1};
   ici.mipLevels = 1;
   ici.arrayLayers = 1;
   ici.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -432,7 +438,7 @@ bool VkRenderer::createPipeline() {
   w.pImageInfo = &ii;
   vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
 
-  VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 4};
+  VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 8};
   VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
   pli.setLayoutCount = 1;
   pli.pSetLayouts = &setLayout_;
@@ -525,6 +531,55 @@ void VkRenderer::newImGuiFrame() {
   if (imguiReady_) ImGui_ImplVulkan_NewFrame();
 }
 
+void VkRenderer::configureMedia(const rn_media_info& media, bool nesPicture) {
+  if (!media.max_width || !media.max_height) return;
+  const bool resize = media_.max_width != media.max_width || media_.max_height != media.max_height;
+  media_ = media;
+  mediaCrt_ = nesPicture && media.rotation == 0;
+  status_.crtAvailable = crtSupported_ && mediaCrt_;
+  if (!resize || !device_) return;
+  vkDeviceWaitIdle(device_);
+  if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
+  if (gameView_) vkDestroyImageView(device_, gameView_, nullptr);
+  if (gameImage_) vkDestroyImage(device_, gameImage_, nullptr);
+  if (gameMem_) vkFreeMemory(device_, gameMem_, nullptr);
+  sampler_ = VK_NULL_HANDLE;
+  gameView_ = VK_NULL_HANDLE;
+  gameImage_ = VK_NULL_HANDLE;
+  gameMem_ = VK_NULL_HANDLE;
+  hasPicture_ = false;
+  for (Slot& s : slots_) {
+    if (s.stagingMem) vkUnmapMemory(device_, s.stagingMem);
+    if (s.staging) vkDestroyBuffer(device_, s.staging, nullptr);
+    if (s.stagingMem) vkFreeMemory(device_, s.stagingMem, nullptr);
+    s.staging = VK_NULL_HANDLE;
+    s.stagingMem = VK_NULL_HANDLE;
+    s.stagingPtr = nullptr;
+  }
+  createStaging();
+  if (!createGameTexture()) { deviceLost_ = true; return; }
+  VkDescriptorImageInfo ii{sampler_, gameView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+  VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  w.dstSet = set_;
+  w.dstBinding = 0;
+  w.descriptorCount = 1;
+  w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w.pImageInfo = &ii;
+  vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+}
+
+uint64_t VkRenderer::drawFrameAndPresent(const rn_video_frame_info* frame, const GameRect& rect,
+                                        ImDrawData* ui, const FrameSignal* signal) {
+  if (frame) {
+    if (!frame->pixels || !frame->width || !frame->height || frame->stride < frame->width ||
+        frame->width > media_.max_width || frame->height > media_.max_height) return 0;
+    frame_ = *frame;
+    mediaCrt_ = mediaCrt_ && frame->width == RN_VIDEO_WIDTH && frame->height == RN_VIDEO_HEIGHT;
+  }
+  status_.crtAvailable = crtSupported_ && mediaCrt_;
+  return drawAndPresent(frame ? frame->pixels : nullptr, rect, ui, signal);
+}
+
 uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui, const FrameSignal* signal) {
   lastHealthy_ = false;
   // A lost device / surface (seen by an earlier call): recreated before anything else.
@@ -539,7 +594,7 @@ uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& 
     crtFailedRestarts_ = 0;
     status_.crtError.clear();
   }
-  bool crtOn = post_.crt && crtSupported_ && !crtGaveUp_;
+  bool crtOn = post_.crt && mediaCrt_ && crtSupported_ && !crtGaveUp_;
   if (crtOn && !crt_.active()) {
     std::string e;
     if (!crt_.ensure(CrtVulkanContext{phys_, device_, queueFamily_, queue_}, renderPass_, &e)) {
@@ -586,7 +641,13 @@ uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& 
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   vkBeginCommandBuffer(cmd, &bi);
   if (newPicture) {
-    std::memcpy(s.stagingPtr, newPicture, size_t(kPictureBytes));
+    if (frame_.stride == frame_.width) {
+      std::memcpy(s.stagingPtr, newPicture, size_t(frame_.width) * frame_.height * 4);
+    } else {
+      for (uint32_t y = 0; y < frame_.height; ++y)
+        std::memcpy(static_cast<uint32_t*>(s.stagingPtr) + size_t(y) * frame_.width,
+                    newPicture + size_t(y) * frame_.stride, size_t(frame_.width) * 4);
+    }
     VkImageMemoryBarrier toDst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toDst.srcAccessMask = hasPicture_ ? VK_ACCESS_SHADER_READ_BIT : 0;
     toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -599,7 +660,7 @@ uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& 
                          nullptr, 1, &toDst);
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.imageExtent = {RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, 1};
+    copy.imageExtent = {frame_.width, frame_.height, 1};
     vkCmdCopyBufferToImage(cmd, s.staging, gameImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
     VkImageMemoryBarrier toRead = toDst;
     toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -650,8 +711,9 @@ uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& 
     int x1 = std::min(int(extent_.width), int(rect.x + rect.w)), y1 = std::min(int(extent_.height), int(rect.y + rect.h));
     VkRect2D sc{{x0, y0}, {uint32_t(std::max(0, x1 - x0)), uint32_t(std::max(0, y1 - y0))}};
     vkCmdSetScissor(cmd, 0, 1, &sc);
-    float uv[4] = {float(rect.crop) / RN_VIDEO_WIDTH, float(rect.crop) / RN_VIDEO_HEIGHT,
-                   float(RN_VIDEO_WIDTH - rect.crop) / RN_VIDEO_WIDTH, float(RN_VIDEO_HEIGHT - rect.crop) / RN_VIDEO_HEIGHT};
+    float uv[8] = {float(rect.crop) / media_.max_width, float(rect.crop) / media_.max_height,
+                   float(frame_.width - rect.crop) / media_.max_width,
+                   float(frame_.height - rect.crop) / media_.max_height, float(media_.rotation), 0, 0, 0};
     vkCmdPushConstants(cmd, pipeLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(uv), uv);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &set_, 0, nullptr);
     vkCmdDraw(cmd, 4, 1, 0, 0);
@@ -850,7 +912,7 @@ bool VkRenderer::recreateDevice() {
   nextDeviceRetry_ = now + 1.0;
   // The ImGui renderer backend goes with the old device (it was up unless a re-creation failed).
   bool imgui = imguiReady_ || imguiWanted_;
-  std::fprintf(stderr, "ReplayNES: display: recreating the Vulkan device (%s)\n", errors_.summary().c_str());
+  std::fprintf(stderr, "%s: display: recreating the Vulkan device (%s)\n", RN_PRODUCT_NAME, errors_.summary().c_str());
   releaseDevice();
   std::string err;
   if (!initDevice(&err)) {
@@ -861,7 +923,7 @@ bool VkRenderer::recreateDevice() {
   if (imgui && !initImGuiBackend()) errors_.note("ImGui_ImplVulkan_Init after device re-creation", 0);
   deviceLost_ = false;
   surfaceLost_ = false;
-  std::fprintf(stderr, "ReplayNES: display: Vulkan device recreated (%s)\n", description_.c_str());
+  std::fprintf(stderr, "%s: display: Vulkan device recreated (%s)\n", RN_PRODUCT_NAME, description_.c_str());
   return true;
 }
 
@@ -890,7 +952,7 @@ bool VkRenderer::recreateSurface() {
   }
   surfaceLost_ = false;
   needRecreate_ = false;
-  std::fprintf(stderr, "ReplayNES: display: Vulkan surface recreated\n");
+  std::fprintf(stderr, "%s: display: Vulkan surface recreated\n", RN_PRODUCT_NAME);
   return createSwapchain();
 }
 
@@ -930,7 +992,7 @@ void VkRenderer::recoverDisplay(bool restart) {
   if (crtFailStreak_ > 0 && ++crtFailedRestarts_ >= 2 && !crtGaveUp_) {
     crtGaveUp_ = true;
     status_.crtError = "CRT stopped after repeated GPU errors (switch it off and on to retry)";
-    std::fprintf(stderr, "ReplayNES: display: CRT builds keep failing after a restart: plain picture\n");
+    std::fprintf(stderr, "%s: display: CRT builds keep failing after a restart: plain picture\n", RN_PRODUCT_NAME);
   }
   plainNext_ = true;
   if (deviceLost_ || !device_) {

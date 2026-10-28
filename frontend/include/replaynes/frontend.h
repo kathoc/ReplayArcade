@@ -36,6 +36,32 @@
 #ifndef REPLAYNES_FRONTEND_H
 #define REPLAYNES_FRONTEND_H
 
+/* Product identity (cmake/Product.cmake generates replaynes/product.h). Builds that do not see the
+ * generated header, such as the macOS Xcode project with its own header search paths, get
+ * ReplayNES's values. */
+#if defined(__has_include)
+#if __has_include("replaynes/product.h")
+#include "replaynes/product.h"
+#endif
+#endif
+#ifndef RN_PRODUCT_VERSION
+#define RN_PRODUCT_VERSION "0.6.4"
+#endif
+#ifndef RN_PRODUCT_WINDOWS_APPCAST_URL
+#define RN_PRODUCT_WINDOWS_APPCAST_URL "https://github.com/kathoc/ReplayNES/releases/latest/download/appcast-windows.xml"
+#endif
+#ifndef RN_PRODUCT_UPDATE_PUBLIC_KEY
+#define RN_PRODUCT_UPDATE_PUBLIC_KEY "epSlR4TX073wn6yhEigPygjpRMr2K39iu9ZbQg3OPgQ="
+#endif
+#ifndef RN_PRODUCT_PROJECT_EXT
+#define RN_PRODUCT_PROJECT_EXT ".nesrec"
+#endif
+#ifndef RN_PRODUCT_FLASH_FILTER
+#define RN_PRODUCT_FLASH_FILTER 1
+#endif
+#ifndef RN_PRODUCT_OVERSCAN_CROP
+#define RN_PRODUCT_OVERSCAN_CROP 1
+#endif
 #include <stddef.h>
 #include <stdint.h>
 
@@ -53,6 +79,8 @@ const char* rnf_last_error(void); /* thread-local; never NULL */
 void rnf_string_free(char* s);
 /* One NTSC frame in seconds (RN_FPS_DEN / RN_FPS_NUM). */
 double rnf_frame_period(void);
+/* Session media period; NULL or zero rate uses the NES default. */
+double rnf_frame_period_for_media(const rn_media_info* media);
 
 /* ================================================================== localization */
 /* "ja" when the first preferred language starts with "ja" (case-insensitive), else "en". */
@@ -87,10 +115,12 @@ char* rnf_l10n_format(const char* key, const rnf_arg* args, size_t count);
  * from its display callback with presentation timestamps (seconds). */
 
 /* DisplayCadence: which display refreshes start a new emulated frame. Locked when the refresh
- * rate is an integer multiple k of the NES rate (every k-th refresh), free otherwise. */
+ * rate is an integer multiple k of the content rate (every k-th refresh), free otherwise. */
 #define RNF_CADENCE_LOCK_TOLERANCE 0.005
 typedef struct rnf_cadence rnf_cadence;
 rnf_cadence* rnf_cadence_new(double frame_period); /* <= 0: rnf_frame_period() */
+/* Relative lock tolerance in [0, 1); 0.015 permits 59.63/60.6 Hz on 60 Hz. */
+rnf_cadence* rnf_cadence_new_with_tolerance(double frame_period, double tolerance);
 rnf_cadence* rnf_cadence_clone(const rnf_cadence* c);
 void rnf_cadence_free(rnf_cadence* c);
 /* One display callback whose picture appears at t. Returns 1 when it starts a new frame. */
@@ -102,12 +132,14 @@ double rnf_cadence_expected_frame_interval(const rnf_cadence* c);
 double rnf_cadence_frame_period(const rnf_cadence* c);
 /* Refreshes per frame for a refresh interval (0 = not a multiple of the frame period). */
 int rnf_refreshes_per_frame(double refresh, double frame_period);
+int rnf_refreshes_per_frame_with_tolerance(double refresh, double frame_period, double tolerance);
 
 /* Displays slower than the emulation rate (40-59 Hz modes, nested compositors, 30 Hz): the
  * refresh interval is longer than the frame period by more than RNF_CADENCE_LOCK_TOLERANCE.
- * Emulation keeps the NES rate by emulating up to RNF_MAX_FRAMES_PER_PRESENT frames for one present
+ * Emulation keeps the content rate by emulating up to RNF_MAX_FRAMES_PER_PRESENT frames for one present
  * (down to 30.05 Hz; slower displays slow the emulation down). */
 #define RNF_MAX_FRAMES_PER_PRESENT 2
+int rnf_display_slower_than_frames_with_tolerance(double refresh, double frame_period, double tolerance);
 int rnf_display_slower_than_frames(double refresh, double frame_period); /* frame_period <= 0: NES */
 
 /* FrameBudget: how many frames one present needs so the emulated time follows the displayed time
@@ -252,16 +284,20 @@ double rnf_audio_rate_ratio(const rnf_audio_rate* a);
 double rnf_audio_rate_target_fill(const rnf_audio_rate* a);
 int rnf_audio_rate_smoothed_fill(const rnf_audio_rate* a, double* out); /* 0 = none yet */
 
-/* AudioResampler: streaming 4-point Hermite resampler (int16 mono, ratio clamped to 0.5...2). */
+/* AudioResampler: streaming 4-point Hermite resampler (interleaved int16, ratio clamped to 0.5...2). */
 typedef struct rnf_resampler rnf_resampler;
-rnf_resampler* rnf_resampler_new(void);
+rnf_resampler* rnf_resampler_new(void); /* mono */
+/* 1 or 2 channels; counts and capacities below are sample frames, not int16 values. */
+rnf_resampler* rnf_resampler_new_with_channels(uint32_t channels);
 rnf_resampler* rnf_resampler_clone(const rnf_resampler* r);
 void rnf_resampler_free(rnf_resampler* r);
 void rnf_resampler_reset(rnf_resampler* r);
-/* Upper bound of the output count of one rnf_resampler_process call with n input samples. */
+/* Upper bound of the output count of one rnf_resampler_process call with n input sample frames. */
 size_t rnf_resampler_output_bound(size_t n);
-/* Resamples n samples; writes the output to out (out_cap >= rnf_resampler_output_bound(n), else
- * RN_ERR_INVALID_ARG and nothing is consumed). *out_count = samples written. */
+/* Resamples n sample frames; out holds out_cap * channels values
+ * (out_cap >= rnf_resampler_output_bound(n), else
+ * RN_ERR_INVALID_ARG and nothing is consumed). *out_count = sample frames written.
+ * Input holds n * channels values; output holds out_cap * channels values. */
 rn_status rnf_resampler_process(rnf_resampler* r, const int16_t* in, size_t n, double ratio, int16_t* out,
                                 size_t out_cap, size_t* out_count);
 
@@ -269,6 +305,9 @@ rn_status rnf_resampler_process(rnf_resampler* r, const int16_t* in, size_t n, d
 #define RNF_FRAME_PACING_CONTINUITY_LIMIT 0.25
 typedef struct rnf_frame_pacing rnf_frame_pacing;
 rnf_frame_pacing* rnf_frame_pacing_new(void);
+/* <= 0: NES default. The counter retains this period across cloning. */
+rnf_frame_pacing* rnf_frame_pacing_new_with_period(double frame_period);
+double rnf_frame_pacing_hitch_interval_for_period(double frame_period);
 rnf_frame_pacing* rnf_frame_pacing_clone(const rnf_frame_pacing* p);
 void rnf_frame_pacing_free(rnf_frame_pacing* p);
 double rnf_frame_pacing_hitch_interval(void); /* 1.5 frame periods */
@@ -314,12 +353,24 @@ typedef struct rnf_binding {
   const char* action; /* engine action, e.g. "p1.a", "hk.pause" */
 } rnf_binding;
 
-typedef enum rnf_action_group { RNF_GROUP_PLAYER1 = 0, RNF_GROUP_PLAYER2 = 1, RNF_GROUP_HOTKEY = 2 } rnf_action_group;
+typedef enum rnf_action_group { RNF_GROUP_PLAYER1 = 0, RNF_GROUP_PLAYER2 = 1, RNF_GROUP_HOTKEY = 2, RNF_GROUP_PLAYER3 = 3, RNF_GROUP_PLAYER4 = 4, RNF_GROUP_SYSTEM = 5 } rnf_action_group;
 typedef struct rnf_action_info {
   const char* id;    /* static */
   rnf_action_group group;
 } rnf_action_info;
 /* All actions in catalog order: player 1, player 2 (10 each), then hotkeys. */
+/* Active session layout; NULL restores the exact legacy NES catalog and defaults.
+ * Catalog pointers stay valid until the next layout change. Call on the UI thread. */
+rn_status rnf_input_set_layout_json(const char* json);
+const char* rnf_input_layout_name(void);
+char* rnf_input_bindings_filename(void);
+/* NES ignores kind; nonzero selects the arcade stick profile. */
+char* rnf_input_bindings_filename_for_kind(int stick);
+uint8_t rnf_input_record_directions(const rn_input_record* record);
+int rnf_input_record_buttons_pressed(const rn_input_record* now, const rn_input_record* previous);
+size_t rnf_input_button_count(void);
+const char* rnf_input_button_id(size_t index);
+char* rnf_input_turbo_rate_label(double fps, int period);
 size_t rnf_input_action_count(void);
 int rnf_input_action_get(size_t index, rnf_action_info* out);
 char* rnf_input_action_label(const char* action_id); /* localized; NULL for unknown ids */
@@ -332,12 +383,17 @@ typedef enum rnf_keyboard_scheme {
 } rnf_keyboard_scheme;
 
 /* Current layout version of saved controller bindings (see migrations below). */
-#define RNF_CONTROLLER_LAYOUT_VERSION 8
+#define RNF_CONTROLLER_LAYOUT_VERSION 9
 /* Default keyboard + controller layout for a scheme (static strings). */
 size_t rnf_input_default_binding_count(rnf_keyboard_scheme scheme);
 int rnf_input_default_binding_get(rnf_keyboard_scheme scheme, size_t index, rnf_binding* out);
 /* Engine config JSON (rn_input_load_json) of the defaults. */
 char* rnf_input_default_config_json(rnf_keyboard_scheme scheme);
+char* rnf_input_default_config_json_for_kind(rnf_keyboard_scheme scheme, int stick);
+/* A saved configuration (not the NES layout) with the defaults of an input device it binds no game
+ * action to ("kb:", "ms:"): the keyboard and the mouse came after the first arcade releases. NULL
+ * when nothing is added. Free with rnf_string_free. */
+char* rnf_input_add_device_defaults(const char* config_json, rnf_keyboard_scheme scheme, int stick);
 /* Controller hotkeys of layout 1 (<= 0.1.x) and layouts 2-7 (pairs in a = input, b = action). */
 rnf_list* rnf_input_legacy_controller_hotkeys(void);
 rnf_list* rnf_input_controller_hotkeys(void);
@@ -353,6 +409,8 @@ size_t rnf_input_config_binding_count(const rnf_input_config* c);
 int rnf_input_config_binding_get(const rnf_input_config* c, size_t index, rnf_binding* out); /* valid until free */
 int rnf_input_config_turbo_period(const rnf_input_config* c);
 int rnf_input_config_turbo_duty(const rnf_input_config* c);
+/* Returns 1 for an override, 0 for global; outputs effective timing in both cases. */
+int rnf_input_config_button_turbo(const rnf_input_config* c, const char* id, int* period, int* duty);
 const char* rnf_input_config_socd(const rnf_input_config* c);
 double rnf_input_config_analog_threshold(const rnf_input_config* c);
 
@@ -396,6 +454,10 @@ void rnf_input_undo_migration(const rnf_binding* bindings, size_t count, rnf_lis
  * on L / R stay). Pause / frame steps are the combo members' gestures (L held + R, R held + L, L / R
  * held + START: docs/design/UI_REDESIGN.md); slow motion stays in the Quick Menu and on the keyboard. */
 void rnf_input_shoulder_step_migration(const rnf_binding* bindings, size_t count, rnf_list** unbind, rnf_list** bind);
+/* Layout 8 -> 9: the Undo of a retry moves from pad 1's L3 alone to L3+R3 together (a soft stick clicked L3 in
+ * play): the default "gc0:leftThumb" -> "hk.undo_take" still present is unbound and
+ * "gc0:leftThumb+gc0:rightThumb" bound instead (unless R3 is already in a combo). Other bindings stay. */
+void rnf_input_undo_chord_migration(const rnf_binding* bindings, size_t count, rnf_list** unbind, rnf_list** bind);
 /* Two-input combo ids "<a>+<b>" (both held: e.g. the Quick Menu's L+R). rnf_input_combo_id: NULL for an empty
  * part. rnf_input_combo_split: 1 and the parts (free with rnf_string_free) when id is a combo. */
 char* rnf_input_combo_id(const char* a, const char* b);
@@ -419,7 +481,10 @@ const char* rnf_face_position_name(rnf_face_position p);    /* "south" ... */
 
 typedef enum rnf_controller_family {
   RNF_FAMILY_NINTENDO = 0, RNF_FAMILY_XBOX = 1, RNF_FAMILY_PLAYSTATION = 2, RNF_FAMILY_GENERIC = 3,
-  RNF_FAMILY_STEAM_DECK = 4
+  RNF_FAMILY_STEAM_DECK = 4,
+  /* Geometry-only families; retain the device family for printed labels. */
+  RNF_FAMILY_ARCADE_STICK = 5, RNF_FAMILY_DIAGRAM_STANDARD = 6,
+  RNF_FAMILY_DIAGRAM_PLAYSTATION = 7, RNF_FAMILY_DIAGRAM_STEAM_DECK = 8
 } rnf_controller_family;
 /* From a product category / name ("Switch Pro Controller", "DualSense", "Xbox One", "Steam Deck")
  * and an optional vendor name. */
@@ -474,6 +539,9 @@ typedef struct rnf_diagram_info {
   double touchpad_x, touchpad_y, touchpad_width, touchpad_height;
   double dpad_anchor_x, dpad_anchor_y, lstick_anchor_x, lstick_anchor_y, rstick_anchor_x, rstick_anchor_y;
 } rnf_diagram_info;
+/* NES (uses_device_kinds == 0) keeps the original family and all drawing data.
+ * Other layouts select decor-free pad geometry or the arcade stick table. */
+rnf_controller_family rnf_diagram_family_for_layout(rnf_controller_family family, int uses_device_kinds, int stick);
 void rnf_diagram_info_get(rnf_controller_family f, rnf_diagram_info* out);
 size_t rnf_diagram_element_count(rnf_controller_family f);
 int rnf_diagram_element_get(rnf_controller_family f, size_t index, rnf_diagram_element* out);
@@ -640,7 +708,7 @@ int rnf_hold_speed(int tick);
  * Not thread-safe. */
 #define RNF_MENU_MAX_ITEMS 6
 #define RNF_MENU_MAX_CARDS 8
-#define RNF_MENU_MAX_DEPTH 4 /* Quick Menu > Settings > Display > CRT details */
+#define RNF_MENU_MAX_DEPTH 5 /* Quick Menu > Controls > Turbo > Buttons > Button timing */
 typedef enum rnf_menu_feature {
   RNF_MENU_FEATURE_EXPORT = 1u << 0,      /* Share > Export MP4 */
   RNF_MENU_FEATURE_STREAM = 1u << 1,      /* Share > Stream output (Syphon / Spout) */
@@ -653,7 +721,10 @@ typedef enum rnf_menu_feature {
   RNF_MENU_FEATURE_QUIT = 1u << 8,        /* System > Quit */
   RNF_MENU_FEATURE_FULLSCREEN = 1u << 9,  /* System > More > Full screen */
   RNF_MENU_FEATURE_UI_SCALE = 1u << 10,   /* System > More > UI size */
-  RNF_MENU_FEATURE_CORE = 1u << 11        /* System > Core (a second core is built in) */
+  RNF_MENU_FEATURE_CORE = 1u << 11,       /* System > Core (a second core is built in) */
+  RNF_MENU_FEATURE_LAYOUT_TURBO = 1u << 12, /* Non-NES layout: global and per-button Turbo pages */
+  RNF_MENU_FEATURE_BACKGROUND = 1u << 13,   /* System > More > Play in the background (RN_PRODUCT_FOCUS_PAUSE) */
+  RNF_MENU_FEATURE_MOUSE = 1u << 14         /* Controls > More > Mouse (non-NES layout: the mouse plays analog controls) */
 } rnf_menu_feature;
 typedef enum rnf_menu_page_kind {
   RNF_MENU_PAGE_TILES = 0,    /* one row of large icon tiles (Quick Menu, Retry, Share, Game) */
@@ -745,7 +816,7 @@ const char* rnf_menu_text(const char* key);
 /* ================================================================== session resume
  * Always-on session persistence. A session folder holds the temporary project of a session
  * without a project, the resume record and the single-instance lock. */
-#define RNF_SESSION_TEMP_PROJECT "current.nesrec"
+#define RNF_SESSION_TEMP_PROJECT "current" RN_PRODUCT_PROJECT_EXT
 #define RNF_SESSION_RESUME_FILE "resume.json"
 #define RNF_SESSION_LOCK_FILE ".lock"
 #define RNF_RESUME_VERSION 1
@@ -937,6 +1008,13 @@ uint64_t rnf_thumb_fallback_window(double step);
 #define RNF_THUMB_WIDTH 128
 #define RNF_THUMB_HEIGHT 120
 void rnf_thumb_downscale(const uint32_t* src, uint32_t* dst);
+/* Media-aware thumbnails: width 128, height follows pixel aspect and clockwise rotation.
+ * Use pixel aspect 1:1 for the legacy NES thumbnail geometry. Size query needs no pixel buffer.
+ * Returns 0 for invalid geometry or insufficient destination capacity (in pixels). */
+int rnf_thumb_size(const rn_video_frame_info* frame, const rn_media_info* media,
+                   uint32_t* width, uint32_t* height);
+int rnf_thumb_downscale_frame(const rn_video_frame_info* frame, const rn_media_info* media,
+                              uint32_t* dst, size_t capacity);
 
 /* Thumbnail cache of the active take keyed by cursor frame. Thread-safe. Payloads are opaque
  * frontend images: the cache calls retain() when it stores one and release() when it drops it;
@@ -1002,7 +1080,7 @@ void rnf_rom_list_free(rnf_rom_list* l);
 typedef struct rnf_project_entry {
   const char* path;
   const char* name; /* without .nesrec */
-  const char* rom_sha256; /* lowercase */
+  const char* rom_sha256; /* File SHA-256 is lowercase; content IDs preserve case. */
   const char* rom_name;
   double modified; /* last save (manifest.json date) */
 } rnf_project_entry;
@@ -1018,12 +1096,27 @@ char* rnf_library_timestamp(double date);          /* "yyyy-MM-dd HHmm", local t
 /* <projects_dir>/<ROM name> <timestamp>.nesrec, " 2", " 3" ... appended if taken. */
 char* rnf_library_new_project_path(const char* projects_dir, const char* rom_name, double date);
 
-/* SHA-256 of ROM files cached by path + size + modification date. Thread-safe. */
+/* Optional content identity. Return nonzero after writing a nonempty NUL-terminated ID
+ * within cap bytes; return zero on failure. NULL restores file SHA-256. Register at startup;
+ * replacing the provider invalidates cached identities. Context must remain valid while used.
+ * Calls are serialized; callbacks must not call the provider setter or identity-cache APIs. */
+typedef int (*rnf_content_id_fn)(const char* path, char* out, size_t cap, void* ctx);
+void rnf_set_content_id_provider(rnf_content_id_fn fn, void* ctx);
+/* Which ROM files the product lists at all (rnf_library_scan_roms): fn(path) == 0 leaves the file out
+ * (ReplayArcade: FinalBurn Neo's home-system sets; it plays arcade games only). NULL: every file of a ROM
+ * extension. */
+typedef int (*rnf_rom_filter_fn)(const char* path, void* ctx);
+void rnf_set_rom_filter(rnf_rom_filter_fn fn, void* ctx);
+
+/* Content IDs (file SHA-256 by default), cached by path + size + modification date. Thread-safe. */
 typedef struct rnf_rom_hash_cache rnf_rom_hash_cache;
 rnf_rom_hash_cache* rnf_rom_hash_cache_new(void);
 void rnf_rom_hash_cache_free(rnf_rom_hash_cache* c);
+/* Allocated opaque identity (rnf_string_free); providers receive a 65536-byte output buffer. */
+rn_status rnf_rom_hash_cache_content_id(rnf_rom_hash_cache* c, const char* path, int64_t size, double modified,
+                                       char** out_id);
 rn_status rnf_rom_hash_cache_sha256(rnf_rom_hash_cache* c, const char* path, int64_t size, double modified,
-                                    char out_hex[65]); /* lowercase */
+                                    char out_hex[65]); /* Content IDs preserve case; maximum 64 bytes. */
 
 /* "Reset Project" backup: "<name> (Before Reset yyyy-MM-dd HH.mm).<ext>" next to the project,
  * " 2", " 3" ... appended while exists(candidate) (NULL: the file system). */
@@ -1188,6 +1281,7 @@ int rnf_record_toggle_restarts_on_play(int recording, int practicing, uint64_t f
  * Branching on purpose = resuming play (rn_step) from an earlier frame in RECORD. Stepping back is
  * rn_seek (take) / rn_rewind (practice). info (may be NULL) reports the session mode afterwards
  * (RECORD stays RECORD); branched is 0 for a replayed step. */
+rn_status rnf_transport_step_record(rn_session* s, const rn_input_record* record, rn_step_info* info);
 rn_status rnf_transport_step(rn_session* s, uint8_t p1, uint8_t p2, uint8_t events, rn_step_info* info);
 
 /* Paused D-pad stepping with key repeat: press steps at once, tick yields the repeats. */
@@ -1215,6 +1309,10 @@ int rnf_step_repeater_direction(const rnf_step_repeater* r);
 #define RNF_PRACTICE_HOLD_SECONDS 0.5
 #define RNF_PRACTICE_REWIND_SECONDS 1.0
 #define RNF_PRACTICE_COUNTDOWN_SECONDS 3.0
+/* The countdown's length (the practice and resume countdowns), 1 ... 3 seconds; RNF_PRACTICE_COUNTDOWN_SECONDS
+ * until set. A frontend shows a 1-second countdown as the ring alone (no numeral). */
+void rnf_countdown_set_seconds(int seconds);
+int rnf_countdown_seconds(void);
 typedef enum rnf_practice_phase {
   RNF_PHASE_PLAYING = 0, RNF_PHASE_HOLDING = 1, RNF_PHASE_REWINDING = 2, RNF_PHASE_COUNTDOWN = 3
 } rnf_practice_phase;
@@ -1296,6 +1394,8 @@ typedef struct rnf_resume_countdown_state {
   double fraction; /* 0...1 within that number's second (rnf_practice_countdown_visual) */
   int done;        /* 1 on the tick it ends: play from this tick on (reported once) */
 } rnf_resume_countdown_state;
+void rnf_resume_countdown_input_record(rnf_resume_countdown* c, const rn_input_record* record);
+int rnf_resume_countdown_apply_record(rnf_resume_countdown* c, rn_input_record* record);
 rnf_resume_countdown* rnf_resume_countdown_new(void);
 rnf_resume_countdown* rnf_resume_countdown_clone(const rnf_resume_countdown* c);
 void rnf_resume_countdown_free(rnf_resume_countdown* c);
@@ -1328,9 +1428,14 @@ int rnf_resume_countdown_apply(rnf_resume_countdown* c, uint8_t* p1, uint8_t* p2
 /* 1 while latched buttons wait for the first frame (until apply / start / cancel). */
 int rnf_resume_countdown_pending(const rnf_resume_countdown* c);
 
-/* Ring of the most recent 256x240 BGRA frames (allocated on first append). */
+/* Ring of recent BGRA pictures; legacy entry points use NES dimensions. */
 typedef struct rnf_frame_history rnf_frame_history;
 rnf_frame_history* rnf_frame_history_new(int capacity);
+rnf_frame_history* rnf_frame_history_new_media(int capacity, const rn_media_info* media);
+/* Copies visible pixels, stripping stride padding. Returns 0 on invalid size or allocation failure. */
+int rnf_frame_history_append_frame(rnf_frame_history* h, const rn_video_frame_info* frame);
+/* View remains valid until its slot is overwritten or storage is released. Returns 0 if absent. */
+int rnf_frame_history_video_frame(const rnf_frame_history* h, int back, rn_video_frame_info* out);
 void rnf_frame_history_free(rnf_frame_history* h);
 void rnf_frame_history_append(rnf_frame_history* h, const uint32_t* frame);
 const uint32_t* rnf_frame_history_frame(const rnf_frame_history* h, int back); /* 0 = newest; NULL out of range */
@@ -1341,13 +1446,17 @@ void rnf_frame_history_release(rnf_frame_history* h); /* clear + free the memory
 
 /* The practice run's reel: display-only pictures for the 1 s sweep back to A (never emulation /
  * determinism). Offer every picture with its position (practice counter, >= 1 = frames since A); it
- * keeps at most `capacity` 256x240 BGRA frames evenly spread from A: with stride k only positions
+ * keeps at most `capacity` BGRA pictures evenly spread from A: with stride k only positions
  * with (position - 1) % k == 0 are kept (the first frame after A always is); when full, every other
  * one is dropped and the stride doubles. Memory is allocated on the first kept frame; dropping
- * frames never moves pixels (slot indirection), so a capture costs one 240 KB copy at most. */
+ * frames never moves pixels (slot indirection), so a capture copies only the current picture. */
 #define RNF_REEL_CAPACITY 120
 typedef struct rnf_reel rnf_reel;
 rnf_reel* rnf_reel_new(int capacity);
+rnf_reel* rnf_reel_new_media(int capacity, const rn_media_info* media);
+/* Sized counterparts of offer/frame; legacy calls use NES dimensions. */
+int rnf_reel_offer_frame(rnf_reel* r, uint64_t position, const rn_video_frame_info* frame);
+int rnf_reel_video_frame(const rnf_reel* r, int i, rn_video_frame_info* out);
 void rnf_reel_free(rnf_reel* r);
 int rnf_reel_offer(rnf_reel* r, uint64_t position, const uint32_t* frame); /* 1 = kept */
 void rnf_reel_truncate(rnf_reel* r, uint64_t position); /* drops frames after position (practice rewind) */
@@ -1364,7 +1473,7 @@ int rnf_reel_sweep_index(const rnf_reel* r, double back);
 /* ------------------------------------------------------------------ VTR effect (display only)
  * Tape-rewind look over the picture while it runs backwards (docs/design/UI_REDESIGN.md, "VTR
  * effect"): two soft tracking-noise bands drifting smoothly, slight line jitter and head-switching
- * skew at the bottom, mild chroma bleed, desaturation. A CPU pass on the 256x240 picture (identical on
+ * skew at the bottom, mild chroma bleed, desaturation. A CPU pass on the current picture (identical on
  * every platform, before the CRT / scaling), run only while active: zero cost otherwise.
  * Photosensitivity: low contrast, no full-screen brightness change (the mean luminance moves < 5 %),
  * the noise changes at 30 Hz inside the bands only, the bands move smoothly; Reduce Flashing
@@ -1394,10 +1503,19 @@ void rnf_vtr_reset(rnf_vtr* v);       /* off at once */
 float rnf_vtr_peak(const rnf_vtr* v, rnf_vtr_kind kind);
 /* in -> out (256x240 BGRA, may not alias). */
 void rnf_vtr_apply(const uint32_t* in, uint32_t* out, const rnf_vtr_params* p);
+/* Arbitrary-size pass; output rows are out_stride pixels apart and may not alias input.
+ * Returns 0 for invalid arguments or allocation failure; writes only visible pixels. */
+int rnf_vtr_apply_frame(const rn_video_frame_info* frame, uint32_t* out, uint32_t out_stride,
+                        const rnf_vtr_params* p);
 
 /* Decaying audio tail built from the last frame's samples (practice reaching B). Returns
  * n * repeats (0 when n or repeats is 0). */
 size_t rnf_audio_fade_tail(const int16_t* last, size_t n, int repeats, int16_t* out, size_t cap);
+/* Interleaved 1 or 2 channels: n, cap and return value are sample frames.
+ * Input holds n * channels values; output holds cap * channels values.
+ * NULL out queries the full size; a shorter cap writes only cap frames. */
+size_t rnf_audio_fade_tail_with_channels(const int16_t* last, size_t n, int repeats, uint32_t channels,
+                                         int16_t* out, size_t cap);
 
 /* Fast-forward = replay the recorded take only (record mode is suspended for the hold). */
 typedef struct rnf_fast_forward rnf_fast_forward;
@@ -1425,22 +1543,39 @@ char* rnf_export_preset_label(const rnf_export_preset* p);
 typedef struct rnf_export_settings {
   rnf_export_preset preset;
   int crop_top, crop_bottom, crop_left, crop_right;
-  int pixel_aspect_87;
+  int pixel_aspect_87; /* media APIs: use the game pixel aspect; zero selects 1:1 */
   uint64_t start_frame, end_frame; /* end 0 = take end */
 } rnf_export_settings;
 /* RN_ERR_INVALID_ARG with a localized *message (may be NULL) when the settings are unusable. */
 rn_status rnf_export_validate(const rnf_export_settings* s, char** message);
+/* Media variants take the current source size; zero width/height selects the media maximum. */
+rn_status rnf_export_validate_media(const rnf_export_settings* s, const rn_media_info* media,
+                                    uint32_t width, uint32_t height, char** message);
 
 typedef struct rnf_export_geometry {
   int canvas_width, canvas_height;
   int dst_x, dst_y, dst_width, dst_height;
   int src_x, src_y, src_width, src_height;
   int vertical_scale;
+  uint32_t rotation; /* clockwise quarter turns; source rectangle stays unrotated */
 } rnf_export_geometry;
 void rnf_export_geometry_compute(const rnf_export_settings* s, rnf_export_geometry* out);
-/* Source column / row of every destination column / row (out: dst_width / dst_height entries). */
+void rnf_export_geometry_compute_media(const rnf_export_settings* s, const rn_media_info* media,
+                                       uint32_t width, uint32_t height, rnf_export_geometry* out);
+/* Source column / row for unrotated geometry (out: dst_width / dst_height entries). */
 void rnf_export_column_map(const rnf_export_geometry* g, int* out);
 void rnf_export_row_map(const rnf_export_geometry* g, int* out);
+/* Map a destination-local pixel through the rotation into the original source; 0 if outside. */
+int rnf_export_source_point(const rnf_export_geometry* g, int x, int y, int* sx, int* sy);
+/* Audio rate is supplied from the core's sample-position model (samples/frame x fps); it can
+ * be fractional. No audio rate is implied by rn_media_info alone. */
+typedef struct rnf_export_timing {
+  uint64_t timescale, frame_duration;
+  uint32_t audio_channels;
+  double audio_sample_rate;
+  uint64_t gop_frames;
+} rnf_export_timing;
+rn_status rnf_export_timing_compute(const rn_media_info* media, double audio_sample_rate, rnf_export_timing* out);
 /* Bit rate choice of the export dialog: the YouTube table scaled by 0.5 / 1 / 2. */
 typedef enum rnf_export_quality { RNF_QUALITY_LIGHT = 0, RNF_QUALITY_STANDARD = 1, RNF_QUALITY_HIGH = 2 } rnf_export_quality;
 #define RNF_QUALITY_COUNT 3
@@ -1456,7 +1591,7 @@ int64_t rnf_export_audio_bitrate(void);
 #define RNF_EXPORT_GOP_FRAMES 30
 typedef struct rnf_export_prediction {
   int64_t video_bitrate, audio_bitrate; /* bit/s */
-  double seconds;                       /* frames x 655171 / 39375000 */
+  double seconds;                       /* frames x media frame period */
   int64_t video_bytes, audio_bytes;     /* rate x duration */
   int64_t container_bytes;              /* MP4 boxes: ftyp/moov headers, per-sample tables, chunk offsets */
   int64_t total_bytes;
@@ -1469,6 +1604,10 @@ typedef struct rnf_export_prediction {
  * fixed boxes). Returns total_bytes; `detail` may be NULL. */
 int64_t rnf_export_predict_size(const rnf_export_geometry* g, int hevc, int quality, uint64_t frames,
                                 rnf_export_prediction* detail);
+/* AAC budget is 128 kbit/s per channel. Invalid media/rate returns zero and clears detail. */
+int64_t rnf_export_predict_size_media(const rnf_export_geometry* g, int hevc, int quality, uint64_t frames,
+                                      const rn_media_info* media, double audio_sample_rate,
+                                      rnf_export_prediction* detail);
 
 typedef enum rnf_stream_size {
   RNF_STREAM_X1 = 0, RNF_STREAM_X2, RNF_STREAM_X3, RNF_STREAM_X4, RNF_STREAM_W1280, RNF_STREAM_W1920
@@ -1476,11 +1615,15 @@ typedef enum rnf_stream_size {
 #define RNF_STREAM_DEFAULT RNF_STREAM_X4
 typedef struct rnf_stream_layout {
   int canvas_width, canvas_height;
-  double x, y, width, height; /* the 256x240 frame inside the canvas (origin top-left) */
+  double x, y, width, height; /* the displayed frame inside the canvas (origin top-left) */
 } rnf_stream_layout;
 rnf_stream_layout rnf_stream_output_layout(rnf_stream_size size, int par87);
+rnf_stream_layout rnf_stream_output_layout_media(rnf_stream_size size, int game_aspect, const rn_media_info* media,
+                                                  uint32_t width, uint32_t height);
 int rnf_stream_output_multiple(rnf_stream_size size); /* 0 for the fixed 4:3 canvases */
 char* rnf_stream_output_label(rnf_stream_size size, int par87);
+char* rnf_stream_output_label_media(rnf_stream_size size, int game_aspect, const rn_media_info* media,
+                                   uint32_t width, uint32_t height);
 
 /* ================================================================== VTR transport UX
  * docs/design/VTR_UX.md: one tape, always running. Playing IS recording; the UI speaks video-deck
@@ -1537,6 +1680,7 @@ int rnf_retry_undo(rnf_retry* r, double now, uint64_t active_take, rn_mode mode,
  *   differs from before or info->branched.
  * rnf_retry_apply_undo: performs the undo (the frontend then pauses there and refreshes its take
  *   state). RN_ERR_NOT_FOUND when not available. */
+rn_status rnf_retry_step_record(rnf_retry* r, rn_session* s, double now, const rn_input_record* record, rn_step_info* info);
 rn_status rnf_retry_step(rnf_retry* r, rn_session* s, double now, uint8_t p1, uint8_t p2, uint8_t events,
                          rn_step_info* info);
 rn_status rnf_retry_apply_undo(rnf_retry* r, rn_session* s, double now);
@@ -1554,6 +1698,8 @@ typedef struct rnf_tape_status {
 char* rnf_tape_status_label(const rnf_tape_status* st);
 /* Play position as m:ss (h:mm:ss from an hour) of a frame count (NTSC rate). */
 char* rnf_tape_time_label(uint64_t frames);
+/* <= 0: NES default. */
+char* rnf_tape_time_label_for_period(uint64_t frames, double frame_period);
 
 /* First-run coach lines (three one-line toasts, each shown once ever; the frontend persists the
  * shown bits): REWIND 5 s after the first game start ("Hold L2 to rewind", with the bound control),
@@ -1597,6 +1743,7 @@ int rnf_video_quality_preset(rnf_export_quality quality); /* inverse */
 const char* rnf_video_quality_label(int preset);          /* localization key */
 /* "15:02 · approx. 91 MB" (the length and the estimate). Free with rnf_string_free. */
 char* rnf_video_summary(uint64_t frames, int64_t bytes);
+char* rnf_video_summary_for_period(uint64_t frames, int64_t bytes, double frame_period);
 
 /* ================================================================== flash reduction (UI) */
 char* rnf_flash_level_label(rn_flash_level level);
@@ -1706,6 +1853,10 @@ void rnf_crt_hiss_free(rnf_crt_hiss* h);
 void rnf_crt_hiss_reset(rnf_crt_hiss* h);
 void rnf_crt_hiss_mix(rnf_crt_hiss* h, int16_t* pcm, size_t n, float hiss);
 float rnf_crt_hiss_level(const rnf_crt_hiss* h); /* level reached by the last call */
+
+/* Product-visible, available core choices, in menu order. IDs are persistent settings values. */
+size_t rnf_product_core_count(void);
+const char* rnf_product_core_id(size_t index);
 
 #ifdef __cplusplus
 }

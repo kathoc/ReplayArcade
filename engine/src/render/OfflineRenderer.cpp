@@ -24,7 +24,9 @@ Status OfflineRenderer::create(const Session& s, uint64_t start, uint64_t end, s
     r->recs_.resize(size_t(end));
   }
   r->rom_ = s.rom();
+  r->romPath_ = s.romPath();
   r->kind_ = s.coreKind();
+  r->media_ = s.mediaInfo();
   r->start_ = start;
   r->end_ = end;
   r->pos_ = r->recBase_;
@@ -34,7 +36,7 @@ Status OfflineRenderer::create(const Session& s, uint64_t start, uint64_t end, s
 
 Status OfflineRenderer::init() {
   core_ = createCore(kind_);
-  RN_TRY(core_->loadROM(rom_.data(), rom_.size()));
+  RN_TRY(core_->loadContent(romPath_, rom_.data(), rom_.size()));
   if (!seed_.empty()) {
     Status st = core_->loadState(seed_.data(), seed_.size());
     if (!st.ok()) return Error(st.code, "render start checkpoint failed to load: " + st.message);
@@ -49,17 +51,17 @@ Status OfflineRenderer::next(const uint32_t** video, const int16_t** audio, size
     if (!core_) RN_TRY(init());
     for (; pos_ < start_; ++pos_) {
       const InputRecord& r = recs_[size_t(pos_ - recBase_)];
-      RN_TRY(core_->stepRecord(r.p1, r.p2, r.events, false));
+      RN_TRY(core_->stepRecord(r, false));
     }
     started_ = true;
   }
   if (pos_ >= end_) return Error(Err::EndOfTake, "render finished");
   const InputRecord& r = recs_[size_t(pos_ - recBase_)];
-  RN_TRY(core_->stepRecord(r.p1, r.p2, r.events, true));
+  RN_TRY(core_->stepRecord(r, true));
   size_t n = 0;
   const int16_t* a = core_->audio(&n);
   running_.u64(core_->videoHash());
-  running_.u64(Session::audioHashOf(a, n));
+  running_.u64(Session::audioHashOf(a, n, core_->mediaInfo().audioChannels));
   if (video) *video = core_->video();
   if (audio) *audio = a;
   if (samples) *samples = n;

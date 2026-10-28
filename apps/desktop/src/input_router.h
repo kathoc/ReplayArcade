@@ -35,14 +35,24 @@ namespace rnl {
 
 struct Settings;
 
+enum class DeviceKind { pad, stick };
+enum class KindOverride { automatic, pad, stick };
+
 struct PadInfo {
   SDL_JoystickID id = 0;
   SDL_Gamepad* pad = nullptr;
   std::string name;
+  std::string guid;
+  DeviceKind detectedKind = DeviceKind::pad;
   rnf_controller_family family = RNF_FAMILY_GENERIC;
   std::map<std::string, std::string> labels;  // printed face labels by element ("face.east" -> "B")
   bool lt = false, rt = false;
   float lx = 0, ly = 0, rx = 0, ry = 0;
+  // The machine's own controls (a Steam Deck's, a Steam Controller): player 1 while no other controller
+  // is; waiting aside (standby) while one is (InputRouter::attach).
+  bool builtIn = false;
+  std::string key;          // this controller's identity across a disconnect (serial, or guid + name)
+  double lastPress = -1e9;  // CLOCK_MONOTONIC s of its last button (the player indicator)
 };
 
 class InputRouter {
@@ -58,6 +68,17 @@ class InputRouter {
 
   /// Saved bindings (or the defaults) + the core's layout migrations.
   void load();
+  void setLayout(const char* json);
+  bool usesDeviceKinds() const { return !nesLayout_; }
+  static DeviceKind detectDeviceKind(SDL_JoystickType type, const std::string& name);
+  DeviceKind deviceKind(int slot) const;
+  KindOverride kindOverride(int slot) const;
+  void setKindOverride(int slot, KindOverride kind);
+  void setEditingSlot(int slot);
+  DeviceKind editingKind() const;
+
+  bool buttonTurbo(const std::string& action, int& period, int& duty) const;
+  void setButtonTurbo(const std::string& action, int period, int duty);
 
   // Hooks.
   std::function<void()> onMenuButton;                    // hk.menu (L+R, Esc), R3 / F1
@@ -75,6 +96,8 @@ class InputRouter {
   /// repeat = true while held; EmulationController::followGesture decides), L or R held + START = 0
   /// (pause: the seek bar).
   std::function<void(int dir, bool repeat)> onPauseGesture;
+  /// L held + START while practising: back to the first marker at once (R held + START still pauses).
+  std::function<void()> onPracticeToA;
   /// L / R held while a marker is edited: the marker moves (-1 / +1) until released.
   std::function<void(int dir, bool down)> onMarkerHold;
   /// L / R in the UI (menus, library): -1 / +1 when pressed (alone: after the chord detector).
@@ -84,6 +107,8 @@ class InputRouter {
 
   /// ui = a menu / the library has the input: nothing reaches the game (all game input released).
   void setUIMode(bool ui);
+  /// Includes the delay between shoulder-step repeats, before another frame is requested.
+  bool stepRepeatHeld() const;
   bool uiMode() const { return ui_; }
   /// Emulation paused state (paused D-pad stepping). Entering pause releases D-pad left/right held
   /// for the game, so a following frame advance does not record them.
@@ -93,12 +118,30 @@ class InputRouter {
   /// Practicing (docs/design/VTR_UX.md): Y stops it (onPracticeStop); everything else is as in play.
   /// The practice countdown has no cancel tap of its own: NES buttons there are game input typed ahead.
   void setPracticing(bool on);
+  bool practiceStopAvailable(int slot) const;
 
   /// One SDL event (keyboard / gamepad). evTime: the event's time on the CLOCK_MONOTONIC clock.
   /// keyboardForUI: ImGui wants the keyboard (text field or menu).
   void handleEvent(const SDL_Event& e, double evTime, bool keyboardForUI);
   /// Every frame after the events (the chord detector's 100 ms window). now: CLOCK_MONOTONIC s.
   void tick(double now);
+
+  /// The mouse as game input ("ms:" ids, frontend input.cpp): the game binds it (a game with analog
+  /// controls). While captured (the app: playing, not paused, window focused; SDL relative mode)
+  /// its buttons, motion and wheel reach the game: "ms:x" / "ms:y" a stick position the motion
+  /// moves, "ms:dx" / "ms:dy" the motion of each frame (dials, trackballs), "ms:wheel" a lever the
+  /// wheel moves, "ms:wheel.up" / ".down" a press of a few frames per notch. Only with Mouse on
+  /// (Settings > Controls > More; off by default). A pad or a game key pressed puts the mouse's stick and
+  /// lever back in the middle (they add to the pad's: left where the mouse put them, they would keep
+  /// the lever pushed); moving the mouse takes them again.
+  bool mouseGame() const;
+  void setMouseCaptured(bool on);
+  /// The window went to the background: every controller's buttons and sticks are let go (the
+  /// app passes it no controller events until it is back).
+  void releaseControllers();
+  bool mouseCaptured() const { return mouseCaptured_; }
+  /// Before each sample of a frame's game input: that frame's motion and wheel presses.
+  void beginMouseFrame();
 
   uint64_t pressSequence() const { return pressSeq_.load(); }
   /// Time of the latest physical change that reached the game (latency measurement).
@@ -107,6 +150,14 @@ class InputRouter {
 
   // Settings diagram / bindings UI.
   const PadInfo& pad(int slot) const { return pads_[slot]; }
+  /// Which player each controller is (docs/design/UI_REDESIGN.md, "Controllers and players"): a controller
+  /// connected while player 1 is the machine's own controls (or nobody) becomes player 1, the built-in ones
+  /// wait aside; it gives player 1 back to them when disconnected. Players 2 to 4 keep their controllers
+  /// (no moving up when one leaves); a controller connected again gets its former player when free.
+  bool standbyConnected() const { return standby_.pad != nullptr; }
+  /// Bumped whenever a controller joins, leaves or changes player (the indicator shows for a while).
+  int playersVersion() const { return playersVersion_; }
+  double playersChanged() const { return playersChanged_; }
   int connectedCount() const;
   /// Slot of the controller used last (-1: none yet); its family picks the UI's button prompts.
   int lastSlot() const { return lastSlot_; }
@@ -141,8 +192,16 @@ class InputRouter {
   void closeAll();
 
  private:
+  void migrateUndoChord(rn_input* profile, const std::string& path);  // layout 8 -> 9 of a saved arcade profile
   void persist();
-  void refreshBindings();
+  rn_input* editingInput() const;
+  std::string kindFile(DeviceKind kind) const;
+  void rebuildRuntime();
+  void loadKindOverrides();
+  void persistKindOverrides();
+  void configureRuntimeBindings();
+  void refreshBindings(bool configureRuntime = true);
+  void noteLastSlot(int slot);
   void setPressed(const std::string& id, bool down, double t, bool game);
   void padButton(int slot, int button, bool down, double t);
   void padAxis(int slot, int axis, float v, double t);
@@ -154,6 +213,10 @@ class InputRouter {
   void updateRepeat();
   bool isGameMember(const std::string& id) const;
   void pumpChord();
+  void pumpUndoChord();
+  void resetUndoChord();
+  /// padButton after the Undo chord: R3 (the menu), capture, the Quick Menu chord, the game.
+  void padButtonRoute(const std::string& id, bool down, double t);
   void routeButton(const std::string& id, bool down, double t);
   bool captureFrom(const std::string& id, bool keyboard);
   bool applyPlan(rnf_list* unbind, rnf_list* bind);
@@ -161,10 +224,34 @@ class InputRouter {
   void attach(SDL_JoystickID id);
   void detach(SDL_JoystickID id);
 
+  void mouseEvent(const SDL_Event& e, double t);
+  void setMouseAxes();
+  bool mouseOn() const;
+  void centerMouse();
+
   rn_input* in_ = nullptr;
+  rn_input* profiles_[2] = {nullptr, nullptr};
+  // The mouse (setMouseCaptured): stick position and lever -1..1, motion since the frame began
+  // (pixels), wheel presses still to give (frames; + = up), the core's dead zones of its axes.
+  bool mouseGame_ = false, mouseCaptured_ = false;
+  float mouseX_ = 0, mouseY_ = 0, mouseLever_ = 0, mouseDx_ = 0, mouseDy_ = 0;
+  int wheelPress_ = 0;
+  float stickDeadzone_ = 0, dialDeadzone_ = 0;
+  int editingSlot_ = -1;
+  std::map<std::string, KindOverride> kindOverrides_;
   std::string file_;
+  std::string baseFile_;
+  std::string layoutJson_;
+  bool nesLayout_ = true;
+  std::map<std::string, std::pair<int, int>> buttonTurbo_;
   Settings* settings_;
   PadInfo pads_[kSlots];
+  PadInfo standby_;                         // the built-in controls while another controller is player 1
+  std::map<std::string, int> formerSlot_;   // PadInfo::key -> the player (slot 1..3) it last was
+  int playersVersion_ = 0;
+  double playersChanged_ = -1e9;
+  void releaseSlot(int s);                  // a slot's held inputs and per-slot state let go
+  void playersMoved();
   bool ui_ = false;
   int lastSlot_ = -1;
   bool pausedStepMode_ = false;
@@ -177,6 +264,9 @@ class InputRouter {
   std::function<void(const std::string&)> capture_;
   bool captureKeysOnly_ = false;
   rnf_chord* chord_ = nullptr;
+  rnf_chord* undoChord_ = nullptr;      // hk.undo_take's combo (L3+R3)
+  std::string undoCombo_;               // the combo id pressed (COMBO_DOWN), released at COMBO_UP
+  std::set<std::string> undoAlone_;     // members passed on alone, released at their release
   std::set<std::string> menuIds_;         // single inputs bound to hk.menu (Esc)
   ConfirmTap confirmTap_;                 // confirm / cancel / up / Y pressed while paused: taps
   int seekFocus_ = 0;

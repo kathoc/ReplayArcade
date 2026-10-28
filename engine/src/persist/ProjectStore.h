@@ -8,7 +8,8 @@
 //   metadata/practice.json   human-readable mirror of the practice slots in index.json
 //   journal/journal.bin      append-only records since generation g (CRC32 per record)
 // Full save = write new data files, index (g+1), mirror, manifest (g+1), reset journal, GC.
-// Autosave = append journal records + fsync. Every write is atomic (temp+fsync+rename) or an
+// Autosave = write new sparse state files, append journal references/records + fsync.
+// Every write is atomic (temp+fsync+rename) or an
 // fsync'ed append that is truncated back on failure.
 #pragma once
 #include <array>
@@ -24,7 +25,8 @@ namespace rn {
 // 2: adds practice slots (meta.practice, practice state files, journal PRACTICE_STATE).
 // Version-1 projects open unchanged (no slots); every save writes version 2.
 constexpr uint32_t kProjectFormatVersion = 2;
-constexpr uint32_t kInputFormatVersion = 1;
+constexpr uint32_t kInputFormatVersion = 1;        // the NES pads (p1, p2, events)
+constexpr uint32_t kInputFormatVersionLayout = 2;  // the core's InputLayout, stored in the manifest
 
 struct OpenReport {
   bool journalApplied = false;   // crash recovery replayed journal records

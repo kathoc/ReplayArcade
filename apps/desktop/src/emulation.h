@@ -118,8 +118,11 @@ class EmulationController {
   std::function<void(const std::string&)> onNotice;
   std::function<void(const std::string& title, const std::string& message)> onError;
   std::function<void(bool paused)> onPausedChanged;
+  std::function<void(const char* json)> onInputLayout;
   /// Count of physical presses so far (the "paused, press R to resume" hint).
   std::function<uint64_t()> pressSequence;
+  /// Just before a frame's game input is sampled in play (the mouse's motion of that frame).
+  std::function<void()> beforeSample;
   FrameObserver* observer = nullptr;
 
   // Preferences.
@@ -146,6 +149,11 @@ class EmulationController {
   /// Closes the session (no save).
   void closeSession();
   rn_session* session() const { return session_; }
+  uint64_t mediaGeneration() const { return mediaGeneration_; }
+  const rn_media_info& media() const { return media_; }
+  rn_video_frame_info videoFrame() const { return {display_.data(), pictureWidth_, pictureHeight_, pictureWidth_}; }
+  double framePeriod() const { return rnf_frame_period_for_media(&media_); }
+  bool crtAvailable() const;
   bool live() const { return session_ && rn_get_mode(session_) == RN_MODE_LIVE; }
 
   struct Tick {
@@ -185,6 +193,11 @@ class EmulationController {
   void resume();
   void setPaused(bool p);
   bool paused() const { return paused_; }
+  /// Foreground transport owns the core until it is paused with no held/pending navigation.
+  bool coreBusy() const;
+  /// Optional checkpoint warm-up, only while paused with no transport work or practice.
+  void idleWork(uint32_t budgetFrames = 4);
+  void setStepRepeatHeld(bool held) { stepRepeatHeld_ = held; }
   void frameAdvance(int n = 1);
   void stepBack(uint64_t n = 1);
   /// Paused D-pad stepping (InputRouter): step now, repeat while held.
@@ -263,7 +276,7 @@ class EmulationController {
 
  private:
   void publishVideo(bool continuous = false);
-  void show(const uint32_t* v);
+  void show(const rn_video_frame_info& frame);
   /// The reception of the picture show() just made (rnf_crt_power: a step, a repeat or a jump).
   void trackReception();
   /// The re-filtered current picture (flash filter while nothing is emulated): a repeat.
@@ -307,11 +320,14 @@ class EmulationController {
   void markStructureDirty() { structureDirty_ = true; }
   void setMuted(bool m);
 
+  uint64_t mediaGeneration_ = 0;
+  rn_media_info media_{RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_FPS_NUM, RN_FPS_DEN, 1, 8, 7, 0};
+  uint32_t pictureWidth_ = RN_VIDEO_WIDTH, pictureHeight_ = RN_VIDEO_HEIGHT;
   rn_session* session_ = nullptr;
   rn_input* input_;
   AudioSink* audio_;
   rn_flash_filter* flash_ = nullptr;
-  rn_flash_level flashLevel_ = RN_FLASH_STANDARD;
+  rn_flash_level flashLevel_ = RN_PRODUCT_FLASH_FILTER ? RN_FLASH_STANDARD : RN_FLASH_OFF;
   std::vector<uint32_t> display_;
   std::vector<uint16_t> displayCodes_ = std::vector<uint16_t>(size_t(RN_VIDEO_WIDTH) * RN_VIDEO_HEIGHT, 0x0F);  // filtered PPU codes of display_
   Signal signal_;
@@ -332,6 +348,7 @@ class EmulationController {
   std::vector<int16_t> hissPcm_;
 
   bool paused_ = true;
+  bool stepRepeatHeld_ = false;
   int slow_ = 1;
   bool followFromPlay_ = false;  // the current follow hold began in play (followGesture)
   int advanceRemaining_ = 0;
@@ -340,6 +357,7 @@ class EmulationController {
   uint8_t pendingEvents_ = 0;
   bool rewinding_ = false, fastForward_ = false;
   int rewindTicks_ = 0, ffTicks_ = 0;  // ticks of the hold (rnf_hold_speed)
+  bool sharesMachine_ = false;  // the session's core shares one machine (CapSharesMachine): rewind every other tick
   uint64_t tickCount_ = 0;
   bool endOfTake_ = false;
   uint64_t lastPressSeq_ = 0;
@@ -367,12 +385,15 @@ class EmulationController {
   bool retryNotice_ = false;
   bool rewindFromPlay_ = false;  // the current rewind hold started during play
   uint64_t rewindStops_ = 0;
+  bool nesLayout_ = true;
+  rn_input_record replayRecord_{};
   uint16_t replayButtons_ = 0xFFFF;  // game buttons seen while watching (0xFFFF: not watching)
   // VTR effect: display_ shows vtrBase_ (the clean picture) through rnf_vtr_apply while active.
   rnf_vtr* vtr_ = nullptr;
   bool vtrEnabled_ = true;
   bool vtrOn_ = false;
   std::vector<uint32_t> vtrBase_;
+  std::vector<uint32_t> vtrTurned_, vtrOut_;  // a rotated game's picture in the screen's orientation
   Signal vtrBaseSignal_;
   // thumbnails
   bool pendingThumb_ = false;

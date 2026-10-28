@@ -107,8 +107,8 @@ int rnf_retry_undo(rnf_retry* r, double now, uint64_t active_take, rn_mode mode,
   return 1;
 }
 
-rn_status rnf_retry_step(rnf_retry* r, rn_session* s, double now, uint8_t p1, uint8_t p2, uint8_t events,
-                         rn_step_info* info) {
+static rn_status retryStep(rnf_retry* r, rn_session* s, double now, uint8_t p1, uint8_t p2, uint8_t events,
+                           const rn_input_record* record, rn_step_info* info) {
   if (!s) return fail(RN_ERR_INVALID_ARG, "null session");
   const rn_mode mode = rn_get_mode(s);
   const bool overwrite = r && rnf_tape_overwrites(mode, rn_frame(s), rn_take_length(s));
@@ -129,7 +129,7 @@ rn_status rnf_retry_step(rnf_retry* r, rn_session* s, double now, uint8_t p1, ui
   }
   rn_step_info local{};
   rn_step_info* si = info ? info : &local;
-  rn_status st = rn_step(s, p1, p2, events, si);
+  rn_status st = record ? rn_step_record(s, record, si) : rn_step(s, p1, p2, events, si);
   if (st != RN_OK) return st;
   if (overwrite) {
     if (plan.discard_take != 0 && plan.discard_take != rn_active_take(s)) (void)rn_take_discard(s, plan.discard_take);
@@ -137,6 +137,17 @@ rn_status rnf_retry_step(rnf_retry* r, rn_session* s, double now, uint8_t p1, ui
   }
   if (r && (mode == RN_MODE_RECORD || mode == RN_MODE_REPLAY)) rnf_retry_note_play(r, now, si->take_id, si->frame);
   return RN_OK;
+}
+
+rn_status rnf_retry_step(rnf_retry* r, rn_session* s, double now, uint8_t p1, uint8_t p2, uint8_t events,
+                         rn_step_info* info) {
+  return retryStep(r, s, now, p1, p2, events, nullptr, info);
+}
+
+rn_status rnf_retry_step_record(rnf_retry* r, rn_session* s, double now, const rn_input_record* record,
+                                rn_step_info* info) {
+  if (!record) return fail(RN_ERR_INVALID_ARG, "null input record");
+  return retryStep(r, s, now, 0, 0, 0, record, info);
 }
 
 rn_status rnf_retry_apply_undo(rnf_retry* r, rn_session* s, double now) {
@@ -173,7 +184,11 @@ char* rnf_tape_status_label(const rnf_tape_status* st) {
 }
 
 char* rnf_tape_time_label(uint64_t frames) {
-  const uint64_t secs = uint64_t(std::floor(double(frames) * rnf_frame_period() + 1e-9));
+  return rnf_tape_time_label_for_period(frames, rnf_frame_period());
+}
+char* rnf_tape_time_label_for_period(uint64_t frames, double frame_period) {
+  if (!(frame_period > 0) || !std::isfinite(frame_period)) frame_period = rnf_frame_period();
+  const uint64_t secs = uint64_t(std::floor(double(frames) * frame_period + 1e-9));
   char buf[32];
   if (secs >= 3600)
     std::snprintf(buf, sizeof buf, "%llu:%02llu:%02llu", (unsigned long long)(secs / 3600),
@@ -287,7 +302,10 @@ const char* rnf_video_quality_label(int preset) {
 }
 
 char* rnf_video_summary(uint64_t frames, int64_t bytes) {
-  char* t = rnf_tape_time_label(frames);
+  return rnf_video_summary_for_period(frames, bytes, rnf_frame_period());
+}
+char* rnf_video_summary_for_period(uint64_t frames, int64_t bytes, double frame_period) {
+  char* t = rnf_tape_time_label_for_period(frames, frame_period);
   std::string len = t ? t : "";
   rnf_string_free(t);
   char size[32];

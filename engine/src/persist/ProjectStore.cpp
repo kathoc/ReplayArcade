@@ -1,4 +1,5 @@
 #include "persist/ProjectStore.h"
+#include "replaynes/product.h"
 
 #include <algorithm>
 #include <set>
@@ -7,10 +8,6 @@
 #include "util/Fs.h"
 #include "util/Hash.h"
 #include "util/Json.h"
-
-#ifndef RN_ENGINE_VERSION
-#define RN_ENGINE_VERSION "0.0.0"
-#endif
 
 namespace rn {
 
@@ -21,7 +18,7 @@ const uint32_t kJrnMagic = 0x4C4A4E52;    // "RNJL"
 const uint32_t kRecMagic = 0x524A4E52;    // "RNJR" (per journal record, for resync/corruption detection)
 const uint32_t kPracMagic = 0x53504E52;   // "RNPS" (practice slot A state)
 const uint32_t kBinVersion = 1;
-enum : uint8_t { J_SEG_NEW = 1, J_SEG_APPEND = 2, J_META = 3, J_PRACTICE_STATE = 4 };
+enum : uint8_t { J_SEG_NEW = 1, J_SEG_APPEND = 2, J_META = 3, J_PRACTICE_STATE = 4, J_SPARSE_STATE = 5 };
 
 const char* kindName(CpKind k) {
   switch (k) {
@@ -81,7 +78,7 @@ std::vector<uint8_t> encodePracticeFile(int slot, const PracticeSlot& p) {
   return w.buf;
 }
 
-std::vector<uint8_t> encodeSegment(const Segment& s) {
+std::vector<uint8_t> encodeSegment(const Segment& s, uint32_t recordBytes) {
   ByteWriter w;
   w.u32(kSegMagic);
   w.u32(kBinVersion);
@@ -90,12 +87,12 @@ std::vector<uint8_t> encodeSegment(const Segment& s) {
   w.u64(s.start);
   w.u64(s.createdSeq);
   w.u64(s.records.size());
-  encodeRecords(s.records.data(), s.records.size(), w.buf);
+  encodeRecords(s.records.data(), s.records.size(), w.buf, recordBytes);
   w.u32(crc32(w.buf.data(), w.buf.size()));
   return w.buf;
 }
 
-Status decodeSegment(const std::string& name, const std::vector<uint8_t>& b, Segment& s) {
+Status decodeSegment(const std::string& name, const std::vector<uint8_t>& b, Segment& s, uint32_t recordBytes) {
   if (b.size() < 4 + 4 + 8 * 5 + 4) return Error(Err::Corrupt, "segment file truncated: " + name);
   uint32_t stored = uint32_t(b[b.size() - 4]) | uint32_t(b[b.size() - 3]) << 8 | uint32_t(b[b.size() - 2]) << 16 |
                     uint32_t(b[b.size() - 1]) << 24;
@@ -110,7 +107,7 @@ Status decodeSegment(const std::string& name, const std::vector<uint8_t>& b, Seg
   uint64_t count = r.u64();
   if (!r.ok() || count > (uint64_t(1) << 32)) return Error(Err::Corrupt, "bad segment header: " + name);
   size_t pos = r.pos();
-  if (!decodeRecords(b.data() + pos, b.size() - 4 - pos, count, s.records))
+  if (!decodeRecords(b.data() + pos, b.size() - 4 - pos, count, s.records, recordBytes))
     return Error(Err::Corrupt, "bad segment records: " + name);
   return Status::Ok();
 }
@@ -378,7 +375,7 @@ Status ProjectStore::fullSave(Session& s) {
   for (auto& kv : s.tl_.mutableSegments()) {
     Segment& seg = kv.second;
     if (seg.fileCount == seg.records.size() && seg.journalCreated && fs::exists(path(segRel(seg.id)))) continue;
-    std::vector<uint8_t> b = encodeSegment(seg);
+    std::vector<uint8_t> b = encodeSegment(seg, s.layout_.recordBytes);
     RN_TRY(fs::writeFileAtomic(path(segRel(seg.id)), b.data(), b.size()));
   }
   for (auto& kv : s.cps_.all()) {
@@ -463,17 +460,26 @@ Status ProjectStore::fullSave(Session& s) {
   RN_TRY(fs::writeFileAtomic(path("metadata/practice.json"), pm.dump()));
 
   Json man = Json::object();
-  man.set("format", "replaynes-project");
+  man.set("format", RN_PRODUCT_PROJECT_FORMAT);
   man.set("formatVersion", kProjectFormatVersion);
-  man.set("appVersion", RN_ENGINE_VERSION);
+  man.set("appVersion", RN_PRODUCT_VERSION);
   man.set("generation", newGen);
   man.set("coreCompatId", s.core_->compatId());
   man.set("coreBuild", s.core_->buildId());
   man.set("stateFormatVersion", s.core_->stateFormatVersion());
-  man.set("inputFormatVersion", kInputFormatVersion);
-  man.set("region", "NTSC");
+  if (s.layout_.isNes()) {  // inputFormatVersion 1: the NES pads, exactly as always
+    man.set("inputFormatVersion", kInputFormatVersion);
+    man.set("region", "NTSC");
+  } else {  // the core's own input layout travels with the project
+    Json layout;
+    Json::parse(s.layout_.toJson(), layout);
+    man.set("inputFormatVersion", kInputFormatVersionLayout);
+    man.set("inputLayout", layout);
+  }
   Json rom = Json::object();
   rom.set("sha256", s.romSha_);
+  // The core identifies its content (an arcade set): "sha256" holds that id, not the file's hash.
+  if (!s.core_->contentId().empty()) rom.set("identity", "content");
   rom.set("size", uint64_t(s.rom_.size()));
   rom.set("lastPath", s.romPath_);
   rom.set("name", baseName(s.romPath_));
@@ -522,11 +528,27 @@ Status ProjectStore::autosave(Session& s) {
         p.u64(seg.id);
         p.u64(off);
         p.u64(n);
-        encodeRecords(seg.records.data() + off, size_t(n), p.buf);
+        encodeRecords(seg.records.data() + off, size_t(n), p.buf, s.layout_.recordBytes);
         putRecord(w, J_SEG_APPEND, p.buf);
       }
     }
     pend.push_back({&seg, seg.records.size()});
+  }
+  ByteWriter sparseRecords;
+  std::vector<uint64_t> pendStates;
+  for (const auto& kv : s.cps_.all()) {
+    const Checkpoint& c = kv.second;
+    if (c.kind != CpKind::Sparse || c.persisted) continue;
+    const auto b = encodeState(c);
+    // The durable file must precede its reference. An interrupted append leaves only an orphan.
+    RN_TRY(fs::writeFileAtomic(path(stateRel(c.id)), b.data(), b.size()));
+    ByteWriter p;
+    p.u64(c.id);
+    p.u64(c.frame);
+    p.u64(c.owner);
+    p.u32(c.crc);
+    putRecord(sparseRecords, J_SPARSE_STATE, p.buf);
+    pendStates.push_back(c.id);
   }
   std::vector<PracticeSlot*> pendSlots;
   for (int i = 0; i < kPracticeSlots; ++i) {
@@ -540,6 +562,8 @@ Status ProjectStore::autosave(Session& s) {
   std::string meta = metaJson(s);
   bool metaChanged = meta != lastMeta_;
   if (metaChanged) putRecord(w, J_META, std::vector<uint8_t>(meta.begin(), meta.end()));
+  // META establishes the active head before a crash can tear a sparse reference.
+  if (!sparseRecords.buf.empty()) w.bytes(sparseRecords.buf.data(), sparseRecords.buf.size());
   if (w.buf.empty()) return Status::Ok();
 
   const std::string jp = path(kJournalRel);
@@ -554,6 +578,7 @@ Status ProjectStore::autosave(Session& s) {
     p.seg->journalCreated = true;
     p.seg->journalCount = p.newCount;
   }
+  for (uint64_t id : pendStates) s.cps_.getMutable(id)->persisted = true;
   for (PracticeSlot* p : pendSlots) p->stateJournaled = true;
   if (metaChanged) lastMeta_ = meta;
   return Status::Ok();
@@ -568,24 +593,36 @@ Status ProjectStore::open(const std::string& dir, const std::string& romOverride
 
   Json man;
   RN_TRY(parseJsonFile(ps->path("manifest.json"), man));
-  if (man["format"].asString() != "replaynes-project") return Error(Err::Corrupt, "not a ReplayNES project");
+  if (man["format"].asString() != RN_PRODUCT_PROJECT_FORMAT) return Error(Err::Corrupt, "not a " RN_PRODUCT_NAME " project");
   int64_t fv = man["formatVersion"].asInt(-1);
   if (fv < 1) return Error(Err::Corrupt, "manifest has no formatVersion");
   if (fv > int64_t(kProjectFormatVersion))  // 1..kProjectFormatVersion are read
     return Error(Err::UnsupportedFormat, "project format " + std::to_string(fv) + " is newer than supported " +
                                              std::to_string(kProjectFormatVersion));
-  if (man["inputFormatVersion"].asInt(-1) != kInputFormatVersion)
+  InputLayout storedLayout = InputLayout::nes();
+  const int64_t ifv = man["inputFormatVersion"].asInt(-1);
+  if (ifv == kInputFormatVersion) {
+    if (man["region"].asString() != "NTSC") return Error(Err::UnsupportedFormat, "unsupported region");
+  } else if (ifv == kInputFormatVersionLayout) {
+    Status ls = InputLayout::fromJson(man["inputLayout"].dump(0), storedLayout);
+    if (!ls.ok()) return Error(Err::Corrupt, "bad inputLayout in manifest: " + ls.message);
+  } else {
     return Error(Err::UnsupportedFormat, "unsupported inputFormatVersion");
-  if (man["region"].asString() != "NTSC") return Error(Err::UnsupportedFormat, "unsupported region");
+  }
 
   // Core compatibility: refuse anything that is not bit-exactly this core.
   const std::string compat = man["coreCompatId"].asString();
   SessionOptions opt = optIn;
   if (!coreForCompatId(compat, opt.core) || !(coreCapabilities(opt.core) & CapRecording))
+#if RN_PRODUCT_NES
     return Error(Err::CoreMismatch, "project was recorded with core '" + compat + "' (build '" +
                                         man["coreBuild"].asString() + "'); this build provides '" +
                                         coreCompatId(CoreKind::Nestopia) +
-                                        "'. Open it with a matching ReplayNES build (see COMPATIBILITY.md).");
+                                        "'. Open it with a matching " RN_PRODUCT_NAME " build (see COMPATIBILITY.md).");
+#else
+    return Error(Err::CoreMismatch, "project was recorded with core '" + compat +
+                                        "': core not available in this product or does not support recording");
+#endif
 
   // ROM: never stored; located by override or last path, verified by SHA-256.
   const Json& romJ = man["rom"];
@@ -598,7 +635,8 @@ Status ProjectStore::open(const std::string& dir, const std::string& romOverride
       return Error(Err::RomNotFound, "ROM not found at '" + romPath + "' (expected SHA-256 " + wantSha + ")");
     return rs;
   }
-  std::string gotSha = Sha256::hex(rom.data(), rom.size());
+  const bool contentIdentity = romJ["identity"].asString() == "content";
+  std::string gotSha = contentIdentity ? wantSha : Sha256::hex(rom.data(), rom.size());  // content: checked after power-on
   if (gotSha != wantSha)
     return Error(Err::RomMismatch, "ROM '" + romPath + "' has SHA-256 " + gotSha + ", project expects " + wantSha);
 
@@ -619,6 +657,7 @@ Status ProjectStore::open(const std::string& dir, const std::string& romOverride
   s->rom_ = std::move(rom);
   s->romPath_ = romPath;
   s->romSha_ = gotSha;
+  s->layout_ = storedLayout;  // decodes the records; checked against the core after power-on
 
   for (auto& e : idx["segments"].items()) {
     uint64_t id = uint64_t(e["id"].asInt());
@@ -628,7 +667,7 @@ Status ProjectStore::open(const std::string& dir, const std::string& romOverride
     Status st = fs::readFile(ps->path(rel), b);
     if (!st.ok()) return Error(Err::Corrupt, "cannot read " + rel + ": " + st.message);
     Segment seg;
-    RN_TRY(decodeSegment(rel, b, seg));
+    RN_TRY(decodeSegment(rel, b, seg, s->layout_.recordBytes));
     if (seg.id != id || seg.parent != uint64_t(e["parent"].asInt()) || seg.start != uint64_t(e["start"].asInt()))
       return Error(Err::Corrupt, "segment header disagrees with index: " + rel);
     if (seg.records.size() < count) return Error(Err::Corrupt, "segment shorter than index says: " + rel);
@@ -763,11 +802,42 @@ Status ProjectStore::open(const std::string& dir, const std::string& romOverride
             uint64_t id = p.u64(), off = p.u64(), n = p.u64();
             if (!p.ok() || n > (uint64_t(1) << 32)) return Error(Err::Corrupt, "bad journal SEG_APPEND");
             std::vector<InputRecord> recs;
-            if (!decodeRecords(body + 1 + p.pos(), len - 1 - p.pos(), n, recs))
+            if (!decodeRecords(body + 1 + p.pos(), len - 1 - p.pos(), n, recs, s->layout_.recordBytes))
               return Error(Err::Corrupt, "bad journal records");
             RN_TRY(s->tl_.appendLoaded(id, off, recs));
             Segment& seg = s->tl_.mutableSegments().at(id);
             seg.journalCount = seg.records.size();
+            break;
+          }
+          case J_SPARSE_STATE: {
+            const uint64_t id = p.u64(), frame = p.u64(), owner = p.u64();
+            const uint32_t crc = p.u32();
+            if (!p.ok() || p.remaining() || id == 0 || id == UINT64_MAX)
+              return Error(Err::Corrupt, "bad journal SPARSE_STATE");
+            // Reserve even a dropped cache's id so future writes cannot alias this reference.
+            s->cps_.setNextId(id + 1);
+            const std::string rel = stateRel(id);
+            Checkpoint c;
+            std::vector<uint8_t> b;
+            Status st = fs::readFile(ps->path(rel), b);
+            if (st.ok()) st = decodeState(rel, b, c);
+            if (st.ok() && (c.id != id || c.frame != frame || c.owner != owner ||
+                            c.crc != crc || c.kind != CpKind::Sparse))
+              st = Error(Err::Corrupt, "state metadata disagrees with journal: " + rel);
+            if (st.ok() && c.compat != compat)
+              st = Error(Err::CoreMismatch, "state " + rel + " was produced by core '" + c.compat + "'");
+            if (!st.ok()) {
+              if (opt.dropCorruptStates && st.code != Err::CoreMismatch) {
+                rep.droppedStates.push_back(rel + ": " + st.message);
+                break;
+              }
+              if (st.code == Err::Corrupt || st.code == Err::NotFound)
+                return Error(Err::Corrupt, st.message +
+                    " (states are a cache: reopen with drop-corrupt-states to discard)");
+              return st;
+            }
+            c.persisted = true;
+            RN_TRY(s->cps_.insertLoaded(std::move(c)));
             break;
           }
           case J_PRACTICE_STATE: {
@@ -824,6 +894,12 @@ Status ProjectStore::open(const std::string& dir, const std::string& romOverride
   uint64_t cursor = s->frame_;
   s->frame_ = 0;
   RN_TRY(s->powerOnFresh());
+  if (contentIdentity && s->core_->contentId() != wantSha)
+    return Error(Err::RomMismatch, "'" + romPath + "' is content '" + s->core_->contentId() + "', project expects '" +
+                                       wantSha + "'");
+  if (s->layout_ != storedLayout)
+    return Error(Err::CoreMismatch, "the project's input layout '" + storedLayout.name +
+                                        "' differs from the core's '" + s->layout_.name + "'");
   RN_TRY(s->resync(cursor, true));
 
   s->recovered_ = rep.journalApplied;

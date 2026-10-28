@@ -115,6 +115,7 @@ class UI : public DialogHost {
   bool wantsKeyboard() const;
   /// hk.menu (L+R, Esc, the pill): the Quick Menu on / off (the library: Settings on / off).
   void toggleMenu();
+  void inputLayoutChanged();
   void setMenu(bool open);
   bool menuOpen() const { return menuOpen_; }
   /// Id of the menu page shown ("" when the menu is closed); script / test hooks.
@@ -131,6 +132,10 @@ class UI : public DialogHost {
   /// Pad 1's gestures (InputRouter::onPauseGesture): 0 = pause (the seek bar); -1 / +1 = R held + L /
   /// L held + R (EmulationController::followGesture: in play slow 1/2 / pause, paused a frame step).
   void pauseGesture(int dir, bool repeat = false);
+  /// L + START while practising: back to the first marker at once.
+  void practiceToA();
+  /// The selected practice section, 1 ... 8 (the seek bar's markers stand for it).
+  int selectedSection() const;
   /// Y while practicing (InputRouter::onPracticeStop): stop practice.
   void stopPracticeFromPad();
   /// The seek bar's focus for the InputRouter: 0 the bar, 1 a marker, 2 editing.
@@ -290,7 +295,7 @@ class UI : public DialogHost {
   /// The bottom-right chips of the seek bar's hints row / the play overlay; returns their left edge.
   float buildChips(ImDrawList* dl, float right, float y, float h);
   /// The input bound to `action`: pad 1's element ("leftThumb") or a keyboard key's name; "" if none.
-  std::string boundPadElement(const char* action) const;
+  std::string boundPadElement(const char* action, bool combos = false) const;  // combos: "<a>+<b>" too
   std::string boundKeyName(const char* action) const;
   /// The first-run coach toasts (rnf_coach; persisted in Settings::coachShown).
   void tickCoach(double now);
@@ -301,6 +306,10 @@ class UI : public DialogHost {
   void buildCountdown();
   void toggleCountdown();
   void buildBadges();
+  /// "■■□□" top left: which players have a controller (filled), the one pressed lights up; while paused
+  /// and for a few seconds after a controller joins, leaves or changes player.
+  void buildPlayers(double now);
+  float playersW_ = 0;  // its width this frame (the flash badge goes after it)
   bool thumbImage(ThumbRef& img, ImTextureID* tex, ImVec2* uv0, ImVec2* uv1);
 
   // ---- ui_osk.cpp
@@ -332,6 +341,7 @@ class UI : public DialogHost {
   UiMetrics metrics_;
   ImFont* font_ = nullptr;
   bool menuOpen_ = false;
+  std::string inputCatalog_;
   rnf_menu* menu_ = nullptr;
   uint32_t menuFeatures_ = 0;
   bool hadSession_ = false;
@@ -357,6 +367,8 @@ class UI : public DialogHost {
   int libBar_ = 0;     // focused item of that row
   int libPage_ = 0;
   bool libMoved_ = false;  // the user moved the focus since the library showed
+  float libWheel_ = 0;     // mouse wheel turned since the last page turn (notches)
+  uint64_t libPicturesFor_ = ~uint64_t(0);  // library version whose ROM pictures are queued
   std::string libFocusPath_;     // focus this ROM once a scan lists it (Add Test Cartridge)
   double libFocusPathUntil_ = 0;
   std::string projectsRomPath_;  // the projects page's ROM
@@ -367,8 +379,10 @@ class UI : public DialogHost {
   bool thumbSaveWanted_ = false;
   // Settings.
   int diagramFocus_ = 0;
+  bool controlsEditingSelected_ = false;
   std::vector<std::string> diagramIds_;  // this frame's diagram elements (physical ids) ...
   std::vector<ImVec2> diagramCenters_;   // ... and where they are (D-pad navigation)
+  std::vector<int> diagramHubs_;         // ... and their stick's click (diagramFocusNext), -1: none
   std::string assignElement_;  // physical id whose action is picked on "controls.assign"
   std::string capturingAction_;
 #if RNL_HAVE_STEAM
@@ -406,6 +420,8 @@ class UI : public DialogHost {
   int markerHoldDir_ = 0, markerHoldTicks_ = 0;  // L / R held while editing (rnf_hold_speed)
   double markerHintUntil_ = 0, markerNow_ = 0;
   std::string markerHint_;
+  std::vector<uint64_t> sectionMarkers(int slot) const;
+  void markerNotice(const std::string& text);
   // Timeline (seek bar).
   enum class Drag { none, scrub, select, handle, body, ignore };
   Drag drag_ = Drag::none;
@@ -447,7 +463,7 @@ class UI : public DialogHost {
   bool exportDialog_ = false;
   bool exportOpened_ = false;
   bool exportStarted_ = false;
-  bool exportCropOverscan_ = true;
+  bool exportCropOverscan_ = RN_PRODUCT_OVERSCAN_CROP;
   bool exportPar87_ = false;
   bool exportApplyFlash_ = true;
   bool exportApplyCRT_ = false;
