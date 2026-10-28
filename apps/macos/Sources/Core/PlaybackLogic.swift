@@ -273,11 +273,14 @@ final class VTREffect {
 enum AudioFade {
     /// A short decaying tail built from the last frame's samples, pushed once when practice
     /// reaches B: the sound dies away instead of being cut (no click), the picture stays.
-    static func tail(from last: UnsafeBufferPointer<Int16>, repeats: Int = 4) -> [Int16] {
-        guard let base = last.baseAddress, last.count > 0, repeats > 0 else { return [] }
-        let n = rnf_audio_fade_tail(base, last.count, Int32(clamping: repeats), nil, 0)
-        var out = [Int16](repeating: 0, count: n)
-        _ = out.withUnsafeMutableBufferPointer { rnf_audio_fade_tail(base, last.count, Int32(clamping: repeats), $0.baseAddress, n) }
+    /// `channels`: interleaved values per sample frame (the session's audio).
+    static func tail(from last: UnsafeBufferPointer<Int16>, channels: Int = 1, repeats: Int = 4) -> [Int16] {
+        let frames = last.count / max(1, channels)
+        guard let base = last.baseAddress, frames > 0, repeats > 0 else { return [] }
+        let ch = UInt32(max(1, channels))
+        let n = rnf_audio_fade_tail_with_channels(base, frames, Int32(clamping: repeats), ch, nil, 0)
+        var out = [Int16](repeating: 0, count: n * Int(ch))
+        _ = out.withUnsafeMutableBufferPointer { rnf_audio_fade_tail_with_channels(base, frames, Int32(clamping: repeats), ch, $0.baseAddress, n) }
         return out
     }
 }

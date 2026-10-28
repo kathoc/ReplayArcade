@@ -22,19 +22,13 @@ enum ThumbnailStore {
         return dir?.appendingPathComponent("r-\(sha.prefix(24)).png")
     }
 
-    static func save(pixels: [UInt32], project: String?, romSHA: String?, on queue: DispatchQueue, done: @escaping () -> Void) {
+    static func save(_ picture: VideoPicture, project: String?, romSHA: String?, on queue: DispatchQueue, done: @escaping () -> Void) {
         guard let dir else { return }
         let targets = [project.flatMap { url(project: $0) }, romSHA.flatMap { url(romSHA: $0) }].compactMap { $0 }
         guard !targets.isEmpty else { return }
         queue.async {
-            let w = Int(RN_VIDEO_WIDTH), h = Int(RN_VIDEO_HEIGHT), crop = 8
-            let data = pixels.withUnsafeBufferPointer { Data(buffer: $0) }
-            guard let provider = CGDataProvider(data: data as CFData),
-                  let full = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
-                                     space: CGColorSpaceCreateDeviceRGB(),
-                                     bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
-                                     provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
-                  let img = full.cropping(to: CGRect(x: 0, y: crop, width: w, height: h - 2 * crop)) else { return }
+            // The NES picture without its overscan rows (256x224); another core's picture whole and upright.
+            guard let img = picture.cgImage(crop: picture.geometry.isNESPicture ? 8 : 0) else { return }
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             for u in targets {
                 guard let dest = CGImageDestinationCreateWithURL(u as CFURL, UTType.png.identifier as CFString, 1, nil) else { continue }
@@ -50,7 +44,7 @@ enum ThumbnailStore {
     /// thumbnail; `done` runs on the main thread when it is there. Asked by the library for the cards
     /// on screen; each ROM at most once per run (a ROM the engine cannot run keeps its name tile).
     /// docs/design/UI_REDESIGN.md "A picture for every ROM" (the same as macOS).
-    static let romPictureFrame = 300
+    static let romPictureFrame = Int(RN_PRODUCT_LIBRARY_PICTURE_FRAME)
     private static var asked = Set<String>()  // main thread
     private static let pictureQueue = DispatchQueue(label: "replaynes.rom-picture", qos: .utility)
     static func requestRomPicture(path: String, sha: String?, done: @escaping () -> Void) {
@@ -62,9 +56,8 @@ enum ThumbnailStore {
             for _ in 0..<romPictureFrame {
                 if rn_step(s, 0, 0, 0, nil) != RN_OK { return }
             }
-            guard let v = rn_video(s) else { return }
-            let px = Array(UnsafeBufferPointer(start: v, count: Int(RN_VIDEO_WIDTH) * Int(RN_VIDEO_HEIGHT)))
-            save(pixels: px, project: nil, romSHA: sha, on: pictureQueue, done: done)
+            guard let picture = VideoPicture(session: s) else { return }
+            save(picture, project: nil, romSHA: sha, on: pictureQueue, done: done)
         }
     }
 

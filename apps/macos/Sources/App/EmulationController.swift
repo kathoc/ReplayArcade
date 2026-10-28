@@ -78,6 +78,8 @@ private final class DisplayLinkProxy: NSObject, CAMetalDisplayLinkDelegate {
 
 /// UI-facing snapshot of the emulation state (published ~20 Hz).
 struct EmuStatus: Equatable {
+    /// The session's picture geometry (the viewport's size, rotation and pixel aspect).
+    var geometry = PictureGeometry.nes
     var hasSession = false
     var frame: UInt64 = 0
     var takeLength: UInt64 = 0
@@ -233,6 +235,8 @@ final class EmulationController {
     private let flashFilter = FlashFilter(level: .standard)
     private var displayFrame = [UInt32](repeating: 0xFF00_0000, count: Int(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT))
     private var displayCodes = [UInt16](repeating: 0x0F, count: Int(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT))
+    /// Another core's picture, rows packed (showPicture).
+    private var picture: [UInt32] = []
     private var flashAltered = false        // last shown frame differs from the emulated one
     private var lastFlashTick: UInt64 = 0   // tick of the last altered frame
     private var flashActiveShown = false
@@ -243,7 +247,9 @@ final class EmulationController {
     private var crtLastFrame: UInt64?                             // frame of the last shown picture
     private var noSignalRepeats = 0                               // snow repeats since the last jump
     private var hissPCM: [Int16] = []
-    private let period: UInt64 = HostClock.ticks(seconds: Double(RN_FPS_DEN) / Double(RN_FPS_NUM))
+    /// The session's frame period (seconds; the NES rate without a session) and in host ticks.
+    private var framePeriod = FramePacing.period
+    private var period: UInt64 = HostClock.ticks(seconds: FramePacing.period)
     // Display-locked pacing (emulation thread).
     private var link: CAMetalDisplayLink?
     private var linkProxy: DisplayLinkProxy?
@@ -355,6 +361,19 @@ final class EmulationController {
 
     func install(_ s: EngineSession?) {
         session = s
+        // The game's frame rate and audio (docs/plans/2026-10-24-media-frontend.md): pacing, the
+        // display cadence and the audio stream follow the core (the NES values without a session).
+        if let s {
+            var m = s.media
+            framePeriod = rnf_frame_period_for_media(&m)
+            let rate = Double(rn_session_samples_before(s.handle, m.fps_num)) / Double(max(1, m.fps_den))
+            audio.configure(channels: s.audioChannels, sampleRate: rate, frameRate: 1 / framePeriod)
+        } else {
+            framePeriod = FramePacing.period
+        }
+        period = HostClock.ticks(seconds: framePeriod)
+        emulationRate = 1 / framePeriod
+        cadence = DisplayCadence(framePeriod: framePeriod)
         // A fresh recording (empty take, frame 0) has nothing to review: run immediately so the
         // game boots. Opened projects with recorded input stay paused at their cursor.
         if let s, s.takeLength == 0, s.frame == 0, (s.mode == RN_MODE_RECORD || s.mode == RN_MODE_LIVE) {
@@ -440,6 +459,12 @@ final class EmulationController {
     /// Hands a frame to the display, through the flash filter unless it is off. The session's own
     /// buffer is only read; the filtered copy is what the viewport (and snapshots) show.
     private func show(_ v: UnsafePointer<UInt32>, meta: FrameMeta) {
+        // Another core's picture (any size, rotation, pixel aspect): shown as it is. The flash filter,
+        // the VTR effect and the CRT model are for the NES picture (as in the Linux app).
+        if let s = session, v == s.video, let f = s.videoFrame {
+            let g = s.pictureGeometry
+            if !g.isNESPicture { showPicture(f, geometry: g, meta: meta); return }
+        }
         // Raw PPU codes of the same picture for the CRT signal path (display only).
         var meta = meta
         meta.tickStart = tickStart
@@ -490,6 +515,30 @@ final class EmulationController {
             displayFrame.withUnsafeBufferPointer { frames.publish($0.baseAddress!, meta: meta, codes: signal?.codes) }
         }
         if vtrOn { displayFrame.withUnsafeBufferPointer { keepVTRBase($0.baseAddress!, meta) } }
+    }
+
+    /// A picture that is not the NES picture: its rows packed and published with its geometry.
+    private func showPicture(_ f: rn_video_frame_info, geometry g: PictureGeometry, meta: FrameMeta) {
+        var meta = meta
+        meta.tickStart = tickStart
+        meta.countdown = countdown
+        meta.countdownFraction = countdownFraction
+        meta.countdownNote = countdownNoteShown
+        meta.geometry = g
+        meta.hasCodes = false
+        crtPowerStep = nil
+        crtLastFrame = meta.frame
+        let w = g.width, h = g.height, stride = Int(f.stride)
+        if picture.count < w * h { picture = [UInt32](repeating: 0xFF00_0000, count: w * h) }
+        guard let src = f.pixels else { return }
+        picture.withUnsafeMutableBufferPointer { out in
+            if stride == w {
+                out.baseAddress!.update(from: src, count: w * h)
+            } else {
+                for y in 0..<h { (out.baseAddress! + y * w).update(from: src + y * stride, count: w) }
+            }
+            frames.publish(out.baseAddress!, meta: meta)
+        }
     }
 
     /// Seek helper used by commands: pauses, mutes, refreshes the picture.
@@ -562,7 +611,7 @@ final class EmulationController {
         let woke = HostClock.now()
         latency.recordTickWake(lateTicks: woke > nextDeadline ? woke - nextDeadline : 0)
         tickStart = woke
-        emulationRate = 1 / FramePacing.period
+        emulationRate = 1 / framePeriod
         probe.mark("host tick")
         runCommands()
         rn_frame_workgroup_start(workgroup, HostClock.now(), nextDeadline &+ period / 2)
@@ -625,7 +674,7 @@ final class EmulationController {
         linkProxy = proxy
         lastUpdateTarget = 0
         presentPath.reset()
-        cadence = DisplayCadence()
+        cadence = DisplayCadence(framePeriod: framePeriod)
         nextDeadline = HostClock.now()
     }
 
@@ -951,7 +1000,7 @@ final class EmulationController {
             if sh.fired {
                 if rewinding { rewinding = false; rewindTicks = 0 }
                 practiceRewindStarted = false
-                if slow == .normal { AudioFade.tail(from: s.audio()).withUnsafeBufferPointer { audio.push($0) } }
+                if slow == .normal { AudioFade.tail(from: s.audio(), channels: s.audioChannels).withUnsafeBufferPointer { audio.push($0, frameRate: emulationRate) } }
                 statusDirty = true
             }
             wantRewind = sh.rewind
@@ -1132,8 +1181,8 @@ final class EmulationController {
             if flashAltered && tickCount % UInt64(slow.rawValue) != 0 { publishVideo(continuous: true) }
         case .beginHold:
             // Picture stays; a short decaying tail lets the sound end naturally (no click, no black).
-            let tail = AudioFade.tail(from: s.audio())
-            tail.withUnsafeBufferPointer { audio.push($0) }
+            let tail = AudioFade.tail(from: s.audio(), channels: s.audioChannels)
+            tail.withUnsafeBufferPointer { audio.push($0, frameRate: emulationRate) }
             dropInput()
             statusDirty = true
         case .hold:
@@ -1276,6 +1325,8 @@ final class EmulationController {
         if isPracticing && practiceLoop.inRewind { want = RNF_VTR_RETURN }
         else if rewinding { want = RNF_VTR_REWIND }
         else if fastForward && ff.active && !ffBlocked { want = RNF_VTR_FAST_FORWARD }
+        // The effect works on the NES picture (256x240); another core's picture is shown plain.
+        if want != RNF_VTR_NONE, let s = session, !s.pictureGeometry.isNESPicture { want = RNF_VTR_NONE }
         if want == RNF_VTR_NONE && !vtrOn && !vtr.active { return }
         let p = vtr.tick(now: HostClock.seconds(HostClock.now()), want: want)
         if p.strength > 0 {
@@ -1562,7 +1613,8 @@ final class EmulationController {
     /// The frame's sound to the output; with the CRT model on, the hiss of a power-on is mixed in
     /// (a copy: the session's sound, recordings and exports of the session are untouched).
     private func pushAudio(_ pcm: UnsafeBufferPointer<Int16>) {
-        if CRTSettingsModel.shared.snapshot.enabled && pcm.count > 0 {
+        // The CRT model (and its hiss) is the NES picture's: mono sound only.
+        if CRTSettingsModel.shared.snapshot.enabled && pcm.count > 0 && audio.channels == 1 {
             hissPCM.removeAll(keepingCapacity: true)
             hissPCM.append(contentsOf: pcm)
             if crtPower.mixHiss(&hissPCM, flashReduced: flashFilter.level != .off) {
@@ -1769,6 +1821,7 @@ final class EmulationController {
         if let s = session {
             st.hasSession = true
             st.frame = s.frame
+            st.geometry = s.pictureGeometry
             st.takeLength = s.takeLength
             st.live = s.mode == RN_MODE_LIVE
             st.recording = ff.showsRecording(s)

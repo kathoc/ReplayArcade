@@ -5,24 +5,31 @@
 import Foundation
 
 struct AudioResampler {
-    private var box = RNFHandle(rnf_resampler_new(), free: { rnf_resampler_free($0) }, clone: { rnf_resampler_clone($0) })
+    private var box: RNFHandle
     private var scratch: [Int16] = []
+    /// Values per sample frame (1 mono, 2 interleaved stereo).
+    let channels: Int
 
-    init() {}
+    init(channels: Int = 1) {
+        self.channels = channels
+        box = RNFHandle(rnf_resampler_new_with_channels(UInt32(channels)), free: { rnf_resampler_free($0) }, clone: { rnf_resampler_clone($0) })
+    }
 
     mutating func reset() { rnf_resampler_reset(RNFHandle.unique(&box)) }
 
-    /// Resamples `input` with `ratio` output samples per input sample, appending to `out`.
-    /// Output lags the input by one sample (interpolation needs one sample of look-ahead).
+    /// Resamples `input` (interleaved sample frames) with `ratio` output sample frames per input
+    /// sample frame, appending to `out`. Output lags the input by one sample frame (interpolation
+    /// needs one of look-ahead).
     mutating func process(_ input: UnsafeBufferPointer<Int16>, ratio: Double, into out: inout [Int16]) {
-        guard input.count > 0, let base = input.baseAddress else { return }
-        let bound = rnf_resampler_output_bound(input.count)
-        if scratch.count < bound { scratch = [Int16](repeating: 0, count: bound) }
+        let frames = input.count / channels
+        guard frames > 0, let base = input.baseAddress else { return }
+        let bound = rnf_resampler_output_bound(frames)
+        if scratch.count < bound * channels { scratch = [Int16](repeating: 0, count: bound * channels) }
         let h = RNFHandle.unique(&box)
         var n = 0
         scratch.withUnsafeMutableBufferPointer { buf in
-            _ = rnf_resampler_process(h, base, input.count, ratio, buf.baseAddress, bound, &n)
+            _ = rnf_resampler_process(h, base, frames, ratio, buf.baseAddress, bound, &n)
         }
-        out.append(contentsOf: scratch[0..<n])
+        out.append(contentsOf: scratch[0..<(n * channels)])
     }
 }

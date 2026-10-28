@@ -14,6 +14,9 @@ struct DisplayOptions: Equatable {
     var integerScale = true
     var pixelAspect87 = false
     var hideOverscan = true
+    /// The picture's size, rotation and pixel aspect (EmuStatus.geometry). The 8:7 option and the
+    /// overscan crop are for the NES picture; another core's picture uses its own pixel aspect.
+    var geometry = PictureGeometry.nes
 }
 
 /// GPU execution of a new frame's command buffers (host-clock seconds, earliest start to latest
@@ -39,7 +42,8 @@ final class GameRenderer {
     let health = DisplayHealth()
     private let pipeline: MTLRenderPipelineState
     private let pillPipeline: MTLRenderPipelineState
-    private let texture: MTLTexture
+    /// The picture (allocated for the NES picture, grown for a larger core picture).
+    private var texture: MTLTexture
     let frames: FrameBuffer
     private let latency: LatencyMeter
     private var seenSeq: UInt64 = .max
@@ -67,6 +71,17 @@ final class GameRenderer {
         o.uv = float2(uvr.x + c.x * uvr.z, uvr.y + (1.0 - c.y) * uvr.w);
         return o;
     }
+    // The game picture: `rot` clockwise quarter turns on screen (a vertical game's picture).
+    vertex VOut vgame(uint vid [[vertex_id]], constant float4 &rect [[buffer(0)]], constant float4 &uvr [[buffer(1)]],
+                      constant uint &rot [[buffer(2)]]) {
+        float2 c = float2(float(vid & 1), float(vid >> 1));
+        float2 t = float2(c.x, 1.0 - c.y);   // screen position, top-down
+        float2 s = rot == 1 ? float2(t.y, 1.0 - t.x) : rot == 2 ? float2(1.0 - t.x, 1.0 - t.y) : rot == 3 ? float2(1.0 - t.y, t.x) : t;
+        VOut o;
+        o.pos = float4(rect.x + c.x * rect.z, rect.y + c.y * rect.w, 0.0, 1.0);
+        o.uv = uvr.xy + s * uvr.zw;
+        return o;
+    }
     fragment float4 fmain(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]]) {
         constexpr sampler s(filter::nearest, address::clamp_to_edge);
         return float4(tex.sample(s, in.uv).rgb, 1.0);
@@ -88,7 +103,7 @@ final class GameRenderer {
             // Compiled at runtime from source: no dependency on the offline Metal toolchain.
             let lib = try device.makeLibrary(source: Self.shader, options: nil)
             let d = MTLRenderPipelineDescriptor()
-            d.vertexFunction = lib.makeFunction(name: "vmain")
+            d.vertexFunction = lib.makeFunction(name: "vgame")
             d.fragmentFunction = lib.makeFunction(name: "fmain")
             d.colorAttachments[0].pixelFormat = .bgra8Unorm
             pipeline = try device.makeRenderPipelineState(descriptor: d)
@@ -107,19 +122,32 @@ final class GameRenderer {
             NSLog("ReplayNES: Metal pipeline failed: \(error)")
             return nil
         }
-        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: Int(RN_VIDEO_WIDTH), height: Int(RN_VIDEO_HEIGHT), mipmapped: false)
-        td.usage = .shaderRead
-        td.storageMode = .shared
-        guard let tex = device.makeTexture(descriptor: td) else { return nil }
+        guard let tex = Self.makeTexture(device, width: Int(RN_VIDEO_WIDTH), height: Int(RN_VIDEO_HEIGHT)) else { return nil }
         texture = tex
     }
 
+    private static func makeTexture(_ device: MTLDevice, width: Int, height: Int) -> MTLTexture? {
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+        td.usage = .shaderRead
+        td.storageMode = .shared
+        return device.makeTexture(descriptor: td)
+    }
+
+    /// The geometry of the picture in `texture` (its size; rotation and pixel aspect for the draw).
+    private var textureGeometry = PictureGeometry.nes
+
     /// Destination rectangle (pixels, origin bottom-left) and overscan crop (pixels hidden on every
     /// side) for a drawable size.
+    /// The NES picture: the 8:7 option and the overscan crop. Another core's picture (options.geometry):
+    /// its pixel aspect, upright after its rotation, never cropped.
     static func viewport(drawableSize size: CGSize, options: DisplayOptions) -> (CGRect, Int) {
-        let crop = options.hideOverscan ? 8 : 0
-        let srcH = Double(Int(RN_VIDEO_HEIGHT) - 2 * crop), srcW = Double(Int(RN_VIDEO_WIDTH) - 2 * crop)
-        let par = options.pixelAspect87 ? 8.0 / 7.0 : 1.0
+        let g = options.geometry
+        let nes = g.isNESPicture
+        let crop = nes && options.hideOverscan ? 8 : 0
+        var srcH = Double(g.height - 2 * crop), srcW = Double(g.width - 2 * crop)
+        var par = nes ? (options.pixelAspect87 ? 8.0 / 7.0 : 1.0) : g.pixelAspect
+        // A quarter turn: the source's rows become columns (a pixel par wide is then par high).
+        if g.rotation % 2 == 1 { (srcW, srcH) = (srcH, srcW); par = 1 / par }
         var scale = min(size.width / (srcW * par), size.height / srcH)
         if options.integerScale && scale >= 1 { scale = floor(scale) }
         let dw = (srcW * par * scale).rounded(), dh = (srcH * scale).rounded()
@@ -313,19 +341,23 @@ final class GameRenderer {
         }
         let options = self.options
         var newMeta: FrameMeta?
-        let w = Int(RN_VIDEO_WIDTH)
         let crtOn = crtState.enabled
         let store = crtFrame
         // CRT just switched on (e.g. while paused): fetch the current frame again for it.
         let refetch = crtOn && !store.valid
         var read = false
         let seq = frames.readFrameIfNewer(than: refetch ? .max : seenSeq) { px, codes, meta in
-            texture.replace(region: MTLRegionMake2D(0, 0, w, Int(RN_VIDEO_HEIGHT)), mipmapLevel: 0, withBytes: px, bytesPerRow: w * 4)
+            let w = meta.geometry.width, h = meta.geometry.height
+            if (texture.width < w || texture.height < h), let t = Self.makeTexture(device, width: max(w, texture.width), height: max(h, texture.height)) {
+                texture = t
+            }
+            texture.replace(region: MTLRegionMake2D(0, 0, min(w, texture.width), min(h, texture.height)), mipmapLevel: 0, withBytes: px, bytesPerRow: w * 4)
+            textureGeometry = meta.geometry
             newMeta = meta
             countdownShown = (meta.countdown, meta.countdownFraction)
             countdownNote = meta.countdownNote
             if refetch { newMeta?.emulatedTime = 0 }   // not a newly emulated frame: no latency sample
-            if crtOn { store.store(px, codes, meta) }
+            if crtOn && meta.geometry.isNESPicture { store.store(px, codes, meta) }
             read = true
         }
         seenSeq = seq
@@ -406,15 +438,22 @@ final class GameRenderer {
         }
         crtPending = crtOn && !crtShown
         if !crtShown, let enc = cb.makeRenderCommandEncoder(descriptor: rpd) {
-            let (r, crop) = Self.viewport(drawableSize: size, options: options)
-            let srcH = Double(Int(RN_VIDEO_HEIGHT) - 2 * crop), srcW = Double(Int(RN_VIDEO_WIDTH) - 2 * crop)
+            // The picture in the texture decides the source rectangle and the rotation; the options'
+            // geometry (the same session's) the destination.
+            let g = textureGeometry
+            var o = options
+            o.geometry = g
+            let (r, crop) = Self.viewport(drawableSize: size, options: o)
+            let tw = Double(texture.width), th = Double(texture.height)
+            let srcH = Double(g.height - 2 * crop), srcW = Double(g.width - 2 * crop)
             var rect = SIMD4<Float>(Float(r.minX / size.width * 2 - 1), Float(r.minY / size.height * 2 - 1),
                                     Float(r.width / size.width * 2), Float(r.height / size.height * 2))
-            var uvr = SIMD4<Float>(Float(Double(crop) / Double(RN_VIDEO_WIDTH)), Float(Double(crop) / Double(RN_VIDEO_HEIGHT)),
-                                   Float(srcW / Double(RN_VIDEO_WIDTH)), Float(srcH / Double(RN_VIDEO_HEIGHT)))
+            var uvr = SIMD4<Float>(Float(Double(crop) / tw), Float(Double(crop) / th), Float(srcW / tw), Float(srcH / th))
+            var rot = UInt32(g.rotation % 4)
             enc.setRenderPipelineState(pipeline)
             enc.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
             enc.setVertexBytes(&uvr, length: MemoryLayout<SIMD4<Float>>.size, index: 1)
+            enc.setVertexBytes(&rot, length: MemoryLayout<UInt32>.size, index: 2)
             enc.setFragmentTexture(texture, index: 0)
             enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             drawCountdown(enc, size: size, picture: Self.pictureRect(size: size, options: options, crtOn: false))
@@ -484,6 +523,8 @@ final class GameRenderer {
     /// The CRT state to draw with: the user's, minus a fallback or a suspension in effect.
     private func effectiveCRT(at now: Double) -> CRTSettingsModel.Snapshot {
         var c = CRTSettingsModel.shared.snapshot
+        // The CRT model is the NES signal (256x240 PPU codes): another core's picture is drawn plain.
+        if !textureGeometry.isNESPicture { c.enabled = false }
         guard c.enabled else { inFallback = false; return c }
         if let s = crtSuspendedFor {
             if c != s {

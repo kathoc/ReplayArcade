@@ -153,7 +153,7 @@ final class AppModel: ObservableObject {
     var flashLevel: FlashLevel { FlashLevel(rawValue: flashReduction) ?? .standard }
 
     var displayOptions: DisplayOptions {
-        DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan)
+        DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan, geometry: status.geometry)
     }
 
     var touchOptions: TouchLayout.Options {
@@ -799,10 +799,10 @@ final class AppModel: ObservableObject {
                 return
             }
             showError(String(localized: "ROM not found"),
-                      L("Put the ROM “%@” into the ROM folder (Files › On My iPhone › ReplayNES › ROM) and try again.\nSHA-256: %@", romName, romSHA))
+                      L("Put the ROM “%1$@” into the ROM folder (Files › On My iPhone › %2$@ › ROM) and try again.\nSHA-256: %3$@", romName, RNProduct.name, romSHA))
         case RN_ERR_CORE_MISMATCH:
             showError(String(localized: "This project was recorded with a different emulation core"),
-                      L("Open it with the version of ReplayNES it was recorded with. See docs/COMPATIBILITY.md for details."))
+                      L("Open it with the version of %@ it was recorded with. See docs/COMPATIBILITY.md for details.", RNProduct.name))
         case RN_ERR_CORRUPT where !dropCorrupt || !dropCorruptPractice:
             let practice = e.message.lowercased().contains("practice")
             alert = AppAlert(title: practice ? String(localized: "The practice section (A/B) data is damaged") : String(localized: "The project files are damaged"),
@@ -849,7 +849,7 @@ final class AppModel: ObservableObject {
             flash(String(localized: "Resumed where you left off"))
         } else if recovered {
             showError(String(localized: "Unsaved work was restored"),
-                      L("ReplayNES didn’t close normally last time, so the recording up to the last autosave was restored."))
+                      L("%@ didn’t close normally last time, so the recording up to the last autosave was restored.", RNProduct.name))
         }
         updateUIMode()
     }
@@ -1176,12 +1176,12 @@ final class AppModel: ObservableObject {
 
     func captureThumbnail() {
         guard persistSessions, let c = current, status.hasSession else { return }
-        var px: [UInt32]?
-        _ = emu.frames.readIfNewer(than: .max) { p, _ in
-            px = Array(UnsafeBufferPointer(start: p, count: Int(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT)))
+        var picture: VideoPicture?
+        _ = emu.frames.readIfNewer(than: .max) { p, m in
+            picture = VideoPicture(pixels: Array(UnsafeBufferPointer(start: p, count: m.geometry.width * m.geometry.height)), geometry: m.geometry)
         }
-        guard let px else { return }
-        ThumbnailStore.save(pixels: px, project: c.projectPath, romSHA: c.romSHA256, on: resumeQueue) { [weak self] in
+        guard let picture else { return }
+        ThumbnailStore.save(picture, project: c.projectPath, romSHA: c.romSHA256, on: resumeQueue) { [weak self] in
             self?.objectWillChange.send()
         }
     }
