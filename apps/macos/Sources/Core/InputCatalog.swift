@@ -104,6 +104,10 @@ enum InputCatalog {
     /// to L+R): those default bindings are dropped. L held + R / R held + L step, L / R held + START pauses.
     static func shoulderStepMigration(_ c: Config) -> Plan { plan(c) { rnf_input_shoulder_step_migration($0, $1, $2, $3) } }
 
+    /// Layout 8 -> 9: the Undo of a retry moves from pad 1's L3 alone to L3+R3 together (a soft stick
+    /// clicked L3 in play); other bindings stay.
+    static func undoChordMigration(_ c: Config) -> Plan { plan(c) { rnf_input_undo_chord_migration($0, $1, $2, $3) } }
+
     /// The pad 1 control bound to `action` ("gc0:<element>"), or the first keyboard key.
     static func boundInput(_ c: Config, action: String, pad: Bool) -> String? {
         c.bindings.first { $0.action == action && !isCombo($0.input) && $0.input.hasPrefix(pad ? "gc0:" : "kb:") }?.input

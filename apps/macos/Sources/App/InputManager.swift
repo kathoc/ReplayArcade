@@ -86,6 +86,13 @@ final class InputManager {
     /// Combo members moving an edited marker now -> -1 / +1 (gcQueue only).
     private var holdMembers: [String: Int] = [:]
     private var chordTickWork: DispatchWorkItem?    // gcQueue only
+    // Undo of a retry ("hk.undo_take", layout 9: pad 1's L3+R3): a second chord detector, as the Linux
+    // app's InputRouter. Both together press the combo id; a member alone goes on as its own press (R3:
+    // the menu) once the window has passed, or at its tap. gcQueue only.
+    private let undoChord = ChordDetector()
+    private var undoCombo: String?
+    private var undoAlone: Set<String> = []
+    private var undoTickWork: DispatchWorkItem?
     private var menuIDs: Set<String> = []           // stepLock
     /// Paused seek bar: cancel / confirm / up / Y taps (gcQueue only).
     private var confirmTap = ConfirmTap()
@@ -105,7 +112,11 @@ final class InputManager {
     /// Called (main thread) with the physical id while capturing a binding (keys only). Esc and the
     /// controller's cancel button cancel (nil); other controller input is ignored meanwhile.
     var captureHandler: ((String?) -> Void)? {
-        didSet { captureLock.lock(); capturing = captureHandler != nil; captureLock.unlock() }
+        didSet {
+            captureLock.lock(); capturing = captureHandler != nil; captureLock.unlock()
+            // L3 / R3 held into the capture are not a chord any more.
+            if captureHandler != nil { gcQueue.async { [weak self] in self?.resetUndoChord() } }
+        }
     }
     private let captureLock = NSLock()
     private var capturing = false
@@ -176,6 +187,7 @@ final class InputManager {
     /// layout 6: bindings to HOME / guide (never assignable) are dropped.
     /// layout 7: pad 1's L3 = "hk.undo_take" (Undo of a retry) unless L3 is taken.
     /// layout 8: pad 1's L slow / R pause dropped (L / R alone do nothing in play: no misfires).
+    /// layout 9: the Undo of a retry on pad 1's L3+R3 together instead of L3 alone.
     private func migrateControllerLayout() {
         let d = UserDefaults.standard
         let from = d.integer(forKey: "controllerLayoutVersion")
@@ -189,6 +201,7 @@ final class InputManager {
         if from < 6 { changed = apply(InputCatalog.homeMigration(config)) || changed }
         if from < 7 { changed = apply(InputCatalog.undoMigration(config)) || changed }
         if from < 8 { changed = apply(InputCatalog.shoulderStepMigration(config)) || changed }
+        if from < 9 { changed = apply(InputCatalog.undoChordMigration(config)) || changed }
         guard changed else { return }
         if let p = rn_input_save_json(handle) {
             try? String(cString: p).write(to: Self.configURL, atomically: true, encoding: .utf8)
@@ -216,6 +229,8 @@ final class InputManager {
             self.releaseForwardedMembers()
             self.endMarkerHolds()
             self.chord.configure(c.bindings)
+            self.resetUndoChord()
+            self.undoChord.configure(c.bindings, action: "hk.undo_take")
             // A combo member bound to a game button is held for the game (from the end of the window).
             self.gameMembers = Set(c.bindings.filter { self.chord.isMember($0.input) && !$0.action.hasPrefix("hk.") }.map(\.input))
             self.updateRepeat()
@@ -363,6 +378,57 @@ final class InputManager {
         }
         navRepeat[id] = w
         gcQueue.asyncAfter(deadline: .now() + delay, execute: w)
+    }
+
+    // MARK: Undo chord (gcQueue)
+
+    private func emitUndoChord(_ events: [ChordEvent]) {
+        for e in events {
+            switch e {
+            case .comboDown(let id):
+                guard !isNavMode, !isCapturing else { continue }
+                undoCombo = id
+                rn_input_set_pressed(handle, id, 1)
+            case .comboUp:
+                if let c = undoCombo { rn_input_set_pressed(handle, c, 0) }
+                undoCombo = nil
+            case .alone(let id, true, _, _), .follow(let id, true, _, _):
+                if undoAlone.insert(id).inserted { routeID(id, true) }
+            case .alone(let id, false, _, _), .follow(let id, false, _, _), .suppressed(let id, _):
+                if undoAlone.remove(id) != nil { routeID(id, false) }
+            default: break
+            }
+        }
+    }
+
+    private func routeID(_ id: String, _ down: Bool) {
+        guard let colon = id.firstIndex(of: ":") else { return }
+        route(String(id[...colon]), String(id[id.index(after: colon)...]), down)
+    }
+
+    private func scheduleUndoTick() {
+        undoTickWork?.cancel()
+        undoTickWork = nil
+        guard let deadline = undoChord.nextDeadline else { return }
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.undoTickWork = nil
+            self.emitUndoChord(self.undoChord.tick(now: self.now()))
+            self.scheduleUndoTick()
+        }
+        undoTickWork = w
+        gcQueue.asyncAfter(deadline: .now() + max(0, deadline - now()) + 0.001, execute: w)
+    }
+
+    /// Forget the Undo chord's state (bindings changed, a controller detached, a capture began);
+    /// a combo pressed now is released.
+    private func resetUndoChord() {
+        undoChord.reset()
+        undoTickWork?.cancel()
+        undoTickWork = nil
+        if let c = undoCombo { rn_input_set_pressed(handle, c, 0) }
+        undoCombo = nil
+        undoAlone.removeAll()
     }
 
     // MARK: L+R chord (gcQueue)
@@ -874,6 +940,7 @@ final class InputManager {
             guard let self else { return }
             // The detector's state is shared by every pad: forget it and release what it handed on.
             self.chord.reset()
+            self.resetUndoChord()
             self.swallowedStarts = self.swallowedStarts.filter { !$0.hasPrefix(prefix) }
             self.releaseForwardedMembers()
             self.endMarkerHolds()
@@ -923,6 +990,16 @@ final class InputManager {
             return
         }
         if !down, captureSwallowed.remove(id) != nil { return }
+        // The Undo chord's members (L3+R3) first: they reach the rest only alone (emitUndoChord).
+        let undo = undoChord.feed(id, down: down, now: now())
+        emitUndoChord(undo.events)
+        if undo.taken { scheduleUndoTick(); return }
+        route(prefix, name, down)
+    }
+
+    /// gcQueue: a press / release past the capture and the Undo chord.
+    private func route(_ prefix: String, _ name: String, _ down: Bool) {
+        let id = prefix + name
         // The Quick Menu: a combo member (L+R) or an input of its own.
         let fed = chord.feed(id, down: down, now: now())
         if fed.taken {
