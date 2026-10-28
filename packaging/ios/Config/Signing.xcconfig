@@ -1,0 +1,8 @@
+// Signing for ReplayArcade's iPhone builds (scripts/build-ios.sh). Put your values in
+// Signing.local.xcconfig next to it (not committed):
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   PRODUCT_BUNDLE_IDENTIFIER = io.github.<you>.replayarcade.dev
+PRODUCT_BUNDLE_IDENTIFIER = io.github.kathoc.replayarcade.dev
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic
+#include? "Signing.local.xcconfig"
