@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds, signs and publishes a ReplayArcade release (all on this machine).
+# Builds, signs and publishes a ReplayArcade release. The x86_64 Flatpak is built here on an x86_64 machine,
+# otherwise taken unsigned from the GitHub Actions run of HEAD (FLATPAK_FROM=actions forces that, FLATPAK_RUN=<id> picks the run).
 #   scripts/release.sh <version>             build, sign, publish (gh-pages Flatpak repository + GitHub release)
 #   NO_PUBLISH=1 scripts/release.sh <version> build and sign into dist/ only
 #   CHANGES=<file.md>: what is new, at the top of the release notes
@@ -126,6 +127,25 @@ echo "    dist/$NAME.zip ($(du -h "$DIST/$NAME.zip" | cut -f1)), dist/appcast-wi
 
 # ---- Flatpak (Linux / Steam Deck)
 echo "==> Flatpak"
+# The Flatpak is x86_64 (Steam Deck). On another machine (or FLATPAK_FROM=actions) the unsigned repository comes
+# from the GitHub Actions run of HEAD (.github/workflows/flatpak.yml, the same flatpak-builder call); it is
+# signed here as a local build would be.
+if [ "${FLATPAK_FROM:-}" = actions ] || [ "$(uname -m)" != x86_64 ]; then
+  HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+  RUN="${FLATPAK_RUN:-$(gh run list --repo "$REPO" --workflow flatpak.yml --commit "$HEAD_SHA" --status success \
+    --limit 1 --json databaseId -q '.[0].databaseId')}"
+  [ -n "$RUN" ] || { echo "no successful Flatpak run on GitHub Actions for $HEAD_SHA (push it, wait for the run)"; exit 1; }
+  echo "    from GitHub Actions run $RUN"
+  rm -rf "$WORK/flatpak-ci" "$WORK/flatpak-build-repo" && mkdir -p "$WORK/flatpak-ci"
+  gh run download "$RUN" --repo "$REPO" -n flatpak-repo-x86_64 -D "$WORK/flatpak-ci"
+  tar -C "$WORK/flatpak-ci" -xf "$WORK/flatpak-ci/flatpak-repo.tar"
+  mv "$WORK/flatpak-ci/repo" "$WORK/flatpak-build-repo"
+  R="$WORK/flatpak-build-repo"
+  [ "$(cat "$R/replayarcade-commit")" = "$HEAD_SHA" ] || { echo "run $RUN built $(cat "$R/replayarcade-commit"), not HEAD"; exit 1; }
+  [ "$(cat "$R/replaynes-commit")" = "$(git -C "$ROOT/third_party/replaynes" rev-parse HEAD)" ] ||
+    { echo "run $RUN built another ReplayNES commit"; exit 1; }
+  no_game_data < "$R/replayarcade-files"
+else
 SRC="$WORK/flatpak-src"
 rm -rf "$SRC" && mkdir -p "$SRC"
 # Not copied: build output (also ReplayNES's download cache in third_party/replaynes/build) and FBNeo's
@@ -138,6 +158,7 @@ flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-d
   --repo="$WORK/flatpak-build-repo" "$WORK/flatpak-build" "$SRC/packaging/linux/$APP_ID.yml" >"$WORK/flatpak.log" 2>&1 ||
   { tail -30 "$WORK/flatpak.log"; exit 1; }
 (cd "$WORK/flatpak-build/files" && find . -type f) | no_game_data
+fi
 gpg --homedir "$GPG_HOME" --export "$GPG_KEY" > "$ROOT/packaging/linux/replayarcade-repo.gpg.new"
 cmp -s "$ROOT/packaging/linux/replayarcade-repo.gpg.new" "$ROOT/packaging/linux/replayarcade-repo.gpg" 2>/dev/null ||
   { echo "packaging/linux/replayarcade-repo.gpg is not the signing key's public key: commit it first"; rm -f "$ROOT/packaging/linux/replayarcade-repo.gpg.new"; exit 1; }
@@ -184,7 +205,7 @@ Homepage=https://github.com/$REPO
 GPGKey=$GPGKEY_B64
 EOF
 BUNDLE="$APP_ID-$VERSION-x86_64.flatpak"
-flatpak build-bundle --repo-url="$PAGES_URL" --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+flatpak build-bundle --arch=x86_64 --repo-url="$PAGES_URL" --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
   --gpg-keys="$ROOT/packaging/linux/replayarcade-repo.gpg" "$DEST" "$DIST/$BUNDLE" "$APP_ID" master
 cp "$DEST/$APP_ID.flatpakref" "$DIST/"
 touch "$PAGES/.nojekyll"
