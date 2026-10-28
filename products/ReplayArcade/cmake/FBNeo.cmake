@@ -20,6 +20,20 @@ set(FBNEO_MAKE_ARGS STATIC_LINKING=1 TARGET=fbneo_libretro_static.a
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   # SPLIT_UP_LINK adds the objects one by one (a Windows shell limit); this make runs on a POSIX host.
   list(APPEND FBNEO_MAKE_ARGS platform=win SPLIT_UP_LINK=0)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  # The Makefile's ios-arm64 block (LSB_FIRST, -DIOS9, NEON) with CMake's target and SDK in the compiler
+  # (device or simulator, the same minimum iOS as the app); its old -miphoneos-version-min is dropped.
+  # Its host tool (ctvmake) is built with CXX_SYSTEM, so it still runs on the Mac.
+  if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    set(FBNEO_IOS_TARGET arm64-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET}-simulator)
+  else()
+    set(FBNEO_IOS_TARGET arm64-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET})
+  endif()
+  execute_process(COMMAND xcrun --sdk ${CMAKE_OSX_SYSROOT} --show-sdk-path
+    OUTPUT_VARIABLE FBNEO_IOS_SDK OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  set(FBNEO_MAKE_ARGS STATIC_LINKING=1 TARGET=fbneo_libretro_static.a platform=ios-arm64 MINVERSION=
+    "CC=${CMAKE_C_COMPILER} -target ${FBNEO_IOS_TARGET} -isysroot ${FBNEO_IOS_SDK}"
+    "CXX=${CMAKE_CXX_COMPILER} -target ${FBNEO_IOS_TARGET} -isysroot ${FBNEO_IOS_SDK}" AR=${CMAKE_AR})
 endif()
 
 # Always run: the patch check, the copy and make are all incremental.
