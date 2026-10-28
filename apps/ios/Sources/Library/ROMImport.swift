@@ -10,13 +10,14 @@ enum ROMImport {
         var errorDescription: String? { L("Not an NES ROM (.nes)") }
     }
 
-    /// Larger files are not NES ROMs (the biggest iNES images are a few MB).
-    static let maxROMSize = 16 << 20
+    /// Larger files are not ROMs: the biggest iNES images are a few MB; another product's ROM sets
+    /// (ReplayArcade's zip files) stay well under 64 MB.
+    static let maxROMSize = RNProduct.romExtensions == ["nes"] ? 16 << 20 : 64 << 20
 
     /// Copies `src` into `romDir`. The same file already there (same size and bytes) is reused;
     /// another file with the same name gets " 2", " 3"... Returns the library file.
     static func copy(_ src: URL, into romDir: URL, fileManager fm: FileManager = .default) throws -> URL {
-        guard src.pathExtension.lowercased() == "nes" else { throw Failure.notAROM }
+        guard RNProduct.isROMFile(src) else { throw Failure.notAROM }
         try fm.createDirectory(at: romDir, withIntermediateDirectories: true)
         let base = src.deletingPathExtension().lastPathComponent
         let ext = src.pathExtension
@@ -40,7 +41,7 @@ enum ROMImport {
     static func adoptLooseROMs(root: URL, roms: URL, fileManager fm: FileManager = .default) -> [URL] {
         guard let items = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return [] }
         var out: [URL] = []
-        for u in items where u.pathExtension.lowercased() == "nes" {
+        for u in items where RNProduct.isROMFile(u) {
             guard let dest = try? copy(u, into: roms, fileManager: fm), dest.standardizedFileURL != u.standardizedFileURL else { continue }
             try? fm.removeItem(at: u)
             out.append(dest)
@@ -52,9 +53,17 @@ enum ROMImport {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// An iNES / NES 2.0 image: "NES\u{1A}" + header, within the size limit.
-    static func looksLikeROM(_ data: Data) -> Bool {
-        data.count > 16 && data.count <= maxROMSize && data.prefix(4).elementsEqual([0x4E, 0x45, 0x53, 0x1A])
+    /// A ROM file of its extension, within the size limit: an iNES / NES 2.0 image ("NES\u{1A}" +
+    /// header) or a zip archive ("PK\u{3}\u{4}", another product's ROM sets; which sets the library
+    /// lists is the product's ROM filter, rnf_set_rom_filter).
+    static func looksLikeROM(_ data: Data, extension ext: String = "nes") -> Bool {
+        let magic: [UInt8]
+        switch ext.lowercased() {
+        case "nes": magic = [0x4E, 0x45, 0x53, 0x1A]
+        case "zip": magic = [0x50, 0x4B, 0x03, 0x04]
+        default: return false
+        }
+        return data.count > 16 && data.count <= maxROMSize && data.prefix(4).elementsEqual(magic)
     }
 
     /// Imports a batch of files into `romDir` (blocking: call off the main thread; ROMImportQueue
@@ -73,7 +82,7 @@ enum ROMImport {
         let romRoot = canonicalPath(romDir) + "/"
         for url in urls {
             let name = url.lastPathComponent
-            guard url.pathExtension.lowercased() == "nes" else { result.invalid.append(name); continue }
+            guard RNProduct.isROMFile(url) else { result.invalid.append(name); continue }
             if canonicalPath(url).hasPrefix(romRoot) {
                 // Already in the library (Files › ReplayNES › ROM › Share › ReplayNES).
                 if fm.fileExists(atPath: url.path) { result.existing.append(url) } else { result.failed.append((name, "missing")) }
@@ -86,7 +95,7 @@ enum ROMImport {
             case .success(let d): data = d
             case .failure(let e): result.failed.append((name, e.localizedDescription)); continue
             }
-            guard looksLikeROM(data) else { result.invalid.append(name); removeInboxCopy(url, inbox: inbox, fm); continue }
+            guard looksLikeROM(data, extension: url.pathExtension) else { result.invalid.append(name); removeInboxCopy(url, inbox: inbox, fm); continue }
             let sha = sha256(data)
             if let same = index.file(sha256: sha, size: data.count) {
                 result.existing.append(same)
@@ -122,7 +131,7 @@ enum ROMImport {
     }
 
     private static func write(_ data: Data, named base: String, ext: String, into romDir: URL, fileManager fm: FileManager) throws -> URL {
-        let ext = ext.isEmpty ? "nes" : ext
+        let ext = ext.isEmpty ? (RNProduct.romExtensions.sorted().first ?? "rom") : ext
         var n = 1
         while true {
             let dest = romDir.appendingPathComponent(n == 1 ? "\(base).\(ext)" : "\(base) \(n).\(ext)")
@@ -181,7 +190,7 @@ final class ROMFolderIndex {
         self.fm = fm
         let keys: [URLResourceKey] = [.fileSizeKey, .isRegularFileKey]
         guard let e = fm.enumerator(at: romDir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return }
-        for case let u as URL in e where u.pathExtension.lowercased() == "nes" {
+        for case let u as URL in e where RNProduct.isROMFile(u) {
             guard let v = try? u.resourceValues(forKeys: Set(keys)), v.isRegularFile == true, let size = v.fileSize else { continue }
             bySize[size, default: []].append(u)
         }

@@ -88,7 +88,7 @@ struct LibraryView: View {
                     .accessibilityIdentifier("libraryMore")
                 }
             }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.nesROM, .data], allowsMultipleSelection: true) { result in
+            .fileImporter(isPresented: $importing, allowedContentTypes: RNProduct.isNES ? [.nesROM, .data] : [.data], allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { model.importROMs(urls) }
             }
             .sheet(item: $projectsOf) { rom in ProjectsSheet(rom: rom) }

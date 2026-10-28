@@ -8,13 +8,13 @@
 # (Sources/Core, all of it) and the platform-neutral parts of the app layer (emulation thread,
 # Metal renderer, audio output, timeline / markers, Quick Menu controller, game controllers).
 # See README.md, "Architecture".
+# This file is ReplayNES's product part; the targets, tests and schemes every product shares are in
+# common.yml (another product, ReplayArcade, includes it from its own spec).
+include:
+  - common.yml
 name: ReplayNES
 options:
   bundleIdPrefix: io.github.replaynes
-  deploymentTarget:
-    iOS: "17.0"
-  createIntermediateGroups: true
-  developmentLanguage: en
 configFiles:
   Debug: Config/Signing.xcconfig
   Release: Config/Signing.xcconfig
@@ -22,117 +22,25 @@ settings:
   base:
     MARKETING_VERSION: "0.6.4"
     CURRENT_PROJECT_VERSION: "6"
-    SWIFT_VERSION: "5.0"
-    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    TARGETED_DEVICE_FAMILY: "1"
-    ARCHS: arm64
-    ONLY_ACTIVE_ARCH: NO
-    EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
-    ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CODE_SIGN_STYLE: Automatic
+    RN_IOS_DIR: "$(SRCROOT)"
     RN_ENGINE_BUILD_DIR: "$(SRCROOT)/../../build/ios-engine"
-    RN_MACOS: "$(SRCROOT)/../macos"
-    HEADER_SEARCH_PATHS:
-      - "$(SRCROOT)/../../engine/include/replaynes"
-      - "$(SRCROOT)/../../frontend/include/replaynes"
-      - "$(SRCROOT)/../macos/Sources/Core/C"
-    SWIFT_OBJC_BRIDGING_HEADER: "../macos/Sources/Core/C/Bridging.h"
-    LIBRARY_SEARCH_PATHS:
-      - "$(RN_ENGINE_BUILD_DIR)/$(PLATFORM_NAME)"
-    OTHER_LDFLAGS: ["-lreplaynes_all", "-lc++"]
-    GCC_C_LANGUAGE_STANDARD: c11
-    # The String Catalogs are maintained by hand on this branch: building must never rewrite
-    # apps/macos/Resources/Localizable.xcstrings (shared with main).
-    SWIFT_EMIT_LOC_STRINGS: NO
-    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
-
-aggregateTargets:
-  Engine:
-    buildScripts:
-      - name: Build ReplayNES engine + frontend core for iOS (CMake)
-        script: '"$SRCROOT/scripts/build-engine.sh" "$PLATFORM_NAME"'
-        basedOnDependencyAnalysis: false
-        outputFiles:
-          - "$(RN_ENGINE_BUILD_DIR)/$(PLATFORM_NAME)/libreplaynes_all.a"
+    RN_ENGINE_SCRIPT: "$(SRCROOT)/scripts/build-engine.sh"
 
 targets:
   ReplayNES:
-    type: application
-    platform: iOS
     sources:
-      # Shared with macOS (referenced in place).
-      - path: ../macos/Sources/Core
-      - path: ../macos/Sources/App/EmulationController.swift
-      - path: ../macos/Sources/App/Runtime.swift
-      - path: ../macos/Sources/App/LatencyMeter.swift
-      - path: ../macos/Sources/App/MetalView.swift
-      - path: ../macos/Sources/App/CRTSettings.swift
-      - path: ../macos/Sources/App/TimelineActions.swift
-      - path: ../macos/Sources/App/Filmstrip.swift
-      - path: ../macos/Sources/App/SeekMarkers.swift
-      - path: ../macos/Sources/App/InputManager.swift
-      - path: ../macos/Sources/App/QuickMenu/QuickMenuController.swift
-      - path: ../macos/Resources/Localizable.xcstrings
-      # iOS only.
-      - path: Sources
       - path: Resources/Assets.xcassets
-      - path: Resources/IOS.xcstrings
-      # Apache-2.0 notice of the ported Brickboy touch controller (About › Touch Controller).
-      - path: ThirdParty/brickboy/LICENSE
-        buildPhase: resources
-      - path: NOTICE
-        buildPhase: resources
-    dependencies:
-      - target: Engine
-      # "Add to ReplayNES" (multi-file shares), embedded in PlugIns.
-      - target: ReplayNESShare
-      - sdk: GameController.framework
-      - sdk: Metal.framework
-      - sdk: AVFoundation.framework
-      - sdk: StoreKit.framework
     settings:
       base:
         PRODUCT_NAME: ReplayNES
-        PRODUCT_MODULE_NAME: ReplayNESApp
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: ReplayNES
-        # Bundle id and team: Config/Signing.xcconfig (+ your Signing.local.xcconfig).
-        # App Group shared with the Share Extension: group.<your bundle id>.
-        RN_APP_GROUP: "group.$(PRODUCT_BUNDLE_IDENTIFIER)"
     entitlements:
       path: Config/ReplayNES.entitlements
-      properties:
-        com.apple.security.application-groups: ["$(RN_APP_GROUP)"]
     info:
       path: Config/Info.plist
       properties:
         CFBundleDisplayName: ReplayNES
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        CFBundleDevelopmentRegion: en
-        CFBundleLocalizations: [en, ja]
-        LSApplicationCategoryType: public.app-category.games
         NSHumanReadableCopyright: "ReplayNES - GPL-2.0-or-later. Includes Nestopia UE (GPL-2.0-or-later). Personal test build."
-        ITSAppUsesNonExemptEncryption: false
-        RNAppGroup: "$(RN_APP_GROUP)"
-        UILaunchScreen:
-          UIColorName: ""
-        UIRequiresFullScreen: true
-        UIStatusBarStyle: UIStatusBarStyleLightContent
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
-        UIApplicationSupportsIndirectInputEvents: true
-        # ProMotion: allow the display link to ask for 120 Hz (docs/FRAME_PACING.md).
-        CADisableMinimumFrameDurationOnPhone: true
-        # Files app: On My iPhone › ReplayNES (= Documents: ROM/, Projects/).
-        UIFileSharingEnabled: true
-        LSSupportsOpeningDocumentsInPlace: true
-        GCSupportsControllerUserInteraction: true
-        GCSupportedGameControllers:
-          - ProfileName: ExtendedGamepad
-          - ProfileName: MicroGamepad
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: io.github.replaynes.nesrec
             UTTypeDescription: ReplayNES Project
@@ -155,45 +63,17 @@ targets:
             LSTypeIsPackage: true
             LSItemContentTypes: [io.github.replaynes.nesrec]
 
-  # Share Extension "Add to ReplayNES": a share of many files (Files › Select › Share) reaches the
-  # app whole (iOS hands an app's own share entry only the first file): the extension copies every
-  # item into the App Group's ShareInbox and the app imports them (Sources/Shared/ShareInbox.swift).
-  # Bundle id <app>.share; App Group group.<app bundle id> on both (automatic signing registers them).
   ReplayNESShare:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ShareExtension
-      - path: Sources/Shared
     settings:
       base:
         PRODUCT_NAME: ReplayNESShare
-        PRODUCT_MODULE_NAME: ReplayNESShare
-        PRODUCT_BUNDLE_IDENTIFIER: "$(inherited).share"
-        # The app's group: this target's bundle id without ".share".
-        RN_APP_GROUP: "group.$(PRODUCT_BUNDLE_IDENTIFIER:base)"
-        APPLICATION_EXTENSION_API_ONLY: YES
-        SWIFT_OBJC_BRIDGING_HEADER: ""
-        OTHER_LDFLAGS: []
-        LIBRARY_SEARCH_PATHS: []
-        HEADER_SEARCH_PATHS: []
-        SKIP_INSTALL: YES
     entitlements:
       path: Config/ReplayNESShare.entitlements
-      properties:
-        com.apple.security.application-groups: ["$(RN_APP_GROUP)"]
     info:
       path: ShareExtension/Info.plist
       properties:
         CFBundleDisplayName: Add to ReplayNES
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        CFBundleDevelopmentRegion: en
-        CFBundleLocalizations: [en, ja]
-        RNAppGroup: "$(RN_APP_GROUP)"
         NSExtension:
-          NSExtensionPointIdentifier: com.apple.share-services
-          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
           NSExtensionAttributes:
             # Any number of files: data (ROMs and everything else; the app sorts them out) and
             # ReplayNES projects (packages).
@@ -204,72 +84,3 @@ targets:
               || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "io.github.replaynes.nesrec"
               || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.package"
               ).@count >= 1).@count >= 1
-
-  # Logic tests (no host app): the shared core layer, the iOS-only pure logic (feature gating,
-  # the ported NESTERM touch gamepad and its layout) and the macOS core tests that do not need AppKit, on the simulator.
-  ReplayNESTests:
-    type: bundle.unit-test
-    platform: iOS
-    sources:
-      - path: ../macos/Sources/Core
-      - path: ../macos/Tests
-        excludes:
-          - ControllerLayoutTests.swift   # AppKit
-      - path: Sources/Entitlements
-      - path: Sources/Play/Brickboy/TouchGamepad.swift
-      - path: Sources/Play/Brickboy/TouchLayout.swift
-      - path: Sources/Play/ResumeCountdownLogic.swift
-      - path: Sources/App/OrientationLock.swift
-      - path: Sources/Support/L10n.swift
-      - path: Sources/Library/ROMImport.swift
-      - path: Sources/Shared
-      - path: Tests
-    dependencies:
-      - target: Engine
-      - sdk: StoreKit.framework
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.replaynes.ios.tests
-        PRODUCT_MODULE_NAME: ReplayNESTests
-        GENERATE_INFOPLIST_FILE: YES
-        CODE_SIGNING_ALLOWED: NO
-        TEST_HOST: ""
-        BUNDLE_LOADER: ""
-
-  # End-to-end touch gestures on the running app (simulator): synthesised multi-touch paths on
-  # the ported NESTERM controller (scheme ReplayNESTouchUI; not part of the ReplayNES scheme's tests).
-  ReplayNESUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: UITests
-    dependencies:
-      - target: ReplayNES
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.replaynes.ios.uitests
-        GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: ReplayNES
-        SWIFT_OBJC_BRIDGING_HEADER: UITests/EventSynthesis.h
-        OTHER_LDFLAGS: []
-        HEADER_SEARCH_PATHS: []
-
-schemes:
-  ReplayNESTouchUI:
-    build:
-      targets:
-        ReplayNES: all
-        ReplayNESUITests: [test]
-    test:
-      targets: [ReplayNESUITests]
-  ReplayNES:
-    build:
-      targets:
-        ReplayNES: all
-        ReplayNESTests: [test]
-    test:
-      targets: [ReplayNESTests]
-    run:
-      config: Debug
-    archive:
-      config: Release

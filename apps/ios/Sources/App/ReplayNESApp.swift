@@ -10,6 +10,8 @@ struct ReplayNESApp: App {
     @Environment(\.scenePhase) private var phase
 
     init() {
+        // The product's core, content identity and ROM filter, before AppModel touches the library.
+        RNProduct.startup()
         UILanguage.applyAtLaunch()
         TestHooks.prepare()
     }

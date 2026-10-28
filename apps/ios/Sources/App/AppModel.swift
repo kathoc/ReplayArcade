@@ -1204,8 +1204,8 @@ final class AppModel: ObservableObject {
     /// ROMs are imported off the main thread (ROMImportQueue): one library refresh and one toast at
     /// the end; no game is started (see importFinished). A single .nesrec opens that project.
     func open(urls: [URL]) {
-        let projects = urls.filter { $0.pathExtension.lowercased() == "nesrec" }
-        let others = urls.filter { $0.pathExtension.lowercased() != "nesrec" }
+        let projects = urls.filter { RNProduct.isProject($0) }
+        let others = urls.filter { !RNProduct.isProject($0) }
         if projects.count == 1 && others.isEmpty {
             let url = projects[0]
             whenStarted { [weak self] in self?.continueProject(url) }
@@ -1254,12 +1254,12 @@ final class AppModel: ObservableObject {
             let fm = FileManager.default
             var roms: [URL] = [], projects: [URL] = []
             for u in items {
-                guard u.pathExtension.lowercased() == "nesrec" else { roms.append(u); continue }
+                guard RNProduct.isProject(u) else { roms.append(u); continue }
                 try? fm.createDirectory(at: projectsDir, withIntermediateDirectories: true)
                 let base = u.deletingPathExtension().lastPathComponent
                 var dest = projectsDir.appendingPathComponent(u.lastPathComponent, isDirectory: true)
                 var n = 2
-                while fm.fileExists(atPath: dest.path) { dest = projectsDir.appendingPathComponent("\(base) \(n).nesrec", isDirectory: true); n += 1 }
+                while fm.fileExists(atPath: dest.path) { dest = projectsDir.appendingPathComponent("\(base) \(n).\(RNProduct.projectExtension)", isDirectory: true); n += 1 }
                 if (try? fm.moveItem(at: u, to: dest)) != nil { projects.append(dest) }
             }
             if roms.isEmpty { ShareInbox.finish(items, root: root) }

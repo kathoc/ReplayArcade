@@ -16,7 +16,7 @@ struct LibraryPaths: Equatable {
     static var standard: LibraryPaths {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents")
-        return LibraryPaths(root: docs.appendingPathComponent("ReplayNES", isDirectory: true))
+        return LibraryPaths(root: docs.appendingPathComponent(RNProduct.dataDirectory, isDirectory: true))
     }
 
     /// Creates ROM/ and Projects/ if missing. Throws a user-readable error otherwise (no fallback).

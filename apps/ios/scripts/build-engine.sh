@@ -7,7 +7,8 @@
 #   apps/ios/Scripts/build-engine.sh [iphoneos|iphonesimulator|all] [--xcframework]
 # Always Release: the emulator core is far too slow unoptimized for real-time play.
 set -eu
-REPO="$(cd "${SRCROOT:-$(dirname "$0")/..}/../.." && pwd)"
+# The repository this script is in (not SRCROOT: another product's project includes common.yml).
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 OUT="${RN_ENGINE_BUILD_DIR:-$REPO/build/ios-engine}"
 WANT="${1:-${PLATFORM_NAME:-iphonesimulator}}"
 XCF=0

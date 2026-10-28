@@ -93,6 +93,7 @@ struct ExportGeometry: Equatable {
     var dstX: Int, dstY: Int, dstWidth: Int, dstHeight: Int
     var srcX: Int, srcY: Int, srcWidth: Int, srcHeight: Int
     var verticalScale: Int
+    var rotation: Int  // clockwise quarter turns (rn_media_info); the source rectangle stays unrotated
 
     init(_ s: ExportSettings) {
         var c = s.cValue
@@ -102,13 +103,14 @@ struct ExportGeometry: Equatable {
         dstX = Int(g.dst_x); dstY = Int(g.dst_y); dstWidth = Int(g.dst_width); dstHeight = Int(g.dst_height)
         srcX = Int(g.src_x); srcY = Int(g.src_y); srcWidth = Int(g.src_width); srcHeight = Int(g.src_height)
         verticalScale = Int(g.vertical_scale)
+        rotation = Int(g.rotation)
     }
 
     var cValue: rnf_export_geometry {
         rnf_export_geometry(canvas_width: Int32(canvasWidth), canvas_height: Int32(canvasHeight), dst_x: Int32(dstX),
                             dst_y: Int32(dstY), dst_width: Int32(dstWidth), dst_height: Int32(dstHeight), src_x: Int32(srcX),
                             src_y: Int32(srcY), src_width: Int32(srcWidth), src_height: Int32(srcHeight),
-                            vertical_scale: Int32(verticalScale))
+                            vertical_scale: Int32(verticalScale), rotation: UInt32(rotation))
     }
 
     /// Source column for every destination column (exact integer repeat for 1:1).
