@@ -152,6 +152,10 @@ struct TouchLayout: Equatable {
         /// picture as large as its aspect allows (the screen's height for a 4:3 picture), the controls
         /// over it - the Linux app's FILL (computeGameRect over the whole window, the UI on top).
         var fill = false
+        /// The picture's displayed width / height (another core's picture, its rotation and pixel aspect
+        /// applied); nil = the NES picture. Portrait FILL makes the game area as tall as a full-width
+        /// picture of this aspect.
+        var pictureAspect: CGFloat?
     }
 
     var size: CGSize
@@ -379,11 +383,15 @@ struct TouchLayout: Equatable {
         // TOUCH_PORT.md). app.mjs resizeScreen shrinks the screen row to the picture so the
         // controls get the rest.
         let gameH = (W / pictureAspect).rounded()
-        let game = CGRect(x: 0, y: safe.top, width: W, height: gameH)
+        // The controls stay where the NES picture's row puts them. Portrait FILL: a picture taller than
+        // that row (a vertical arcade game) still spans the screen's width, its lower part under the
+        // controls (as landscape FILL, decided 2026-10-30); a wider picture fits the row as before.
+        let fullH = o.fill ? (o.pictureAspect.map { (W / max($0, 0.01)).rounded() } ?? gameH) : gameH
+        let game = CGRect(x: 0, y: safe.top, width: W, height: max(gameH, fullH))
 
         // Where NESTERM has its sub bar (.bb-subbar): the transport row right under the picture
         // (ReplayNES): ⏪ ◀| |▶ ⏩, centred.
-        let subbar = CGRect(x: 0, y: game.maxY, width: W, height: transportHeight + 2 * transportMargin)
+        let subbar = CGRect(x: 0, y: safe.top + gameH, width: W, height: transportHeight + 2 * transportMargin)
         var extras = transport(midX: W / 2, bottom: subbar.maxY - transportMargin, width: W - 2 * subbarPadX)
 
         // #app:not(.bb-side) > .bb-root > .bb-gamepad { flex: 1 1 auto;

@@ -156,9 +156,16 @@ final class AppModel: ObservableObject {
         DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan, geometry: status.geometry)
     }
 
+    /// The picture's displayed width / height (pixel aspect, rotation); nil for the NES picture.
+    static func displayedAspect(_ g: PictureGeometry) -> CGFloat? {
+        guard !g.isNESPicture, g.width > 0, g.height > 0 else { return nil }
+        let w = Double(g.width) * g.pixelAspect, h = Double(g.height)
+        return CGFloat(g.rotation % 2 == 1 ? h / w : w / h)
+    }
+
     var touchOptions: TouchLayout.Options {
         TouchLayout.Options(showAABB: touchAABB, dpadSize: min(max(CGFloat(touchDpadSize), TouchLayout.dpadRange.lowerBound), TouchLayout.dpadRange.upperBound),
-                            ways: touchWays, fill: !integerScale)
+                            ways: touchWays, fill: !integerScale, pictureAspect: Self.displayedAspect(status.geometry))
     }
 
     /// controller.mjs syncWays / setGame: 8-way or 4-way, remembered per ROM ("ways:<crc32>" there,
