@@ -148,6 +148,10 @@ struct TouchLayout: Equatable {
         var dpadSize: CGFloat = TouchLayout.dpadDefault
         /// 8 or 4: the label of the ways switch ("8-WAY").
         var ways = 8
+        /// Display › FILL (not integer scale): in landscape the game area is the whole screen, the
+        /// picture as large as its aspect allows (the screen's height for a 4:3 picture), the controls
+        /// over it - the Linux app's FILL (computeGameRect over the whole window, the UI on top).
+        var fill = false
     }
 
     var size: CGSize
@@ -522,7 +526,8 @@ struct TouchLayout: Equatable {
                             width: min(max(2 * half, 3 * 2 * minTarget + 3 * transportGap),
                                        2 * (min(W / 2 - select.maxX, start.minX - W / 2) - pictureMargin)))
         extras.insert(contentsOf: row, at: 0)
-        let game = CGRect(x: W / 2 - half, y: 0, width: 2 * half, height: max(0, (row.first?.frame.minY ?? H) - transportMargin))
+        let game = o.fill ? CGRect(x: 0, y: 0, width: W, height: H)
+                          : CGRect(x: W / 2 - half, y: 0, width: 2 * half, height: max(0, (row.first?.frame.minY ?? H) - transportMargin))
 
         var g = TouchGamepad.Geometry()
         g.viewport = size

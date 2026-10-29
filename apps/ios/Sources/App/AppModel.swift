@@ -158,7 +158,7 @@ final class AppModel: ObservableObject {
 
     var touchOptions: TouchLayout.Options {
         TouchLayout.Options(showAABB: touchAABB, dpadSize: min(max(CGFloat(touchDpadSize), TouchLayout.dpadRange.lowerBound), TouchLayout.dpadRange.upperBound),
-                            ways: touchWays)
+                            ways: touchWays, fill: !integerScale)
     }
 
     /// controller.mjs syncWays / setGame: 8-way or 4-way, remembered per ROM ("ways:<crc32>" there,
