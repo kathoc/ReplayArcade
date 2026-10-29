@@ -946,6 +946,7 @@ final class EmulationController {
     /// session when the housekeeping (autosave) may run afterwards.
     private func tickFrame() -> (EngineSession?, autosave: Bool) {
         let r = tickFrameCore()
+        ForegroundPlay.playing = session != nil && !paused
         if paused && countdown != 0, let s = session {
             // Paused in the countdown (the seek bar, the menu): the numeral goes; practice's comes back
             // on resume (the resume countdown starts over).

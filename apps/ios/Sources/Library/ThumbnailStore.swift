@@ -50,10 +50,15 @@ enum ThumbnailStore {
     static func requestRomPicture(path: String, sha: String?, done: @escaping () -> Void) {
         guard dir != nil, let sha, !sha.isEmpty, image(romSHA: sha) == nil, asked.insert(sha).inserted else { return }
         pictureQueue.async {
+            // A core whose sessions share one machine (ReplayArcade): only while the foreground is not
+            // playing (ForegroundPlay), one ROM at a time (this serial queue).
+            let shares = ForegroundPlay.sharesMachine(ForegroundPlay.defaultCore)
+            if shares { ForegroundPlay.waitUntilIdle() }
             var s: OpaquePointer?
             guard rn_session_new(path, nil, nil, &s) == RN_OK, let s else { return }
             defer { rn_session_close(s) }
             for _ in 0..<romPictureFrame {
+                if shares { ForegroundPlay.waitUntilIdle() }
                 if rn_step(s, 0, 0, 0, nil) != RN_OK { return }
             }
             guard let picture = VideoPicture(session: s) else { return }
