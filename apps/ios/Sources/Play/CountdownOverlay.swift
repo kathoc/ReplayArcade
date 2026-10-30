@@ -68,6 +68,8 @@ enum CountdownOverlay {
             ctx.translateBy(x: 0, y: s)
             ctx.scaleBy(x: 1, y: -1)
             UIGraphicsPushContext(ctx)
+            // A 1-second countdown is the ring alone (Resume Countdown: 1 Second), as the desktop.
+            guard rnf_countdown_seconds() > 1 else { UIGraphicsPopContext(); ctx.restoreGState(); return true }
             let font = UIFont.monospacedDigitSystemFont(ofSize: r * 1.25 * CGFloat(v.scale), weight: .semibold)
             let text = NSAttributedString(string: "\(v.number)", attributes: [
                 .font: font, .foregroundColor: UIColor(red: 1, green: 1, blue: 1, alpha: a),

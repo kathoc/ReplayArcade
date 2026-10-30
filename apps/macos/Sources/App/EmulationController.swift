@@ -80,6 +80,8 @@ private final class DisplayLinkProxy: NSObject, CAMetalDisplayLinkDelegate {
 struct EmuStatus: Equatable {
     /// The session's picture geometry (the viewport's size, rotation and pixel aspect).
     var geometry = PictureGeometry.nes
+    /// Player 1's fire buttons in the session's layout (the NES: A and B).
+    var fireButtons = 2
     var hasSession = false
     var frame: UInt64 = 0
     var takeLength: UInt64 = 0
@@ -363,6 +365,7 @@ final class EmulationController {
     var layoutExtraBindings: ((Set<String>) -> [(input: String, action: String)])?
     /// The session's input is the NES pads (rn_step with p1 / p2); otherwise whole records of its layout.
     private var nesLayout = true
+    private var fireButtons = 2
 
     /// One frame's game input: the NES pads' bytes, or another layout's whole record (byte 2: events).
     private struct GameInput {
@@ -389,6 +392,7 @@ final class EmulationController {
         if let s, let p = rn_session_input_layout_json(s.handle) { layout = String(cString: p); rn_string_free(p) }
         input.useLayout(layout, extra: layoutExtraBindings)
         nesLayout = !input.layoutActive
+        fireButtons = nesLayout ? 2 : input.fireButtons
         // The game's frame rate and audio (docs/plans/2026-10-24-media-frontend.md): pacing, the
         // display cadence and the audio stream follow the core (the NES values without a session).
         if let s {
@@ -1858,6 +1862,7 @@ final class EmulationController {
             st.hasSession = true
             st.frame = s.frame
             st.geometry = s.pictureGeometry
+            st.fireButtons = fireButtons
             st.takeLength = s.takeLength
             st.live = s.mode == RN_MODE_LIVE
             st.recording = ff.showsRecording(s)

@@ -9,7 +9,9 @@
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
 //   -holdTouch <button>       press an on-screen button at 2 s for 0.3 s (e.g. l2 = rewind) to check touch input;
 //                             -holdTouchAt <s>: at s seconds instead (an arcade board's boot takes longer)
-//   -setResumeCountdown NO    store Settings › Controls › Controls Details › Resume Countdown (YES / NO) before the start
+//   -touchScript b@s:d,...    on-screen buttons pressed at s seconds for d seconds each (select@12:0.3,start@13:0.3)
+//   -setResumeCountdown NO    store Settings › Controls › Controls Details › Resume Countdown before the start:
+//                             YES = 3 seconds (the numerals), NO = none (the default is 1 second, the ring alone)
 //   -setDefaults k:v,k:v      store settings in the app's domain before the start (YES / NO, numbers, text)
 //   -logTouch YES             log every on-screen press / release edge ("ReplayNES touch: a+ b-")
 //   -logTouchEvents YES       log every UITouch the on-screen gamepad receives
@@ -37,7 +39,7 @@ enum TestHooks {
         // Stored in the app's domain (a plain -resumeCountdown argument would pin the setting:
         // the Controls page's switch could not change it).
         if let on = UserDefaults.standard.object(forKey: "setResumeCountdown") as? String {
-            UserDefaults.standard.set(on == "YES" || on == "1", forKey: "resumeCountdown")
+            UserDefaults.standard.set(on == "YES" || on == "1" ? 3 : 0, forKey: "countdownSeconds")
         }
         // -setDefaults key:value,key:value - stored in the app's domain (YES / NO, integers, numbers, text).
         if let list = UserDefaults.standard.string(forKey: "setDefaults") {
@@ -93,6 +95,13 @@ enum TestHooks {
             let at = d.double(forKey: "holdTouchAt") > 0 ? d.double(forKey: "holdTouchAt") : 2
             DispatchQueue.main.asyncAfter(deadline: .now() + at) { m.touchButtons(pressed: [button], released: []) }
             DispatchQueue.main.asyncAfter(deadline: .now() + at + 0.3) { m.touchButtons(pressed: [], released: [button]) }
+        }
+        // -touchScript b@s:d,... : press button b at s seconds for d seconds (e.g. select@12:0.3,start@13:0.3,turboB@16:2).
+        for step in (d.string(forKey: "touchScript") ?? "").split(separator: ",") {
+            let p = step.split(separator: "@"), t = p.count == 2 ? p[1].split(separator: ":") : []
+            guard p.count == 2, t.count == 2, let b = TouchButton(rawValue: String(p[0])), let at = Double(t[0]), let len = Double(t[1]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) { m.touchButtons(pressed: [b], released: []) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + at + len) { m.touchButtons(pressed: [], released: [b]) }
         }
         if d.string(forKey: "orientation") == "landscape" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { rotate(to: .landscapeRight) }

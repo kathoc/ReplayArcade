@@ -42,7 +42,8 @@ struct PlayView: View {
 
     @ViewBuilder
     private func overlays(_ l: TouchLayout) -> some View {
-        let game = l.gameArea
+        // The bottom overlays stay clear of the controls (TouchLayout.overlayArea).
+        let game = l.overlayArea.isEmpty ? l.gameArea : l.overlayArea
         let picture = pictureRect(l)
         let st = model.status
         // Top of the picture: badges, notice.

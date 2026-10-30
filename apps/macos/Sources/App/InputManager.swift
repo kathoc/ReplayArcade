@@ -169,6 +169,8 @@ final class InputManager {
 
     /// The game actions of another core's layout are in use (not the NES pads).
     private(set) var layoutActive = false
+    /// Player 1's fire buttons ("p1.b1" ...) of the active layout (useLayout); 2 for the NES pads.
+    private(set) var fireButtons = 2
 
     /// A session's input layout (rn_session_input_layout_json; nil or the NES layout = the NES pads and
     /// the saved bindings). Another layout gets the frontend core's default bindings for it (pad 1 and
@@ -192,6 +194,7 @@ final class InputManager {
         for i in 0..<rnf_input_action_count() where rnf_input_action_get(i, &info) != 0 && info.group != RNF_GROUP_HOTKEY {
             actions.insert(String(cString: info.id))
         }
+        fireButtons = (1...8).filter { actions.contains("p1.b\($0)") }.count
         let added = extra?(actions) ?? []
         for b in added { _ = rn_input_bind(handle, b.input, b.action) }
         NSLog("ReplayNES input layout: %@, %d game actions, %d extra bindings (%@)", String(cString: rnf_input_layout_name()),

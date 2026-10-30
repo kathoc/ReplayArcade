@@ -33,6 +33,9 @@ enum TouchButton: String, CaseIterable, Hashable {
     /// Pause (ReplayNES, above MENU): handled by the app, pauses the game (the seek bar shows). The
     /// picture is no longer tapped to pause (docs/TOUCH_PORT.md, 2026-10-30).
     case pause
+    /// Buttons 3 / 4 of another core's game (ReplayArcade: three- and four-button boards), in AA's / BB's
+    /// place (TouchLayout.Options.buttons); never on the NES.
+    case c, d
 
     /// The engine input id ("touch:dpad.up"), nil for buttons handled by the app.
     var inputID: String? {
@@ -74,14 +77,16 @@ enum TouchBindings {
         ("touch:l2", "hk.rewind"), ("touch:r2", "hk.fast_forward"),
     ]
 
-    /// Another core's layout (`actions`: its game action ids, "p1.b1" ...): the D-pad, B = button 1,
-    /// A = button 2, the turbo B / A keys = buttons 3 / 4 when the game has them, SELECT = coin,
-    /// START = start; L2 / R2 wind the tape as on the NES.
+    /// Another core's layout (`actions`: its game action ids, "p1.b1", "p1.b1.turbo" ...): the D-pad,
+    /// B = button 1, A = button 2, BB / AA = their turbo (as the NES pad), C / D = buttons 3 / 4 when the
+    /// game has them (TouchLayout.Options.buttons), SELECT = coin, START = start; L2 / R2 wind the tape.
     static func forLayout(actions: Set<String>) -> [(input: String, action: String)] {
         var out: [(input: String, action: String)] = [
             ("touch:dpad.up", "p1.up"), ("touch:dpad.down", "p1.down"),
             ("touch:dpad.left", "p1.left"), ("touch:dpad.right", "p1.right"),
-            ("touch:b", "p1.b1"), ("touch:a", "p1.b2"), ("touch:turboB", "p1.b3"), ("touch:turboA", "p1.b4"),
+            ("touch:b", "p1.b1"), ("touch:a", "p1.b2"), ("touch:c", "p1.b3"), ("touch:d", "p1.b4"),
+            // Turbo: BB = button 1's, AA = button 2's (InputLayout::turboOf: "<id>.turbo").
+            ("touch:turboB", "p1.b1.turbo"), ("touch:turboA", "p1.b2.turbo"),
             ("touch:select", "p1.coin"), ("touch:start", "p1.start"),
         ]
         out = out.filter { actions.contains($0.action) }
@@ -159,6 +164,11 @@ struct TouchLayout: Equatable {
         /// applied); nil = the NES picture. Portrait FILL makes the game area as tall as a full-width
         /// picture of this aspect.
         var pictureAspect: CGFloat?
+        /// The game's fire buttons (the NES: A and B). 3: AA's disc is button 3 ("C"); 4: BB's is
+        /// button 4 ("D") too - shown whatever the turbo setting, so every button of the game is there.
+        var buttons = 2
+        /// The round discs up-left of A / B are shown (turbo keys, or buttons 3 / 4).
+        var showRounds: Bool { showAABB || buttons >= 3 }
     }
 
     var size: CGSize
@@ -174,6 +184,11 @@ struct TouchLayout: Equatable {
     var start: CGRect
     /// The ReplayNES extras: the extras row's pills, then AA / BB (style .round) when shown.
     var extras: [TouchExtra]
+    /// Where the overlays at the bottom of the game (the tape's status label, the Undo chip, the paused
+    /// seek bar) go: the game area clear of the controls. Portrait: down to `overlayGap` above the
+    /// highest of the D-pad, A / B and the round discs (FILL can put the picture under them); landscape:
+    /// between the control columns.
+    var overlayArea: CGRect = .zero
 
     func extra(_ b: TouchButton) -> TouchExtra? { extras.first { $0.kind == .button(b) } }
 
@@ -217,6 +232,8 @@ struct TouchLayout: Equatable {
     static let islandHalfWidth: CGFloat = 63
     static let islandGap: CGFloat = 12
     static func islandMidY(_ safeTop: CGFloat) -> CGFloat { safeTop > 20 ? (safeTop / 2).rounded() : 22 }
+    /// The bottom overlays' clearance above the controls (portrait).
+    static let overlayGap: CGFloat = 8
     /// Pause above MENU: the gap between their touch areas.
     static let pauseGap: CGFloat = 8
 
@@ -278,6 +295,8 @@ struct TouchLayout: Equatable {
             case .menu: return "MENU"
             case .turboA: return "AA"
             case .turboB: return "BB"
+            case .c: return "C"
+            case .d: return "D"
             case .stepBack: return "◀︎|"
             case .stepForward: return "|▶︎"
             default: return b.rawValue.uppercased()
@@ -295,7 +314,7 @@ struct TouchLayout: Equatable {
         case .stepForward: return .icon("forward.frame.fill")
         case .slow: return .icon("tortoise.fill")
         case .pause: return .icon("pause.fill")
-        case .turboA, .turboB: return .round
+        case .turboA, .turboB, .c, .d: return .round
         default: return .pill
         }
     }
@@ -351,14 +370,17 @@ struct TouchLayout: Equatable {
         (btn + faceGap) * faceTilt - v.dy + turboMetrics(btn: btn).size / 2
     }
 
-    private static func turboExtras(a: CGPoint, b: CGPoint, btn: CGFloat, offset v: CGVector) -> [TouchExtra] {
+    private static func turboExtras(a: CGPoint, b: CGPoint, btn: CGFloat, offset v: CGVector, _ o: Options) -> [TouchExtra] {
         let t = turboMetrics(btn: btn)
         func disc(_ c: CGPoint) -> CGRect {
             CGRect(x: c.x + v.dx - t.size / 2, y: c.y + v.dy - t.size / 2, width: t.size, height: t.size)
         }
-        // B first (the left one), as .gp-face lists its rounds.
-        return [TouchExtra(kind: .button(.turboB), frame: disc(b), style: .round),
-                TouchExtra(kind: .button(.turboA), frame: disc(a), style: .round)]
+        // B first (the left one), as .gp-face lists its rounds. Buttons 3 / 4 take AA's / BB's place;
+        // a turbo disc only with the turbo setting on.
+        let left: TouchButton? = o.buttons >= 4 ? .d : o.showAABB ? .turboB : nil
+        let right: TouchButton? = o.buttons >= 3 ? .c : o.showAABB ? .turboA : nil
+        return [left.map { TouchExtra(kind: .button($0), frame: disc(b), style: .round) },
+                right.map { TouchExtra(kind: .button($0), frame: disc(a), style: .round) }].compactMap { $0 }
     }
 
     /// The A/B midpoint for a face cluster whose AA / BB (if shown) reach `above` over it and whose
@@ -432,11 +454,11 @@ struct TouchLayout: Equatable {
         // AA / BB up-left of A / B, BB kept `turboGap` clear of the D-pad (narrow screens).
         let tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 4 + btn / 2 + bTowardA * btn, y: 0), minLeft: pi + 2 + d + turboGap)
         let below = btn / 2 + off + 4
-        let above = o.showAABB ? turboAbove(btn: btn, offset: tv) : below
+        let above = o.showRounds ? turboAbove(btn: btn, offset: tv) : below
         let m = faceMid(row: row1, top: row1.minY, above: above, below: below)
         let f = face(x: faceX, midY: m, btn: btn, padX: 4, padY: off + 4)
         let dpad = CGRect(x: pi + 2, y: m - d / 2, width: d, height: d)
-        if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv) }
+        if o.showRounds { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv, o) }
         // Slow motion: in the top band, left of the Dynamic Island (on the left like a controller's L
         // side), centred on the island's height.
         let slowX = W / 2 - islandHalfWidth - islandGap - slowSize.width
@@ -471,8 +493,11 @@ struct TouchLayout: Equatable {
         g.system = row2
         g.select = select
         g.start = start
-        return TouchLayout(size: size, landscape: false, gameArea: game, pad: g, faceButton: btn,
-                           select: select, start: start, extras: extras)
+        var l = TouchLayout(size: size, landscape: false, gameArea: game, pad: g, faceButton: btn,
+                            select: select, start: start, extras: extras)
+        let controlsTop = ([dpad.minY, f.a.y - btn / 2, f.b.y - btn / 2] + extras.filter { $0.style == .round }.map(\.frame.minY)).min()!
+        l.overlayArea = CGRect(x: 0, y: game.minY, width: W, height: max(0, min(game.maxY, controlsTop - overlayGap) - game.minY))
+        return l
     }
 
     // MARK: landscape (.bb-side)
@@ -522,7 +547,7 @@ struct TouchLayout: Equatable {
         // limit; the face moves right into its 16 px padding first (keeping A 8 pt from the screen
         // edge), then AA / BB turn toward straight up as far as needed.
         var tv = CGVector.zero
-        if o.showAABB {
+        if o.showRounds {
             let bLeft = faceX + 16 + bTowardA * btn
             let t = turboMetrics(btn: btn), u = turboDirection(btn: btn)
             let protrude = max(0, -(u.dx * t.step) + t.size / 2 - btn / 2)
@@ -530,11 +555,11 @@ struct TouchLayout: Equatable {
             tv = turboOffset(btn: btn, b: CGPoint(x: faceX + 16 + btn / 2 + bTowardA * btn, y: 0), minLeft: bLeft)
         }
         let below = btn / 2 + 48
-        let above = o.showAABB ? turboAbove(btn: btn, offset: tv) : below
+        let above = o.showRounds ? turboAbove(btn: btn, offset: tv) : below
         let m = faceMid(row: row3, top: row2.maxY + 4, above: above, below: below)
         var f = face(x: faceX, midY: m, btn: btn, padX: 16, padY: 48)
         f.box = f.box.intersection(CGRect(x: 0, y: 0, width: W, height: H))
-        if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv) }
+        if o.showRounds { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv, o) }
 
         // .bb-side > .bb-root .gp-dpad { justify-self: start; margin-inline-start: var(--bb-ctl-inset)
         //   (16px); align-self: center; width: var(--bb-dpad, 144px) } - × 1.1, on the A/B midpoint.
@@ -567,7 +592,9 @@ struct TouchLayout: Equatable {
         g.system = nil // .gp-system is display: contents: only the pills take touches
         g.select = select
         g.start = start
-        return TouchLayout(size: size, landscape: true, gameArea: game, pad: g, faceButton: btn,
-                           select: select, start: start, extras: extras)
+        var l = TouchLayout(size: size, landscape: true, gameArea: game, pad: g, faceButton: btn,
+                            select: select, start: start, extras: extras)
+        l.overlayArea = CGRect(x: W / 2 - half, y: 0, width: 2 * half, height: H)
+        return l
     }
 }

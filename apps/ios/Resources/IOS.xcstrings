@@ -1060,6 +1060,46 @@
           }
         }
       }
+    },
+    "None": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "なし"
+          }
+        }
+      }
+    },
+    "3 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3秒"
+          }
+        }
+      }
+    },
+    "1 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1秒"
+          }
+        }
+      }
+    },
+    "Before play resumes after a pause or a rewind, and before each practice run (1 s: the ring alone, no numeral)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一時停止や巻き戻しのあとで再開する前と、練習の各回の前（1秒は数字なしの輪だけ）"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

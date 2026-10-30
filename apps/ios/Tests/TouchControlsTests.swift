@@ -262,6 +262,53 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertNil(TouchButton(rawValue: "r"), "no touch R")
     }
 
+    /// The round discs follow the game's buttons: 2 = turbo BB / AA (with the setting), 3 = C in AA's
+    /// place (BB still turbo), 4 = D in BB's place too; C / D shown whatever the turbo setting.
+    func testRoundsFollowTheGameButtons() {
+        for (buttons, aabb, want) in [(2, true, [TouchButton.turboB, .turboA]), (2, false, []), (3, true, [.turboB, .c]),
+                                      (3, false, [.c]), (4, true, [.d, .c]), (4, false, [.d, .c])] {
+            var o = TouchLayout.Options(); o.buttons = buttons; o.showAABB = aabb
+            for (name, l) in Self.layouts(o) {
+                XCTAssertEqual(l.extras.filter { $0.style == .round }.map(\.kind), want.map { .button($0) }, "\(buttons) buttons, AABB \(aabb) (\(name))")
+            }
+        }
+        XCTAssertEqual(TouchLayout.label(.button(.c), ways: 8), "C")
+        XCTAssertEqual(TouchButton.c.inputID, "touch:c")
+    }
+
+    /// Another core's touch bindings: B / A = buttons 1 / 2, BB / AA = their turbo, C / D = 3 / 4,
+    /// SELECT = coin (only actions the game has).
+    func testTouchBindingsForAnArcadeLayout() {
+        let actions: Set<String> = ["p1.up", "p1.down", "p1.left", "p1.right", "p1.b1", "p1.b1.turbo", "p1.b2", "p1.b2.turbo",
+                                    "p1.b3", "p1.b3.turbo", "p1.coin", "p1.start"]
+        let m = Dictionary(TouchBindings.forLayout(actions: actions).map { ($0.input, $0.action) }, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(m["touch:b"], "p1.b1"); XCTAssertEqual(m["touch:a"], "p1.b2"); XCTAssertEqual(m["touch:c"], "p1.b3")
+        XCTAssertEqual(m["touch:turboB"], "p1.b1.turbo", "BB = button 1's turbo")
+        XCTAssertEqual(m["touch:turboA"], "p1.b2.turbo", "AA = button 2's turbo")
+        XCTAssertNil(m["touch:d"], "no button 4")
+        XCTAssertEqual(m["touch:select"], "p1.coin")
+    }
+
+    /// The bottom overlays (status label, Undo chip, seek bar) stay clear of the controls, also when
+    /// portrait FILL puts a tall picture under them.
+    func testOverlayAreaClearOfTheControls() {
+        for aspect in [nil, 3.0 / 4.0, 4.0 / 3.0] as [CGFloat?] {
+            var o = TouchLayout.Options(); o.fill = true; o.pictureAspect = aspect; o.buttons = 3
+            for (name, l) in Self.layouts(o) {
+                let a = l.overlayArea
+                XCTAssertGreaterThan(a.height, 40, name)
+                XCTAssertTrue(l.gameArea.contains(a) || l.landscape, name)
+                let d = l.pad.dpad
+                XCTAssertFalse(a.intersects(d), "D-pad (\(name), \(String(describing: aspect)))")
+                for c in [l.pad.a, l.pad.b] {
+                    let disc = CGRect(x: c.x - l.faceButton / 2, y: c.y - l.faceButton / 2, width: l.faceButton, height: l.faceButton)
+                    XCTAssertFalse(a.intersects(disc), "A / B (\(name), \(String(describing: aspect)))")
+                }
+                for r in l.extras where r.style == .round { XCTAssertFalse(a.intersects(r.frame), "\(r.kind) (\(name))") }
+            }
+        }
+    }
+
     /// 8-WAY and MENU: portrait at the ends of the SELECT / START row, landscape in the side columns.
     func testWaysAndMenuPlaces() {
         for (name, l) in Self.layouts() {
@@ -308,7 +355,8 @@ final class TouchLayoutTests: XCTestCase {
     }
 
     func testTouchBindingsCoverEveryGameButtonOnce() {
-        let ids = TouchButton.allCases.compactMap(\.inputID)
+        // C / D (buttons 3 / 4) are another core's only (TouchBindings.forLayout), never the NES pad's.
+        let ids = TouchButton.allCases.filter { $0 != .c && $0 != .d }.compactMap(\.inputID)
         XCTAssertEqual(Set(TouchBindings.defaults.map(\.input)), Set(ids))
         XCTAssertEqual(TouchBindings.defaults.count, ids.count)
         XCTAssertNil(TouchButton.menu.inputID)
@@ -517,5 +565,41 @@ final class NESTERMControllerCheckTests: XCTestCase {
         XCTAssertEqual(pad.ox, 0)
         XCTAssertEqual(pad.oy, 0)
         XCTAssertNotNil(pad.restEstimate(), "the rest estimate describes the hand: kept")
+    }
+}
+
+/// The touch turbo keys on another core's layout reach the engine as turbo (rn_input with the arcade
+/// bindings of TouchBindings.forLayout): BB held = button 1 pulsing, B held = button 1 held.
+final class ArcadeTouchTurboTests: XCTestCase {
+    private static let layout = """
+    {"name":"test-arcade","recordBytes":8,"buttons":[
+     {"id":"p1.up","byte":0,"bit":4},{"id":"p1.down","byte":0,"bit":5},{"id":"p1.left","byte":0,"bit":6},{"id":"p1.right","byte":0,"bit":7},
+     {"id":"p1.b1","byte":0,"bit":0},{"id":"p1.b2","byte":0,"bit":1},{"id":"p1.b3","byte":0,"bit":2},
+     {"id":"p1.coin","byte":1,"bit":0},{"id":"p1.start","byte":1,"bit":1}],"axes":[],"opposite":[]}
+    """
+
+    private func bit0(_ input: OpaquePointer, frames: Int) -> [Int] {
+        (0..<frames).map { f in
+            var r = rn_input_record()
+            rn_input_sample_record(input, UInt64(f), &r)
+            return Int(withUnsafeBytes(of: r.bytes) { $0[0] } & 1)
+        }
+    }
+
+    func testTurboKeysPulseTheirButton() {
+        let input = rn_input_new()!
+        defer { rn_input_free(input) }
+        XCTAssertEqual(rn_input_set_layout_json(input, Self.layout), RN_OK)
+        let actions: Set<String> = ["p1.up", "p1.down", "p1.left", "p1.right", "p1.b1", "p1.b1.turbo", "p1.b2", "p1.b2.turbo",
+                                    "p1.b3", "p1.b3.turbo", "p1.coin", "p1.start"]
+        for b in TouchBindings.forLayout(actions: actions) { XCTAssertEqual(rn_input_bind(input, b.input, b.action), RN_OK, b.input) }
+        XCTAssertEqual(rn_input_set_turbo(input, 4, 2), RN_OK)
+        rn_input_set_pressed(input, "touch:turboB", 1)
+        let turbo = bit0(input, frames: 12)
+        XCTAssertTrue(turbo.contains(0) && turbo.contains(1), "BB held pulses button 1: \(turbo)")
+        XCTAssertEqual(turbo.filter { $0 == 1 }.count, 6, "on 2 of every 4 frames: \(turbo)")
+        rn_input_set_pressed(input, "touch:turboB", 0)
+        rn_input_set_pressed(input, "touch:b", 1)
+        XCTAssertEqual(bit0(input, frames: 12).dropFirst(), Array(repeating: 1, count: 11)[...], "B held holds button 1")
     }
 }

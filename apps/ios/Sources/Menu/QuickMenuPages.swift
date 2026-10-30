@@ -362,8 +362,10 @@ enum QuickMenuPages {
                    Double(c.turboDuty), 1...Double(max(2, c.turboPeriod - 1)), step: 1,
                    text: String(localized: "\(c.turboDuty) f")) { m.input.setTurbo(period: c.turboPeriod, duty: Int($0)) },
             // As on macOS (UI_REDESIGN.md, "Resume countdown"): Controls is full (six rows).
-            toggle("resumeCountdown", "play.circle", String(localized: "Resume Countdown"),
-                   String(localized: "3, 2, 1 before play resumes after a pause"), m.resumeCountdown) { m.resumeCountdown = $0 },
+            choice("resumeCountdown", "play.circle", String(localized: "Resume Countdown"),
+                   L("Before play resumes after a pause or a rewind, and before each practice run (1 s: the ring alone, no numeral)"),
+                   [L("3 s"), L("1 s"), L("None")],
+                   m.countdownSeconds >= 3 ? 0 : m.countdownSeconds >= 1 ? 1 : 2) { m.countdownSeconds = [3, 1, 0][$0] },
             QMItem(id: "resetBindings", icon: "arrow.counterclockwise", title: String(localized: "Default Buttons"),
                    detail: String(localized: "Restore the default keys and buttons"),
                    confirm: {

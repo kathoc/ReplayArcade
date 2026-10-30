@@ -149,6 +149,10 @@ final class AppModel: ObservableObject {
     @AppStorage("touchHideWithPad") var touchHideWithPad = true { didSet { objectWillChange.send() } }
     /// Settings › Controls › Controls Details › Resume Countdown (same key as macOS).
     @AppStorage("resumeCountdown") var resumeCountdown = true { didSet { pushPrefs(); objectWillChange.send() } }
+    /// The countdown before play resumes and before each practice run: 3 or 1 second(s) (1: the ring
+    /// alone, no numeral; the default), 0 = none - the desktop's Settings › System › Countdown
+    /// (rnf_countdown_set_seconds). `resumeCountdown` is kept in the defaults but no longer used.
+    @AppStorage("countdownSeconds") var countdownSeconds = 1 { didSet { pushPrefs(); objectWillChange.send() } }
 
     var flashLevel: FlashLevel { FlashLevel(rawValue: flashReduction) ?? .standard }
 
@@ -165,7 +169,8 @@ final class AppModel: ObservableObject {
 
     var touchOptions: TouchLayout.Options {
         TouchLayout.Options(showAABB: touchAABB, dpadSize: min(max(CGFloat(touchDpadSize), TouchLayout.dpadRange.lowerBound), TouchLayout.dpadRange.upperBound),
-                            ways: touchWays, fill: !integerScale, pictureAspect: Self.displayedAspect(status.geometry))
+                            ways: touchWays, fill: !integerScale, pictureAspect: Self.displayedAspect(status.geometry),
+                            buttons: status.fireButtons)
     }
 
     /// controller.mjs syncWays / setGame: 8-way or 4-way, remembered per ROM ("ways:<crc32>" there,
@@ -319,8 +324,13 @@ final class AppModel: ObservableObject {
     }
 
     private func pushPrefs() {
-        let par = pauseAfterRewind, auto = autosaveInterval, flash = flashLevel, resumeCount = resumeCountdown
-        emu.perform { e in e.pauseAfterRewind = par; e.autosaveInterval = auto; e.setFlashLevel(flash); e.setResumeCountdown(resumeCount) }
+        let par = pauseAfterRewind, auto = autosaveInterval, flash = flashLevel, cs = countdownSeconds
+        // One countdown setting for both (3 / 1 / none): the length, and whether there is one at all.
+        rnf_countdown_set_seconds(Int32(max(1, cs)))
+        emu.perform { e in
+            e.pauseAfterRewind = par; e.autosaveInterval = auto; e.setFlashLevel(flash)
+            e.setResumeCountdown(cs > 0); e.setPracticeCountdown(cs > 0)
+        }
     }
 
     /// The renderer sees CRT only while the feature is unlocked (the stored choice is kept).
