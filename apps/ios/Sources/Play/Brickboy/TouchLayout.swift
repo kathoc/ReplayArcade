@@ -27,15 +27,18 @@ enum TouchButton: String, CaseIterable, Hashable {
     /// Frame Advance keys (AppModel.touchButtons → stepFrame: pauses, then steps one frame; held:
     /// repeats after 400 ms, every 50 ms, as a controller's paused L / R).
     case stepBack, stepForward
-    /// Slow motion (ReplayNES, portrait: under the middle of the frame steps): handled by the app,
-    /// toggles normal ⇔ 1/2 at the press (the desktop's / controller's hk.slow, R held + L).
+    /// Slow motion (ReplayNES; portrait: left of the Dynamic Island, landscape: above 8-WAY): handled
+    /// by the app, toggles normal ⇔ 1/2 at the press (the desktop's / controller's hk.slow, R held + L).
     case slow
+    /// Pause (ReplayNES, above MENU): handled by the app, pauses the game (the seek bar shows). The
+    /// picture is no longer tapped to pause (docs/TOUCH_PORT.md, 2026-10-30).
+    case pause
 
     /// The engine input id ("touch:dpad.up"), nil for buttons handled by the app.
     var inputID: String? {
         switch self {
         case .up, .down, .left, .right: return "touch:dpad.\(rawValue)"
-        case .menu, .stepBack, .stepForward, .slow: return nil
+        case .menu, .stepBack, .stepForward, .slow, .pause: return nil
         default: return "touch:\(rawValue)"
         }
     }
@@ -209,6 +212,13 @@ struct TouchLayout: Equatable {
     /// The slow-motion button (portrait): its box under the middle of the transport row.
     static let slowSize = CGSize(width: 44, height: 32)
     static let slowGap: CGFloat = 4
+    /// The Dynamic Island (portrait): half its width and the gap kept to it; its middle is about half
+    /// the top safe area down. Phones without one (a notch, or none) get the same place.
+    static let islandHalfWidth: CGFloat = 63
+    static let islandGap: CGFloat = 12
+    static func islandMidY(_ safeTop: CGFloat) -> CGFloat { safeTop > 20 ? (safeTop / 2).rounded() : 22 }
+    /// Pause above MENU: the gap between their touch areas.
+    static let pauseGap: CGFloat = 8
 
     // ReplayNES deviations from the CSS (apps/ios/docs/TOUCH_PORT.md, Deviations).
     /// The D-pad is drawn 10 % larger than --bb-dpad / the portrait clamp give.
@@ -284,6 +294,7 @@ struct TouchLayout: Equatable {
         case .stepBack: return .icon("backward.frame.fill")
         case .stepForward: return .icon("forward.frame.fill")
         case .slow: return .icon("tortoise.fill")
+        case .pause: return .icon("pause.fill")
         case .turboA, .turboB: return .round
         default: return .pill
         }
@@ -389,10 +400,11 @@ struct TouchLayout: Equatable {
         let fullH = o.fill ? (o.pictureAspect.map { (W / max($0, 0.01)).rounded() } ?? gameH) : gameH
         let game = CGRect(x: 0, y: safe.top, width: W, height: max(gameH, fullH))
 
-        // Where NESTERM has its sub bar (.bb-subbar): the transport row right under the picture
-        // (ReplayNES): ⏪ ◀| |▶ ⏩, centred.
-        let subbar = CGRect(x: 0, y: safe.top + gameH, width: W, height: transportHeight + 2 * transportMargin)
-        var extras = transport(midX: W / 2, bottom: subbar.maxY - transportMargin, width: W - 2 * subbarPadX)
+        // NESTERM's sub bar (.bb-subbar) is not used: rewind / fast-forward are the picture's side
+        // quarters, frame steps the paused seek bar's (2026-10-30). The gamepad starts right under the
+        // picture's row.
+        let subbar = CGRect(x: 0, y: safe.top + gameH, width: W, height: 0)
+        var extras: [TouchExtra] = []
 
         // #app:not(.bb-side) > .bb-root > .bb-gamepad { flex: 1 1 auto;
         //   grid-template-rows: minmax(0, 1fr) auto; padding: 6px 12px calc(6px + safe-bottom);
@@ -425,13 +437,11 @@ struct TouchLayout: Equatable {
         let f = face(x: faceX, midY: m, btn: btn, padX: 4, padY: off + 4)
         let dpad = CGRect(x: pi + 2, y: m - d / 2, width: d, height: d)
         if o.showAABB { extras += turboExtras(a: f.a, b: f.b, btn: btn, offset: tv) }
-        // Slow motion: under the middle of the frame steps (ReplayNES), only where its 44 pt touch
-        // area keeps clear of the D-pad, A / B and AA / BB (else no button: the seek bar has it).
-        let slow = TouchExtra(kind: .button(.slow), frame: CGRect(x: W / 2 - slowSize.width / 2, y: subbar.maxY + slowGap,
-                                                                  width: slowSize.width, height: slowSize.height), style: style(.button(.slow)))
-        let discs = [f.a, f.b].map { CGRect(x: $0.x - btn / 2, y: $0.y - btn / 2, width: btn, height: btn) }
-            + extras.filter { $0.style == .round }.map(\.hitFrame)
-        if !slow.hitFrame.intersects(dpad) && !discs.contains(where: { slow.hitFrame.intersects($0) }) { extras.append(slow) }
+        // Slow motion: in the top band, left of the Dynamic Island (on the left like a controller's L
+        // side), centred on the island's height.
+        let slowX = W / 2 - islandHalfWidth - islandGap - slowSize.width
+        extras.append(TouchExtra(kind: .button(.slow), frame: CGRect(x: max(pi, slowX), y: max(0, islandMidY(safe.top) - slowSize.height / 2),
+                                                                     width: slowSize.width, height: slowSize.height), style: style(.button(.slow))))
 
         // .gp-system { display: flex; justify-content: center; gap: 22px }.
         let total = sel.width + 22 + sta.width
@@ -442,7 +452,13 @@ struct TouchLayout: Equatable {
         // transport row).
         extras.append(pill(.ways, x: row2.minX, midY: select.midY, ways: o.ways))
         let menuW = switchSize(label(.button(.menu), ways: o.ways)).width
-        extras.append(pill(.button(.menu), x: row2.maxX - menuW, midY: select.midY, ways: o.ways))
+        let menu = pill(.button(.menu), x: row2.maxX - menuW, midY: select.midY, ways: o.ways)
+        extras.append(menu)
+        // Pause right above MENU, centred on it.
+        let pauseSlop = max(0, (minTarget - slowSize.height) / 2)   // its touch area below the pill
+        extras.append(TouchExtra(kind: .button(.pause), frame: CGRect(x: menu.frame.midX - slowSize.width / 2,
+                                                                      y: menu.hitFrame.minY - pauseGap - pauseSlop - slowSize.height,
+                                                                      width: slowSize.width, height: slowSize.height), style: style(.button(.pause))))
 
         var g = TouchGamepad.Geometry()
         g.viewport = size
@@ -473,9 +489,10 @@ struct TouchLayout: Equatable {
         let leftCol = CGRect(x: content.minX, y: 0, width: col, height: H)
         let rightCol = CGRect(x: content.maxX - col, y: 0, width: col, height: H)
 
-        // Row 1 (info / icons, margin-top: safe-top): the extras row, in .bb-quick's padding (4px).
+        // Row 1 (info / icons, margin-top: safe-top): slow motion and pause (2026-10-30), their 44 pt
+        // touch areas from the top, `pauseGap` above row 2's.
         let pillH = switchSize("MENU").height
-        let row1H = safe.top + 4 + pillH + 4
+        let row1H = (safe.top + minTarget + pauseGap + max(0, (minTarget - pillH) / 2)).rounded(.up)
         // Row 2 (ways / repeat): the switches.
         let row2 = CGRect(x: 0, y: row1H, width: W, height: pillH)
         // Row 4 (select / start): .gp-pill { align-self: end; margin-bottom: calc(8px + safe-bottom) }.
@@ -490,6 +507,12 @@ struct TouchLayout: Equatable {
         // #ways-switch / #turbo-switch { justify-self: center; align-self: center }; MENU in
         // NESTERM's repeat switch place. Row 1 stays empty (the transport is under the picture).
         var extras = [centred(.ways, in: leftCol, midY: row2.midY), centred(.button(.menu), in: rightCol, midY: row2.midY)]
+        // Row 1: slow motion above 8-WAY (the left, like a controller's L side), pause above MENU.
+        let row1Mid = safe.top + minTarget / 2
+        for (b, c) in [(TouchButton.slow, leftCol), (.pause, rightCol)] {
+            extras.append(TouchExtra(kind: .button(b), frame: CGRect(x: c.midX - slowSize.width / 2, y: row1Mid - slowSize.height / 2,
+                                                                     width: slowSize.width, height: slowSize.height), style: style(.button(b))))
+        }
 
         // .gp-face { --gp-btn: min(19vw, 78px); padding: 48px 16px }; justify-self: end; align-self: center.
         let btn = min(0.19 * W, 78)
@@ -528,14 +551,8 @@ struct TouchLayout: Equatable {
         let leftEdge = ([dpad.maxX, select.maxX] + extras.filter { $0.frame.midX < W / 2 }.map(\.frame.maxX)).max()!
         let rightEdge = ([f.b.x - btn / 2, f.a.x - btn / 2, start.minX] + extras.filter { $0.frame.midX >= W / 2 }.map(\.frame.minX)).min()!
         let half = max(0, min(W / 2 - leftEdge, rightEdge - W / 2) - pictureMargin)
-        // The transport row under the picture, its bottom on the SELECT / START pills' line, between
-        // them (it may be wider than a narrow picture).
-        let row = transport(midX: W / 2, bottom: pillBottom,
-                            width: min(max(2 * half, 3 * 2 * minTarget + 3 * transportGap),
-                                       2 * (min(W / 2 - select.maxX, start.minX - W / 2) - pictureMargin)))
-        extras.insert(contentsOf: row, at: 0)
-        let game = o.fill ? CGRect(x: 0, y: 0, width: W, height: H)
-                          : CGRect(x: W / 2 - half, y: 0, width: 2 * half, height: max(0, (row.first?.frame.minY ?? H) - transportMargin))
+        // No transport row (2026-10-30): the picture has the full height between the columns.
+        let game = o.fill ? CGRect(x: 0, y: 0, width: W, height: H) : CGRect(x: W / 2 - half, y: 0, width: 2 * half, height: H)
 
         var g = TouchGamepad.Geometry()
         g.viewport = size

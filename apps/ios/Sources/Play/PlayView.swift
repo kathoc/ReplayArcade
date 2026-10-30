@@ -9,6 +9,9 @@ import SwiftUI
 struct PlayView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var crt = CRTSettingsModel.shared
+    /// The rewind / fast-forward zones' marks, for a few seconds after a game starts playing.
+    @State private var zoneHint = false
+    @State private var zoneHintSession = ""
 
     var body: some View {
         // The surface and the overlay layer each fill the whole screen (safe area ignored) in the
@@ -99,7 +102,16 @@ struct PlayView: View {
                 .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
                 .transition(.opacity)
         }
-        // The resume countdown (drawn by the renderer): a tap on the picture or ✕ goes back to paused.
+        // The picture's side quarters wind the tape while held (PlaySurfaceView.zones): their marks
+        // when a game starts playing.
+        if model.touchControlsVisible && !model.quickMenu.isOpen {
+            ZoneHintMarks(picture: picture, visible: zoneHint)
+                .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
+                .allowsHitTesting(false)
+                .onAppear { showZoneHint(st) }
+                .onChange(of: st.hasSession && !st.paused) { _, _ in showZoneHint(model.status) }
+        }
+        // The resume countdown (drawn by the renderer): ✕ (or the pause button) goes back to paused.
         if st.hasSession && model.resumeCountdownShown && !model.quickMenu.isOpen {
             ResumeCountdownCatcher(picture: picture) { model.abortResumeCountdown() }
                 .frame(width: l.size.width, height: l.size.height, alignment: .topLeading)
@@ -120,6 +132,15 @@ struct PlayView: View {
                 .frame(width: l.size.width, height: l.size.height)
                 .transition(.opacity)
         }
+    }
+
+    /// Once per session (ROM + project), when it first plays: the marks fade in, stay ~3 s, fade out.
+    private func showZoneHint(_ st: EmuStatus) {
+        let key = st.romPath + "|" + st.projectPath
+        guard st.hasSession, !st.paused, key != zoneHintSession else { return }
+        zoneHintSession = key
+        withAnimation(.easeIn(duration: 0.3)) { zoneHint = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { withAnimation(.easeOut(duration: 0.6)) { zoneHint = false } }
     }
 
     /// The picture inside the game area (points), as the renderer places it.
@@ -191,5 +212,27 @@ struct LatencyText: View {
         }
         .font(.system(size: 10, design: .monospaced)).foregroundStyle(.green)
         .padding(6).background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// ⏪ / ⏩ over the picture's left / right quarters (the zones that wind the tape while held).
+struct ZoneHintMarks: View {
+    let picture: CGRect
+    let visible: Bool
+
+    var body: some View {
+        let q = picture.width / 4
+        ZStack(alignment: .topLeading) {
+            mark("backward.fill").position(x: picture.minX + q / 2, y: picture.midY)
+            mark("forward.fill").position(x: picture.maxX - q / 2, y: picture.midY)
+        }
+        .opacity(visible ? 1 : 0)
+        .accessibilityHidden(true)
+    }
+
+    private func mark(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.system(size: 28, weight: .bold))
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(14).background(.black.opacity(0.35), in: Circle())
     }
 }

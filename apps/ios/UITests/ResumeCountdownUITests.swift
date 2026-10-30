@@ -60,11 +60,15 @@ final class ResumeCountdownUITests: XCTestCase {
     }
 
     private func pause() {
-        // No touch R: a tap on the picture pauses (its upper part: the status label / Undo chip sit
-        // at the bottom of the game area).
-        let g = geo["game"]!
-        tapPoint(CGPoint(x: g[0] + g[2] / 2, y: g[1] + g[3] * 0.3))
-        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "a tap on the picture pauses: the seek bar shows")
+        // The pause button above MENU (2026-10-30: the picture is no longer tapped to pause).
+        el("touch.pause").tap()
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "the pause button pauses: the seek bar shows")
+    }
+
+    /// Holds the picture's left (rewind) or right (fast-forward) quarter: "rewindZone" / "ffZone".
+    private func pressZone(_ k: String, _ seconds: TimeInterval) {
+        let z = geo[k]!
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: z[0], dy: z[1])).press(forDuration: seconds)
     }
 
     private func shot(_ name: String) {
@@ -100,14 +104,15 @@ final class ResumeCountdownUITests: XCTestCase {
         XCTAssertNotEqual(el("seekTime").label, t0, "the game ran after the countdown")
     }
 
-    func testTapOnPictureAbortsToPaused() throws {
+    /// 2026-10-30: the picture is no control; the pause button goes back to paused during the countdown.
+    func testPauseButtonAbortsToPaused() throws {
         startPlay()
         pause()
         let t0 = el("seekTime").label
         el("seekResume").tap()
         let cd = el("resumeCountdown")
         XCTAssertTrue(cd.waitForExistence(timeout: 2))
-        cd.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).tap()
+        el("touch.pause").tap()
         XCTAssertTrue(el("seekBar").waitForExistence(timeout: 2), "back to paused: the seek bar")
         XCTAssertFalse(cd.exists)
         Thread.sleep(forTimeInterval: 3.5)
@@ -144,18 +149,16 @@ final class ResumeCountdownUITests: XCTestCase {
         XCTAssertTrue(el("seekBar").waitForExistence(timeout: 3), "✕ on the countdown: paused")
     }
 
-    /// The transport row during the countdown is transport, not game input: a frame step pauses
-    /// (cancels the countdown) and steps; rewind held winds (released: the countdown again).
+    /// The play controls during the countdown are transport, not game input: the pause button goes
+    /// back to paused (cancels the countdown); a rewind zone held winds (released: the countdown again).
     func testTransportDuringCountdown() throws {
         startPlay()
         pause()
-        let t0 = el("seekTime").label
         el("seekResume").tap()
         XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 2))
-        el("touch.stepForward").tap()
-        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 2), "|▶ during the countdown: paused")
+        el("touch.pause").tap()
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 2), "pause during the countdown: paused")
         XCTAssertFalse(el("resumeCountdown").exists)
-        XCTAssertNotEqual(el("seekTime").label, t0)
         Thread.sleep(forTimeInterval: 3.5)
         XCTAssertTrue(el("seekBar").exists, "still paused")
         el("seekResume").tap()
@@ -164,7 +167,7 @@ final class ResumeCountdownUITests: XCTestCase {
         // interrupted resume still counts as play, so its release counts down again
         // (EmulationController: rewindStartedPaused), as a controller's L2 does.
         let edges = (el("touchProbe").value as? String) ?? ""
-        el("touch.l2").press(forDuration: 0.8)
+        pressZone("rewindZone", 0.8)
         waitFor(3, "rewind edges") { ((el("touchProbe").value as? String) ?? "").count > edges.count }
         XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 2), "released: the countdown again")
         el("countdownCancel").tap()
@@ -175,7 +178,7 @@ final class ResumeCountdownUITests: XCTestCase {
     func testRewindReleaseCountsDown() throws {
         startPlay()
         Thread.sleep(forTimeInterval: 2)
-        el("touch.l2").press(forDuration: 1)
+        pressZone("rewindZone", 1)
         XCTAssertTrue(el("resumeCountdown").waitForExistence(timeout: 2), "released: the countdown")
         waitFor(5, "the countdown ends") { !el("resumeCountdown").exists }
         XCTAssertFalse(el("seekBar").exists, "playing")

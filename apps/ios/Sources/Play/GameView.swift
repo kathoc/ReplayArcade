@@ -116,7 +116,8 @@ final class GameLayerView: UIView {
 /// Game view + touch controls in one UIKit container that lays both out from its own safe area:
 /// the ported NESTERM gamepad (TouchControlsView) and the ReplayNES extras (TouchExtrasView, on
 /// top: its pills win the hit test like NESTERM's z-index 3 switches). A touch on no control falls
-/// through to this view: a tap on the game area is `onPictureTap` (pause).
+/// through to this view: held on the picture's left / right quarter it rewinds / fast-forwards
+/// (`onZone`, 2026-10-30; the picture is no longer tapped to pause: the pause button is above MENU).
 final class PlaySurfaceView: UIView {
     let game: GameLayerView
     let controls = TouchControlsView()
@@ -131,9 +132,12 @@ final class PlaySurfaceView: UIView {
     }
     /// Main thread, after each layout change: where things are (for the SwiftUI overlays).
     var onLayout: ((TouchLayout) -> Void)?
-    /// A tap (down and up within 30 pt, under 0.5 s) on the game area that no control took.
-    var onPictureTap: (() -> Void)?
-    private var tapStart: [ObjectIdentifier: (CGPoint, TimeInterval)] = [:]
+    /// A touch held on the picture's left (`.l2`, rewind) or right (`.r2`, fast-forward) quarter that no
+    /// control took: down at the touch, up at its lift.
+    var onZone: ((TouchButton, Bool) -> Void)?
+    /// The display options the renderer places the picture with (the zones follow the picture).
+    var displayOptions = DisplayOptions() { didSet { if displayOptions != oldValue, let l = lastLayout { updateProbe(l) } } }
+    private var zoneTouches: [ObjectIdentifier: TouchButton] = [:]
     private var lastLayout: TouchLayout?
     /// TestHooks -logTouch: an accessibility element for the UI tests (ReplayNESUITests): its label
     /// is where the controls are, its value every press / release edge so far.
@@ -184,11 +188,12 @@ final class PlaySurfaceView: UIView {
             "select": [g.select.midX, g.select.midY], "start": [g.start.midX, g.start.midY], "size": [l.size.width, l.size.height],
             "game": [l.gameArea.minX, l.gameArea.minY, l.gameArea.width, l.gameArea.height],
         ]
-        for (k, b) in [("aa", TouchButton.turboA), ("bb", .turboB), ("l2", .l2), ("r2", .r2), ("stepBack", .stepBack), ("stepForward", .stepForward),
-                      ("menu", .menu)] {
+        for (k, b) in [("aa", TouchButton.turboA), ("bb", .turboB), ("menu", .menu), ("pause", .pause), ("slow", .slow)] {
             if let e = l.extra(b) { pts[k] = [e.frame.midX, e.frame.midY, e.frame.width, e.frame.height] }
         }
         if let w = l.extras.first(where: { $0.kind == .ways }) { pts["ways"] = [w.frame.midX, w.frame.midY, w.frame.width, w.frame.height] }
+        let z = zones
+        for (k, r) in [("rewindZone", z.rewind), ("ffZone", z.fastForward)] where r.width > 0 { pts[k] = [r.midX, r.midY, r.width, r.height] }
         if let d = try? JSONSerialization.data(withJSONObject: pts.mapValues { $0.map(Double.init) }), let s = String(data: d, encoding: .utf8) {
             probe.accessibilityLabel = s
         }
@@ -198,22 +203,39 @@ final class PlaySurfaceView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    /// The picture's left and right quarters (this view's coordinates; inside the game area only).
+    var zones: (rewind: CGRect, fastForward: CGRect) {
+        let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        let area = game.frame
+        let px = CGSize(width: area.width * scale, height: area.height * scale)
+        let (r, _) = GameRenderer.viewport(drawableSize: px, options: displayOptions)
+        let pic = CGRect(x: area.minX + r.minX / scale, y: area.minY + (px.height - r.maxY) / scale,
+                         width: r.width / scale, height: r.height / scale).intersection(area)
+        guard !pic.isNull, pic.width > 0 else { return (.zero, .zero) }
+        let q = pic.width / 4
+        return (CGRect(x: pic.minX, y: pic.minY, width: q, height: pic.height),
+                CGRect(x: pic.maxX - q, y: pic.minY, width: q, height: pic.height))
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches where game.frame.contains(t.location(in: self)) {
-            tapStart[ObjectIdentifier(t)] = (t.location(in: self), t.timestamp)
-        }
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let z = zones
         for t in touches {
-            guard let (p, at) = tapStart.removeValue(forKey: ObjectIdentifier(t)) else { continue }
-            let q = t.location(in: self)
-            if hypot(q.x - p.x, q.y - p.y) < 30, t.timestamp - at < 0.5, game.frame.contains(q) { onPictureTap?() }
+            let p = t.location(in: self)
+            let b: TouchButton? = z.rewind.contains(p) ? .l2 : z.fastForward.contains(p) ? .r2 : nil
+            guard let b, !zoneTouches.values.contains(b) else { continue }
+            zoneTouches[ObjectIdentifier(t)] = b
+            onZone?(b, true)
         }
     }
 
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { tapStart.removeValue(forKey: ObjectIdentifier(t)) }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { liftZones(touches) }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { liftZones(touches) }
+
+    private func liftZones(_ touches: Set<UITouch>) {
+        for t in touches {
+            if let b = zoneTouches.removeValue(forKey: ObjectIdentifier(t)) { onZone?(b, false) }
+        }
     }
 
     override func safeAreaInsetsDidChange() {
@@ -267,7 +289,10 @@ struct PlaySurface: UIViewRepresentable {
             model?.touchButtons(pressed: pressed, released: released)
         }
         v.extras.onToggleWays = { [weak model] in model?.toggleTouchWays() }
-        v.onPictureTap = { [weak model] in model?.pictureTapped() }
+        v.onZone = { [weak model, weak v] b, down in
+            v?.recordTouch(down ? [b] : [], down ? [] : [b])
+            model?.touchButtons(pressed: down ? [b] : [], released: down ? [] : [b])
+        }
         v.onLayout = { [weak model] l in if model?.playLayout != l { model?.playLayout = l } }
         update(v)
         return v
@@ -277,6 +302,7 @@ struct PlaySurface: UIViewRepresentable {
 
     private func update(_ v: PlaySurfaceView) {
         v.game.setOptions(displayOptions)
+        v.displayOptions = displayOptions
         v.options = touchOptions
         v.controls.setWays(touchOptions.ways)
         v.controls.setHomeGain(x: CGFloat(followX), y: CGFloat(followY))

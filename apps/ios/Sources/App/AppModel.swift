@@ -400,7 +400,7 @@ final class AppModel: ObservableObject {
     }
     /// Plays at once, no countdown (a new run started by the app).
     func resumeNow() { emu.perform { e in e.paused = false } }
-    /// ✕ / a tap on the picture during the resume countdown: back to paused.
+    /// ✕ / the pause button during the resume countdown: back to paused.
     func abortResumeCountdown() { countdownDriver.abort() }
     var resumeCountdownShown: Bool { countdownDriver.isCounting(status) }
     func stepFrame(_ dir: Int) {
@@ -484,6 +484,13 @@ final class AppModel: ObservableObject {
         let pausedInPlay = st.hasSession && st.paused && !quickMenu.isOpen && !showLibrary
         for b in pressed {
             if b == .menu { quickMenu.open(); continue }
+            // Pause (above MENU; the picture is no longer tapped to pause): while the game plays; during
+            // the resume countdown it goes back to paused (as the countdown's ✕).
+            if b == .pause {
+                guard st.hasSession, !quickMenu.isOpen, !showLibrary else { continue }
+                if resumeCountdownShown { abortResumeCountdown() } else if !st.paused { setPaused(true) }
+                continue
+            }
             // Slow motion: normal ⇔ 1/2 at the press (as a controller's R held + L in play).
             if b == .slow {
                 if st.hasSession && !quickMenu.isOpen && !showLibrary { toggleSlow() }
@@ -555,15 +562,6 @@ final class AppModel: ObservableObject {
         stepRepeatTimer?.invalidate()
         stepRepeatTimer = nil
         stepRepeatButton = nil
-    }
-
-    /// A tap on the picture (not on a control) while the game plays: pause (the seek bar shows).
-    /// During the resume countdown the countdown's own tap catcher is on top (PlayView).
-    func pictureTapped() {
-        let st = status
-        guard st.hasSession, !st.paused, !quickMenu.isOpen, !showLibrary, !resumeCountdownShown else { return }
-        if Self.logTouch { NSLog("ReplayNES touch: picture tap") }
-        setPaused(true)
     }
 
     /// TestHooks -logTouch: every touch press / release edge in the system log.

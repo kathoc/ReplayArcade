@@ -106,6 +106,16 @@ buttons), wired in `Sources/Play/GameView.swift` (`PlaySurfaceView`).
 | Landscape picture | the game view is the space between the control columns: symmetric about the screen's centre, 8 pt clear of the nearest visible control (D-pad, A / B / AA / BB discs, pills); the renderer scales the picture into it (NESTERM draws the controls over a full-screen picture). The pad's frame (`Geometry.frame`, used by `setHome`'s clamp) ends at the picture, so the home cannot follow the thumb over it. The side columns show `--bb-bg` | no control over the picture on iPhone 17 / 17 Pro Max / SE (`testLandscapePictureBetweenTheControls`) |
 | Rotation | the play screen is sized from the screen (GeometryReader), never from the published layout (it made the SwiftUI stack the union of both orientations, 874 × 874, which the surface then kept); the D-pad layer's transform is reset before its frame is set; on an orientation change the held controls are released and the learned home restarts at the natural place (NESTERM re-clamps it: `relayout`) | layout broke after turning the iPhone |
 | Orientation setting | Settings › Display › Picture Shape › Orientation: Auto / Portrait / Landscape (`OrientationLock`: app delegate `supportedInterfaceOrientationsFor` + `requestGeometryUpdate`, key `orientationLock`); Picture Shape is now linked from Display on iPhone too (8:7, Hide Edges moved there as on the Mac) | iPhone only |
+### Play screen controls, 2026-10-30 (user's decisions; replaces the transport row and the picture tap)
+
+| Change | Rule | Why |
+|---|---|---|
+| No transport row | Rewind / Step Back / Step Forward / Fast-forward under the picture are gone in both orientations. Frame steps stay on the paused seek bar (◀︎| / |▶︎) and the D-pad ← / → while paused (setting). Portrait: the gamepad starts right under the picture's row; landscape: the game area is the full height between the control columns | the row sat between the picture and the D-pad (a vertical arcade game in portrait FILL was under it) |
+| Rewind / fast-forward zones | the left / right quarter of the picture (as the renderer places it) wind the tape while held (`touch:l2` / `touch:r2`, as before); a touch a control takes stays the control's (the controls are above the game view). Only the visible picture inside the game area counts | the user: rewind on the left, fast-forward on the right, like L2 / R2 |
+| Pause button | no pause by tapping the picture any more; a pause pill (`pause.fill`, `TouchButton.pause`, app button) right above MENU (portrait: over MENU at the end of the SELECT / START row; landscape: the top row of the right column) | the picture's middle is no longer a control |
+| Slow ½ | portrait: in the top band left of the Dynamic Island (centred on it vertically, 12 pt clear of it); landscape: the top row of the left column, above 8-WAY | on the left like a controller's L side |
+| Zone hint | when a game starts playing, ⏪ / ⏩ marks fade in over the left / right quarters for ~3 s | the zones are invisible |
+
 - **Top bar / sub bar caption** are not drawn (ReplayNES has the Quick Menu); in portrait the picture
   starts at the safe area and the sub bar row holds the transport row.
 - **Picture**: ReplayNES's renderer (integer / fill scale, 8:7, CRT) instead of NESTERM's ASCII view;

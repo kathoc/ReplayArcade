@@ -77,14 +77,18 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(g.dpad.midY, (clip.minY + 6 + g.system!.minY - 4) / 2, accuracy: 0.01)
         XCTAssertEqual(g.frame, CGRect(x: 0, y: 0, width: 390, height: 844))
         XCTAssertEqual(portrait.gameArea.width, 390)
-        XCTAssertLessThanOrEqual(portrait.gameArea.maxY + TouchLayout.transportHeight + 2 * TouchLayout.transportMargin, clip.minY + 0.01)
+        // No transport row (2026-10-30): the gamepad starts right under the picture's row.
+        XCTAssertLessThanOrEqual(portrait.gameArea.maxY, clip.minY + 0.01)
     }
 
     /// Browser measurements at 844 x 390 (.bb-side); D-pad × 1.1.
     func testLandscapeMatchesNESTERMCSS() {
         let g = landscape.pad
         XCTAssertEqual(g.dpad, CGRect(x: 16, y: g.dpad.minY, width: 158, height: 158))
-        XCTAssertEqual(g.face, CGRect(x: 654, y: g.face.minY, width: 190, height: 174))
+        // Each value to 0.01 (its height is clipped to the screen in floating point: 174 ± 1e-13).
+        XCTAssertEqual(g.face.minX, 654, accuracy: 0.01)
+        XCTAssertEqual(g.face.width, 190, accuracy: 0.01)
+        XCTAssertEqual(g.face.height, 174, accuracy: 0.01)
         XCTAssertEqual(g.a.x, 789, accuracy: 0.01)
         XCTAssertEqual(g.b.x, 709 + TouchLayout.bTowardA * landscape.faceButton, accuracy: 0.01)
         XCTAssertEqual(g.b.y - g.a.y, 241.5159912109375 - 169.4840087890625, accuracy: 0.01)
@@ -97,9 +101,9 @@ final class TouchLayoutTests: XCTestCase {
         XCTAssertEqual(g.start.midX, 729.28125 + 85.421875 / 2, accuracy: 0.01)
         // ReplayNES: the picture sits between the columns, centred.
         XCTAssertEqual(landscape.gameArea.midX, 422, accuracy: 0.01)
-        // Its height ends above the transport row (whose bottom is on the SELECT / START line).
+        // The full height (no transport row since 2026-10-30).
         XCTAssertEqual(landscape.gameArea.minY, 0)
-        XCTAssertEqual(landscape.gameArea.maxY, 390 - 8 - TouchLayout.transportHeight - TouchLayout.transportMargin, accuracy: 0.01)
+        XCTAssertEqual(landscape.gameArea.maxY, 390, accuracy: 0.01)
     }
 
     func testSafeAreasMoveTheControlsIn() {
@@ -149,10 +153,10 @@ final class TouchLayoutTests: XCTestCase {
                     }
                 }
                 let kinds = l.extras.map(\.kind)
-                for b in [TouchButton.l2, .stepBack, .stepForward, .r2, .menu] {
+                for b in [TouchButton.slow, .pause, .menu] {
                     XCTAssertTrue(kinds.contains(.button(b)), "\(b) (\(name))")
                 }
-                XCTAssertEqual(l.extras.filter(\.isTransport).count, 4, name)
+                XCTAssertTrue(l.extras.filter(\.isTransport).isEmpty, "no transport row (\(name))")
                 XCTAssertTrue(kinds.contains(.ways))
                 XCTAssertEqual(kinds.contains(.button(.turboA)), o.showAABB)
                 XCTAssertEqual(kinds.contains(.button(.turboB)), o.showAABB)
@@ -224,67 +228,38 @@ final class TouchLayoutTests: XCTestCase {
         }
     }
 
-    /// Portrait: the slow-motion button right under the middle of the frame steps, clear of the
-    /// transport row; landscape has none (the transport row is at the bottom edge).
-    func testSlowButtonUnderTheFrameSteps() {
-        for (name, l) in Self.layouts() {
-            let slow = l.extra(.slow)
-            if l.landscape { XCTAssertNil(slow, name); continue }
-            guard let slow else {
-                // Only a screen too small for it goes without (the seek bar has slow motion too).
-                XCTAssertTrue(name.hasPrefix("iPhone SE"), "no slow button (\(name))")
-                continue
-            }
-            let back = l.extra(.stepBack)!, forward = l.extra(.stepForward)!
-            XCTAssertEqual(slow.frame.midX, (back.frame.midX + forward.frame.midX) / 2, accuracy: 0.01, name)
-            XCTAssertEqual(slow.frame.minY, back.frame.maxY + TouchLayout.transportMargin + TouchLayout.slowGap, accuracy: 0.01, name)
-            XCTAssertFalse(slow.hitFrame.intersects(back.hitFrame), name)
-            XCTAssertEqual(slow.style, .icon("tortoise.fill"))
-            XCTAssertNil(TouchButton.slow.inputID, "handled by the app, never game input")
-        }
-        XCTAssertNotNil(phonePortrait.extra(.slow), "iPhone 17")
-    }
-
-    /// The transport row right under the picture: ⏪ ◀| |▶ ⏩ left to right, Rewind / Fast-forward
-    /// large, the frame steps half as wide, every button at least 44 pt, centred, clear of the
-    /// picture. No L / R.
-    func testTransportRowUnderThePicture() {
+    /// 2026-10-30: no transport row (rewind / fast-forward are the picture's side quarters, frame
+    /// steps the paused seek bar's). Slow motion: portrait in the top band left of the Dynamic
+    /// Island, landscape above 8-WAY. Pause right above MENU. Both are app buttons.
+    func testSlowAndPauseInsteadOfTheTransportRow() {
         for o in [TouchLayout.Options(), Self.css, TouchLayout.Options(dpadSize: 210)] {
             for (name, l) in Self.layouts(o) {
-                let row = l.extras.filter(\.isTransport)
-                XCTAssertEqual(row.map(\.kind), [.button(.l2), .button(.stepBack), .button(.stepForward), .button(.r2)], name)
-                XCTAssertEqual(row.map(\.style), [.icon("backward.fill"), .icon("backward.frame.fill"), .icon("forward.frame.fill"), .icon("forward.fill")])
-                let rw = row[0].frame, sb = row[1].frame, sf = row[2].frame, ff = row[3].frame
-                XCTAssertEqual(rw.size, ff.size, name)
-                XCTAssertEqual(sb.size, sf.size, name)
-                XCTAssertEqual(sb.width, rw.width / 2, accuracy: 0.01, "steps half as wide (\(name))")
-                XCTAssertGreaterThanOrEqual(sb.width, 44 - 0.01, name)
-                XCTAssertEqual(rw.height, TouchLayout.transportHeight)
-                for (a, b) in zip(row.dropLast(), row.dropFirst()) {
-                    XCTAssertEqual(a.frame.midY, b.frame.midY, accuracy: 0.01, name)
-                    XCTAssertEqual(b.frame.minX - a.frame.maxX, TouchLayout.transportGap, accuracy: 0.01, name)
+                XCTAssertTrue(l.extras.filter(\.isTransport).isEmpty, name)
+                guard let slow = l.extra(.slow), let pause = l.extra(.pause), let menu = l.extra(.menu) else {
+                    XCTFail("slow / pause / menu (\(name))"); continue
                 }
-                XCTAssertEqual((rw.minX + ff.maxX) / 2, l.size.width / 2, accuracy: 0.01, "centred (\(name))")
-                // Directly under the picture, never over it.
-                let game = l.gameArea
-                XCTAssertEqual(rw.minY, game.maxY + TouchLayout.transportMargin, accuracy: 0.01, name)
-                for e in row { XCTAssertFalse(e.hitFrame.intersects(game), "\(e.kind) over the picture (\(name))") }
-                if !l.landscape {
-                    let fit = ((l.size.width - 2 * TouchLayout.subbarPadX - 3 * TouchLayout.transportGap) / 3 / 2).rounded(.down) * 2
-                    XCTAssertEqual(rw.width, min(TouchLayout.transportWide, fit), name)
-                    XCTAssertGreaterThanOrEqual(rw.width, 110, "large (\(name))")
-                    XCTAssertLessThanOrEqual(l.pad.dpadClip!.minY, rw.maxY + TouchLayout.transportMargin + 0.01, name)
-                    XCTAssertGreaterThanOrEqual(l.pad.dpadClip!.minY, rw.maxY, name)
+                XCTAssertEqual(slow.style, .icon("tortoise.fill"))
+                XCTAssertEqual(pause.style, .icon("pause.fill"))
+                XCTAssertEqual(pause.frame.midX, menu.frame.midX, accuracy: 0.01, "pause centred over MENU (\(name))")
+                XCTAssertLessThanOrEqual(pause.hitFrame.maxY, menu.hitFrame.minY - TouchLayout.pauseGap + 0.01, "pause above MENU (\(name))")
+                if l.landscape {
+                    let ways = l.extras.first { $0.kind == .ways }!
+                    XCTAssertEqual(slow.frame.midX, ways.frame.midX, accuracy: 0.01, name)
+                    XCTAssertLessThanOrEqual(slow.hitFrame.maxY, ways.hitFrame.minY + 0.01, "slow above 8-WAY (\(name))")
+                    XCTAssertLessThan(slow.frame.midX, l.size.width / 2, name)
                 } else {
-                    XCTAssertEqual(rw.maxY, l.select.maxY, accuracy: 0.01, "on the SELECT / START line (\(name))")
-                    XCTAssertGreaterThan(rw.minX, l.select.maxX, name)
-                    XCTAssertLessThan(ff.maxX, l.start.minX, name)
+                    XCTAssertLessThanOrEqual(slow.frame.maxX, l.size.width / 2 - TouchLayout.islandHalfWidth - TouchLayout.islandGap + 0.01,
+                                             "left of the Dynamic Island (\(name))")
+                    // With a top safe area (Dynamic Island / notch) it stays in that band, above the picture.
+                    if l.gameArea.minY >= 40 { XCTAssertLessThanOrEqual(slow.frame.maxY, l.gameArea.minY + 0.01, name) }
                 }
-                XCTAssertNil(TouchButton.stepBack.inputID, "handled by the app (stepFrame)")
-                XCTAssertNil(TouchButton(rawValue: "l"), "no touch L")
-                XCTAssertNil(TouchButton(rawValue: "r"), "no touch R")
             }
         }
+        XCTAssertNil(TouchButton.slow.inputID, "handled by the app, never game input")
+        XCTAssertNil(TouchButton.pause.inputID, "handled by the app, never game input")
+        XCTAssertNil(TouchButton.stepBack.inputID, "handled by the app (the seek bar's stepFrame)")
+        XCTAssertNil(TouchButton(rawValue: "l"), "no touch L")
+        XCTAssertNil(TouchButton(rawValue: "r"), "no touch R")
     }
 
     /// 8-WAY and MENU: portrait at the ends of the SELECT / START row, landscape in the side columns.

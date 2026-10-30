@@ -1,7 +1,8 @@
 // The resume countdown on iPhone: AppModel resumes through ResumeCountdownDriver, today the shared
 // core's (CoreResumeCountdown: EmulationController.resume() applies rnf_resume_countdown, the renderer
-// draws 3, 2, 1 in the game's own pass). On top, iPhone only: a tap on the picture or ✕ goes back to
-// paused (ResumeCountdownCatcher; the controller's cancel tap does the same through InputManager).
+// draws 3, 2, 1 in the game's own pass). On top, iPhone only: ✕ (or the pause button) goes back to
+// paused (ResumeCountdownCatcher; the controller's cancel tap does the same through InputManager). The
+// picture itself is not a control (2026-10-30): its side quarters wind the tape, also during the countdown.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
 
@@ -28,17 +29,15 @@ final class CoreResumeCountdown: ResumeCountdownDriver {
     }
 }
 
-/// Over the picture while the resume countdown runs: a tap anywhere on it, or ✕, goes back to paused.
-/// Draws nothing else (the numeral is the renderer's).
+/// Over the picture while the resume countdown runs: ✕ goes back to paused. Touches elsewhere pass
+/// through (the rewind / fast-forward quarters stay live). Draws nothing else (the numeral is the renderer's).
 struct ResumeCountdownCatcher: View {
     let picture: CGRect
     let onAbort: () -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color.black.opacity(0.001)
-                .contentShape(Rectangle())
-                .onTapGesture { onAbort() }
+            Color.clear.allowsHitTesting(false)
             Button(action: onAbort) {
                 Image(systemName: "xmark").font(.system(size: 14, weight: .bold))
                     .frame(width: 32, height: 32)

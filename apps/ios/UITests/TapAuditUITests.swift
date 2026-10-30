@@ -108,11 +108,9 @@ final class TapAuditUITests: XCTestCase {
     }
 
     private func pause() {
-        // No touch R: a tap on the picture pauses (its upper part: the status label / Undo chip sit
-        // at the bottom of the game area).
-        let g = geo["game"]!
-        tapPoint(CGPoint(x: g[0] + g[2] / 2, y: g[1] + g[3] * 0.3))
-        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "a tap on the picture pauses: the seek bar shows")
+        // The pause button above MENU (2026-10-30: the picture is no longer tapped to pause).
+        el("touch.pause").tap()
+        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 5), "the pause button pauses: the seek bar shows")
     }
 
     // MARK: library
@@ -163,7 +161,9 @@ final class TapAuditUITests: XCTestCase {
         search.tap()
         search.typeText("zzzz")
         gone(card, "search filters the cards")
-        app.buttons["Cancel"].firstMatch.tap()
+        // iOS 26 and later end the search with a round "close" button beside the field, earlier ones with "Cancel".
+        let endSearch = app.buttons["Cancel"].exists ? app.buttons["Cancel"] : app.buttons["close"]
+        endSearch.firstMatch.tap()
         XCTAssertTrue(card.waitForExistence(timeout: 3), "cancelling the search shows the cards again")
 
         // + import: the document picker.
@@ -279,83 +279,71 @@ final class TapAuditUITests: XCTestCase {
         return m * 60 + s
     }
 
-    func testTransportRow() throws { try transportRow() }
+    func testTransportRow() throws { try playControls() }
 
     func testTransportRowLandscape() throws {
         XCUIDevice.shared.orientation = .landscapeLeft
         defer { XCUIDevice.shared.orientation = .portrait }
-        try transportRow()
+        try playControls()
     }
 
-    /// The row under the picture: ⏪ ◀| |▶ ⏩ (no L / R), labelled, ≥ 44 pt, right under the picture
-    /// and clear of the D-pad / A / B; a tap on a step pauses and steps one frame, a hold repeats;
-    /// rewind held winds back and plays on when released; 8-WAY and MENU still work, the
-    /// picture tap pauses, the seek bar's slow toggle switches.
-    private func transportRow() throws {
+    /// Holds the picture's left (rewind) or right (fast-forward) quarter: "rewindZone" / "ffZone".
+    private func pressZone(_ k: String, _ seconds: TimeInterval) {
+        let z = geo[k]!
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: z[0], dy: z[1])).press(forDuration: seconds)
+    }
+
+    /// 2026-10-30: no transport row. Rewind / fast-forward: the picture's left / right quarters while
+    /// held; pause: the button above MENU; slow ½: its button (top left); frame steps: the paused seek
+    /// bar's. 8-WAY and MENU still work.
+    private func playControls() throws {
         startPlay()
         Thread.sleep(forTimeInterval: 1)
         XCTAssertNil(geo["l"], "no touch L"); XCTAssertNil(geo["r"], "no touch R")
-        let ids = ["touch.l2", "touch.stepBack", "touch.stepForward", "touch.r2"]
-        let labels = ["Rewind", "Frame Back", "Frame Forward", "Fast-forward"]
-        let game = geo["game"]!
-        var lastMaxX = -1.0
-        for (id, label) in zip(ids, labels) {
+        for id in ["touch.l2", "touch.stepBack", "touch.stepForward", "touch.r2"] { XCTAssertFalse(el(id).exists, "\(id): no transport row") }
+        for (id, label) in [("touch.pause", "Pause"), ("touch.slow", "Slow Motion")] {
             let e = el(id)
             XCTAssertTrue(e.waitForExistence(timeout: 5), id)
             XCTAssertEqual(e.label, label)
             XCTAssertTrue(e.isHittable, "\(id) hittable")
-            let f = e.frame
-            XCTAssertGreaterThanOrEqual(f.width, 44, id); XCTAssertGreaterThanOrEqual(f.height, 44, id)
-            XCTAssertGreaterThan(f.minX, lastMaxX, "\(id): left to right")
-            lastMaxX = f.maxX
-            XCTAssertGreaterThanOrEqual(f.minY, game[1] + game[3] - 0.5, "\(id) under the picture")
-            XCTAssertLessThanOrEqual(f.minY, game[1] + game[3] + 8, "\(id) right under the picture")
         }
-        XCTAssertEqual(el("touch.stepBack").frame.width * 2, el("touch.l2").frame.width, accuracy: 0.5, "steps half as wide")
-        // Probe frames: the row is clear of the D-pad and the A / B discs.
-        let d = geo["dpad"]!, dpad = CGRect(x: d[0] - d[2] / 2, y: d[1] - d[2] / 2, width: d[2], height: d[2])
-        for id in ids { XCTAssertFalse(el(id).frame.intersects(dpad), "\(id) over the D-pad") }
+        XCTAssertLessThan(el("touch.pause").frame.maxY, el("touch.menu").frame.minY, "pause above MENU")
+        XCTAssertNotNil(geo["rewindZone"]); XCTAssertNotNil(geo["ffZone"])
+        let rz = geo["rewindZone"]!, fz = geo["ffZone"]!
+        XCTAssertLessThan(rz[0], fz[0], "rewind on the left")
+        XCTAssertEqual(rz[2], fz[2], accuracy: 0.5, "the same width")
 
-        // Picture tap pauses; the seek bar's step and the row's step agree.
+        // Pause button; the seek bar's steps.
         pause()
         let time = el("seekTime")
         var t = secs(time.label)
-        el("touch.stepBack").tap()
+        tap("seekStepBack")
         waitFor(3, "◀| steps back") { secs(time.label) < t }
         t = secs(time.label)
-        el("touch.stepForward").tap()
+        tap("seekStepForward")
         waitFor(3, "|▶ steps forward") { secs(time.label) > t }
-        // Held: repeats (400 ms, then every 50 ms): well over one frame in 1.5 s.
-        t = secs(time.label)
-        el("touch.stepBack").press(forDuration: 1.5)
-        waitFor(3, "◀| held repeats") { t - secs(time.label) > 10.0 / 60 }
-        XCTAssertTrue(el("seekBar").exists, "still paused")
-        // Slow toggle on the seek bar.
-        let slow = el("seekSlow")
-        XCTAssertTrue(slow.isHittable)
-        let v0 = slow.value as? String
-        slow.tap()
-        waitFor(3, "slow on") { (slow.value as? String) != v0 }
-        slow.tap()
-        waitFor(3, "slow off") { (slow.value as? String) == v0 }
-        // A tap on |▶ while playing pauses and steps.
-        tap("seekResume")
-        gone(el("seekBar"), "▶ resumes")
-        Thread.sleep(forTimeInterval: 1)
-        el("touch.stepForward").tap()
-        XCTAssertTrue(el("seekBar").waitForExistence(timeout: 3), "|▶ while playing pauses")
-        // Rewind held while playing: winds back; released, play goes on (countdown off here).
+        // Rewind zone held while playing: winds back; released, play goes on (countdown off here).
         tap("seekResume")
         gone(el("seekBar"), "▶ resumes")
         Thread.sleep(forTimeInterval: 2)
         let before = probeEdges()
-        el("touch.l2").press(forDuration: 1.2)
+        pressZone("rewindZone", 1.2)
         waitFor(3, "rewind edges") { probeEdges().count > before.count && probeEdges().hasSuffix("l2-") }
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertFalse(el("seekBar").exists, "released: playing again")
         let ff = probeEdges()
-        el("touch.r2").press(forDuration: 0.6)
+        pressZone("ffZone", 0.6)
         waitFor(3, "fast-forward edges") { probeEdges().count > ff.count && probeEdges().hasSuffix("r2-") }
+        // The picture's middle is no control: a tap there does not pause.
+        let g = geo["game"]!
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: g[0] + g[2] / 2, dy: g[1] + g[3] * 0.3)).tap()
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertFalse(el("seekBar").exists, "a tap on the picture's middle does not pause")
+        // Slow ½ toggles (an app button: its press is in the probe).
+        let sl = probeEdges()
+        el("touch.slow").tap()
+        waitFor(3, "slow press") { probeEdges().count > sl.count && probeEdges().contains("slow+") }
+        el("touch.slow").tap()
         // 8-WAY toggles (and back).
         let ways = el("touch.ways")
         XCTAssertTrue(ways.isHittable)
