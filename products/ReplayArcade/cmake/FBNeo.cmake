@@ -34,6 +34,12 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(FBNEO_MAKE_ARGS STATIC_LINKING=1 TARGET=fbneo_libretro_static.a platform=ios-arm64 MINVERSION=
     "CC=${CMAKE_C_COMPILER} -target ${FBNEO_IOS_TARGET} -isysroot ${FBNEO_IOS_SDK}"
     "CXX=${CMAKE_CXX_COMPILER} -target ${FBNEO_IOS_TARGET} -isysroot ${FBNEO_IOS_SDK}" AR=${CMAKE_AR})
+elseif(ANDROID)
+  # The NDK's clang with the toolchain's target and sysroot (the Makefile knows neither), position
+  # independent: the archive goes into libmain.so (ReplayNES apps/android).
+  set(FBNEO_ANDROID_CC "--target=${CMAKE_C_COMPILER_TARGET} --sysroot=${CMAKE_SYSROOT} -fPIC")
+  set(FBNEO_MAKE_ARGS STATIC_LINKING=1 TARGET=fbneo_libretro_static.a platform=unix
+    "CC=${CMAKE_C_COMPILER} ${FBNEO_ANDROID_CC}" "CXX=${CMAKE_CXX_COMPILER} ${FBNEO_ANDROID_CC}" AR=${CMAKE_AR})
 endif()
 
 # Always run: the patch check, the copy and make are all incremental.
