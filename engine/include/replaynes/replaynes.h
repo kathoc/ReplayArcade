@@ -134,6 +134,9 @@ typedef enum rn_mode { RN_MODE_RECORD = 0, RN_MODE_REPLAY = 1, RN_MODE_PRACTICE 
 #define RN_OPEN_DROP_CORRUPT_STATES 0x1u   /* discard corrupt checkpoint files (they are a cache) */
 #define RN_OPEN_DROP_CORRUPT_PRACTICE 0x2u /* discard A/B practice slots whose A state is corrupt
                                               (NOT a cache: the slot is lost; see rn_practice_dropped_slots) */
+#define RN_OPEN_LIVE 0x4u                  /* rn_session_new, project_dir NULL: RN_MODE_LIVE from the start - the
+                                              core just runs, nothing is recorded (no take, checkpoints or
+                                              rewind); a demo. A session cannot change to live later. */
 
 typedef struct rn_session_options {
   uint32_t struct_size;     /* set by rn_session_options_init */
@@ -142,6 +145,9 @@ typedef struct rn_session_options {
   uint32_t dense_capacity;  /* max dense checkpoints kept in memory (default 1200) */
   uint32_t sparse_interval; /* frames between permanent checkpoints (default 600) */
   uint32_t open_flags;      /* RN_OPEN_* */
+  uint32_t defer_checkpoints; /* nonzero: rn_step leaves the checkpoint of its frame to
+                                 rn_session_checkpoint_work (or the next call that changes the
+                                 machine), so it is not between the input and the picture */
 } rn_session_options;
 
 void rn_session_options_init(rn_session_options* opt);
@@ -158,6 +164,9 @@ rn_status rn_session_open(const char* project_dir, const char* rom_override, con
 void rn_session_close(rn_session* s);
 rn_status rn_session_save(rn_session* s);      /* full atomic save; resets the journal */
 rn_status rn_session_autosave(rn_session* s);  /* cheap journal append + fsync (call every few s) */
+/* The same without waiting for new sparse state files: they are written on another thread (a large
+ * state took tens of ms on the frame thread) and referenced by a later autosave of either kind. */
+rn_status rn_session_autosave_background(rn_session* s);
 rn_status rn_session_save_as(rn_session* s, const char* project_dir); /* in-memory -> project */
 /* "Reset Project": starts the project over from power-on (frame 0, RECORD, empty timeline: all
  * takes, bookmarks, checkpoints and the take undo history are dropped); same ROM and project
@@ -275,6 +284,10 @@ rn_status rn_rewind(rn_session* s, uint64_t nframes);
  * Call only while paused with no foreground input/transport in progress; the
  * engine has no pause flag. Zero budget, PRACTICE and LIVE do no work. */
 rn_status rn_session_idle_work(rn_session* s, uint32_t budget_frames);
+/* defer_checkpoints: the checkpoint the last rn_step left, and a buffer for the next one. Call after
+ * the picture is out, in the frame's slack; without it the next rn_step (or any other call that
+ * changes the machine or the take) does it first. No effect on what is recorded. */
+rn_status rn_session_checkpoint_work(rn_session* s);
 
 /* Verification hashes (determinism diagnostics, tests, CLI). */
 uint64_t rn_state_hash(rn_session* s);

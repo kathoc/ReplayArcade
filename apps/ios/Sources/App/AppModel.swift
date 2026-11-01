@@ -124,6 +124,8 @@ final class AppModel: ObservableObject {
     @AppStorage("integerScale") var integerScale = true { didSet { objectWillChange.send() } }
     @AppStorage("displayPAR87") var displayPAR87 = false { didSet { objectWillChange.send() } }
     @AppStorage("hideOverscan") var hideOverscan = true { didSet { objectWillChange.send() } }
+    /// The empty sides show the picture enlarged, blurred and dimmed (Settings › Display › Picture Shape).
+    @AppStorage("backdrop") var backdrop = true { didSet { objectWillChange.send() } }
     @AppStorage("volume") var volume = 0.8 { didSet { emu.audio.volume = Float(volume); objectWillChange.send() } }
     @AppStorage("southConfirm") var southConfirm = false { didSet { input.setSouthConfirm(southConfirm); objectWillChange.send() } }
     @AppStorage("dpadStepWhenPaused") var dpadStepWhenPaused = true { didSet { input.setPausedStepEnabled(dpadStepWhenPaused); objectWillChange.send() } }
@@ -157,7 +159,7 @@ final class AppModel: ObservableObject {
     var flashLevel: FlashLevel { FlashLevel(rawValue: flashReduction) ?? .standard }
 
     var displayOptions: DisplayOptions {
-        DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan, geometry: status.geometry)
+        DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan, geometry: status.geometry, backdrop: backdrop)
     }
 
     /// The picture's displayed width / height (pixel aspect, rotation); nil for the NES picture.

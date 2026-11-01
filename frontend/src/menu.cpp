@@ -130,9 +130,9 @@ const std::vector<ItemDef>& items() {
        "rewind-backward-5", TOGGLE, "", 0, {}},
       {"settings.display", "display.shape", RNF_L("Picture Shape"),
 #if RN_PRODUCT_OVERSCAN_CROP
-       RNF_L("8:7 pixels, hide the edges"),
+       RNF_L("8:7 pixels, hide the edges, blurred sides"),
 #else
-       RNF_L("8:7 Pixels"),
+       RNF_L("8:7 pixels, blurred sides"),
 #endif
        "aspect-ratio", PAGE,
        "display.shape", 0, {}},
@@ -145,6 +145,8 @@ const std::vector<ItemDef>& items() {
       {"display.shape", "display.overscan", RNF_L("Hide Edges"), RNF_L("Hides 8 pixels on each side, like a TV"),
        "crop", TOGGLE, "", 0, {}},
 #endif
+      {"display.shape", "display.backdrop", RNF_L("Blurred Sides"),
+       RNF_L("The empty sides show the game enlarged, blurred and dimmed"), "photo", TOGGLE, "", 0, {}},
       // Display > CRT details.
       {"display.crt", "crt.lines", RNF_L("Scanlines"), RNF_L("240 = standard; fewer lines is an experiment"), "line-scan", SLIDER,
        "", F_CRT, {}},
@@ -224,6 +226,8 @@ const std::vector<ItemDef>& items() {
        "", 0, {}},
       {"about.folders", "about.settings", RNF_L("Settings File"), "", "file-text", INFO, "", 0, {}},
       {"about.folders", "about.license", RNF_L("License"), RNF_L("Free software (GPL-2.0-or-later)"), "license", INFO, "", 0, {}},
+      {"about.folders", "system.stats", RNF_L("Latency Stats"), RNF_L("Measured latency and timing (F3)"), "chart-line", TOGGLE,
+       "", 0, {}},
       // System > More.
       {"system.detail", "system.fullscreen", RNF_L("Full Screen"), RNF_L("Use the whole screen"), "maximize", TOGGLE, "",
        F_FULLSCREEN, {}},
@@ -244,8 +248,10 @@ const std::vector<ItemDef>& items() {
       {"system.detail", "system.flash_badge", RNF_L("Flash Badge"), RNF_L("Show a badge while flashes are reduced"), "bolt-off",
        TOGGLE, "", 0, {}},
 #endif
-      {"system.detail", "system.stats", RNF_L("Latency Stats"), RNF_L("Measured latency and timing (F3)"), "chart-line", TOGGLE,
-       "", 0, {}},
+      // Here, not under Display: Display is full (docs/design/SCREENSAVER.md); Latency Stats moved to Folders.
+      {"system.detail", "system.screensaver", RNF_L("Screensaver"),
+       RNF_L("Game demos after a time without input (nothing is recorded)"), "device-tv-old", CHOICE, "", 0,
+       {RNF_L("Off"), RNF_L("1 min"), RNF_L("3 min"), RNF_L("5 min"), RNF_L("10 min"), RNF_L("30 min")}},
       // Game.
       {"game", "game.library", RNF_L("Choose Game"), RNF_L("Back to the game library"), "layout-grid", ACTION, "", 0, {}},
       {"game", "game.save", RNF_L("Save"), RNF_L("Save the project now"), "device-floppy", ACTION, "", 0, {}},

@@ -1,6 +1,36 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "8:7 pixels, blurred sides": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8:7・ぼかし背景"
+          }
+        }
+      }
+    },
+    "8:7 pixels, hide the edges, blurred sides": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8:7・端を隠す・ぼかし背景"
+          }
+        }
+      }
+    },
+    "Blurred Sides": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ぼかし背景"
+          }
+        }
+      }
+    },
     "Put ROM zips here (FinalBurn Neo set names)": {
       "localizations": {
         "ja": {
@@ -97,6 +127,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "練習するにはマーカーを2個置いてください"
+          }
+        }
+      }
+    },
+    "The empty sides show the game enlarged, blurred and dimmed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の空いた部分に、ゲーム画面を拡大してぼかし、少し暗くして表示します"
           }
         }
       }
@@ -8511,6 +8551,86 @@
           "stringUnit": {
             "state": "translated",
             "value": "コントローラーがつながっていません"
+          }
+        }
+      }
+    },
+    "Screensaver": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スクリーンセーバー"
+          }
+        }
+      }
+    },
+    "Game demos after a time without input (nothing is recorded)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "操作がないとき、ゲームのデモを流します（記録しません）"
+          }
+        }
+      }
+    },
+    "1 min": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 分"
+          }
+        }
+      }
+    },
+    "3 min": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3 分"
+          }
+        }
+      }
+    },
+    "5 min": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5 分"
+          }
+        }
+      }
+    },
+    "10 min": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "10 分"
+          }
+        }
+      }
+    },
+    "30 min": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 分"
+          }
+        }
+      }
+    },
+    "Screensaver · press any button to return": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スクリーンセーバー · 何か押すと戻ります"
           }
         }
       }

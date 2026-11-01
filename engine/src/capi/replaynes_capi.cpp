@@ -81,6 +81,8 @@ rn::SessionOptions toOptions(const rn_session_options* o) {
   if (o->sparse_interval) so.checkpoints.sparseInterval = o->sparse_interval;
   so.dropCorruptStates = (o->open_flags & RN_OPEN_DROP_CORRUPT_STATES) != 0;
   so.dropCorruptPractice = (o->open_flags & RN_OPEN_DROP_CORRUPT_PRACTICE) != 0;
+  so.live = (o->open_flags & RN_OPEN_LIVE) != 0;
+  so.deferCheckpoints = o->defer_checkpoints != 0;
   return so;
 }
 
@@ -221,7 +223,10 @@ rn_status rn_session_save(rn_session* s) {
   return guard([&] { return s ? ret(s->s->save()) : invalid("null session"); });
 }
 rn_status rn_session_autosave(rn_session* s) {
-  return guard([&] { return s ? ret(s->s->autosave()) : invalid("null session"); });
+  return guard([&] { return s ? ret(s->s->autosave(true)) : invalid("null session"); });
+}
+rn_status rn_session_autosave_background(rn_session* s) {
+  return guard([&] { return s ? ret(s->s->autosave(false)) : invalid("null session"); });
 }
 rn_status rn_session_reset(rn_session* s, int keep_practice_slots) {
   return guard([&] { return s ? ret(s->s->reset(keep_practice_slots != 0)) : invalid("null session"); });
@@ -368,6 +373,13 @@ rn_status rn_rewind(rn_session* s, uint64_t n) {
 }
 rn_status rn_session_idle_work(rn_session* s, uint32_t budget_frames) {
   return guard([&] { return s ? ret(s->s->idleWork(budget_frames)) : invalid("null session"); });
+}
+rn_status rn_session_checkpoint_work(rn_session* s) {
+  return guard([&] {
+    if (!s) return invalid("null session");
+    s->s->checkpointWork();
+    return ret(rn::Status::Ok());
+  });
 }
 uint64_t rn_state_hash(rn_session* s) { return s ? s->s->stateHash() : 0; }
 uint64_t rn_video_hash(const rn_session* s) { return s ? s->s->videoHash() : 0; }

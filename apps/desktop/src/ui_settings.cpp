@@ -53,6 +53,7 @@ bool buttonTurboRow(const std::string& id, std::string& action, std::string& fie
 
 const int kCrtLines[] = {110, 120, 140, 160, 180, 200, 220, 240};
 const double kAutosave[] = {2, 3, 5, 10, 30};
+const int kScreensaverMinutes[] = {0, 1, 3, 5, 10, 30};  // Settings::screensaverMinutes
 
 // The menu model item of an id (any page): page / index / info.
 bool findItem(const rnf_menu* m, const std::string& id, size_t* page, size_t* index, rnf_menu_item_info* info) {
@@ -88,6 +89,11 @@ int choiceIndex(const Settings& s, const InputRouter& in, const std::string& id)
     for (int i = 0; i < 5; ++i)
       if (s.autosaveInterval <= kAutosave[i] + 0.01) return i;
     return 4;
+  }
+  if (id == "system.screensaver") {
+    for (int i = 0; i < 6; ++i)
+      if (s.screensaverMinutes <= kScreensaverMinutes[i]) return i;
+    return 5;
   }
   return 0;
 }
@@ -167,6 +173,7 @@ bool UI::itemOn(const std::string& id) const {
   if (id == "display.par87") return s.par87;
   if (id == "display.overscan") return RN_PRODUCT_OVERSCAN_CROP && s.hideOverscan;
   if (id == "display.vtr") return s.vtrEffect;
+  if (id == "display.backdrop") return s.backdrop;
   if (id == "crt.beam") return s.crtBeamGrowth;
   if (id == "crt.persistence") return s.crtPersistence;
   if (id == "crt.supply") return s.crtSupply;
@@ -251,6 +258,7 @@ void UI::adjustItem(const std::string& id, int dir) {
     else if (id == "display.par87") s.par87 = !s.par87;
     else if (id == "display.overscan") s.hideOverscan = RN_PRODUCT_OVERSCAN_CROP && !s.hideOverscan;
     else if (id == "display.vtr") s.vtrEffect = !s.vtrEffect;
+    else if (id == "display.backdrop") s.backdrop = !s.backdrop;
     else if (id == "crt.beam") s.crtBeamGrowth = !s.crtBeamGrowth;
     else if (id == "crt.persistence") s.crtPersistence = !s.crtPersistence;
     else if (id == "crt.supply") s.crtSupply = !s.crtSupply;
@@ -294,6 +302,7 @@ void UI::adjustItem(const std::string& id, int dir) {
       if (onLanguage) onLanguage(s.language);
       return;
     } else if (id == "system.autosave") s.autosaveInterval = kAutosave[next];
+    else if (id == "system.screensaver") s.screensaverMinutes = kScreensaverMinutes[next];
     else if (id == "system.resume_countdown") s.countdownSeconds = next == 0 ? 3 : next == 1 ? 1 : 0;
     changed();
     return;

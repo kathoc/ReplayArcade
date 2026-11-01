@@ -78,7 +78,7 @@ pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
 set(SHADER_OUT ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT})
 set(SHADER_INCS)
-foreach(sh blit.vert blit.frag)
+foreach(sh blit.vert blit.frag backdrop.frag)
   set(src ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${sh})
   set(out ${SHADER_OUT}/${sh}.spv.inc)
   add_custom_command(OUTPUT ${out}
@@ -103,11 +103,14 @@ add_executable(${RN_PRODUCT_EXECUTABLE}
   src/vk_ui_resources.cpp
   src/fonts_fontconfig.cpp
   src/update_service_flatpak.cpp
+  src/gamescope_overlay.cpp
+  src/steam_inhibit.cpp
+  src/vk_backdrop.cpp
   ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
   ${SHADER_INCS})
 target_include_directories(${RN_PRODUCT_EXECUTABLE} PRIVATE src ${SHADER_OUT})
 target_link_libraries(${RN_PRODUCT_EXECUTABLE} PRIVATE rnl_app rnl_crt_export rnl_render rnl_export SDL3::SDL3 Vulkan::Vulkan
-  PkgConfig::FONTCONFIG Threads::Threads)
+  PkgConfig::FONTCONFIG Threads::Threads ${CMAKE_DL_LIBS})
 target_compile_options(${RN_PRODUCT_EXECUTABLE} PRIVATE ${RNL_WARNINGS})
 if(RN_PRODUCT_STARTUP_TARGET)
   if(NOT TARGET ${RN_PRODUCT_STARTUP_TARGET})

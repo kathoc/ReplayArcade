@@ -113,6 +113,12 @@ class App {
   bool running_ = true;
   bool fullscreen_ = false;
   bool focused_ = true;  // the window has the input focus (another window in front: false)
+  bool overlay_ = false;  // the system's UI in front (PlatformHooks::systemOverlay, --script "overlay")
+  bool overlayArmed_ = false;  // the window was in front once (before that it is the launch, not a menu)
+  // Screensaver (docs/design/SCREENSAVER.md): the last input, the current demo's start.
+  double lastInput_ = 0, screensaverDemoAt_ = 0;
+  void updateScreensaver(double now);
+  void updateOverlay(int scripted);
   int lastHeight_ = 0;
   float lastUIScale_ = 0;
   int lastWidth_ = 0;
@@ -149,6 +155,7 @@ void App::applyPostProcess() {
   pp.maxTubeWidth = opt_.crtMaxWidth;
   pp.adaptiveResolution = opt_.crtAdaptive;
   pp.allowBuildAhead = opt_.crtBuildAhead;
+  pp.backdrop = settings_.backdrop;
   renderer_->setPostProcess(pp);
 }
 
@@ -176,7 +183,75 @@ void App::updateNavigation() {
   else io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
 }
 
+namespace {
+// A person did something (a resting stick's drift, a pointer the compositor nudges or a key repeat
+// is not one).
+bool isUserInput(const SDL_Event& e) {
+  switch (e.type) {
+    case SDL_EVENT_KEY_DOWN: return !e.key.repeat;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_WHEEL:
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: return true;
+    case SDL_EVENT_MOUSE_MOTION: return std::fabs(e.motion.xrel) + std::fabs(e.motion.yrel) > 3;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: return std::abs(int(e.gaxis.value)) > 16000;
+    default: return false;
+  }
+}
+}  // namespace
+
+// The screensaver starts after the setting's minutes without input on the library or with a game paused
+// (not practising, no countdown, nothing a dialog or an export waits for), and switches demos every 2 min.
+void App::updateScreensaver(double now) {
+  if (lastInput_ == 0) lastInput_ = now;
+  if (app_->screensaverActive()) {
+    if (now - screensaverDemoAt_ >= 120) {
+      app_->nextScreensaverDemo();
+      screensaverDemoAt_ = now;
+    }
+    return;
+  }
+  const int minutes = settings_.screensaverMinutes;
+  if (minutes <= 0 || now - lastInput_ < minutes * 60.0 || !focused_ || overlay_ || ui_->screensaverBlocked()) return;
+  const EmuStatus& st = emu_->status();
+  if (emu_->session() && (!st.paused || st.practicing || st.countdown > 0 || emu_->live())) return;
+  if (app_->startScreensaver()) {
+    std::fprintf(stderr, "screensaver: on (%s)\n", app_->screensaverRom().c_str());
+    screensaverDemoAt_ = now;
+  } else {
+    lastInput_ = now;  // could not leave the session (its work not saved): another full wait
+  }
+}
+
+// The Steam menu in gamescope (docs/design/STEAM_OVERLAY_PAUSE.md): no focus event comes, so its
+// coming is a focus loss here, and a game open shows the pause menu, still there when it goes.
+void App::updateOverlay(int scripted) {
+  const bool shown = scripted >= 0 ? scripted > 0 : platform_.systemOverlay && platform_.systemOverlay();
+  if (shown == overlay_) {
+    if (!shown) overlayArmed_ = true;
+    return;
+  }
+  overlay_ = shown;
+  std::fprintf(stderr, "input: system overlay %s\n", shown ? "shown" : "gone");
+  // Steam's UI is in front while the app starts, until gamescope shows its window: not the Steam menu.
+  if (!shown) overlayArmed_ = true;
+  if (!shown || !overlayArmed_ || !RN_PRODUCT_FOCUS_PAUSE || settings_.playInBackground) return;
+  if (emu_->session() && !app_->screensaverActive()) {
+    if (!emu_->paused()) emu_->setPaused(true);
+    ui_->setMenu(true);  // paused, the pause menu (an open menu stays where it is)
+  }
+  input_->releaseControllers();
+}
+
 void App::handleEvent(const SDL_Event& e, double now) {
+  if (isUserInput(e)) {
+    lastInput_ = now;
+    if (app_->screensaverActive()) {  // the input that ends it does nothing else
+      app_->stopScreensaver();
+      std::fprintf(stderr, "screensaver: off\n");
+      return;
+    }
+  }
   // Another window in front (RN_PRODUCT_FOCUS_PAUSE): unless Play in the Background is on (Settings > System > More), the
   // game pauses and the controllers reach neither the game nor the menus until the window is back.
   // The game stays paused then (play resumes when the player says so).
@@ -196,7 +271,7 @@ void App::handleEvent(const SDL_Event& e, double now) {
   } else if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
     focused_ = true;
   }
-  if (RN_PRODUCT_FOCUS_PAUSE && !focused_ && !settings_.playInBackground &&
+  if (RN_PRODUCT_FOCUS_PAUSE && (!focused_ || overlay_) && !settings_.playInBackground &&
       (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
        e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN ||
        e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_UP))
@@ -612,11 +687,27 @@ int App::run(const AppOptions& opt) {
     rec.sample = nowSeconds();
     // The controllers read once more here (the pad thread's last read is up to 1 ms old): what the
     // kernel has at the sample point reaches this frame.
+    // <PREFIX>_DEBUG_EVENTS: which part of the event stage took long (over 3 ms), with its frame.
+    static const bool debugEvents = std::getenv(productEnvName("DEBUG_EVENTS").c_str()) != nullptr;
+    double mark = rec.sample;
+    auto lap = [&](const char* what) {
+      if (!debugEvents) return;
+      const double t = nowSeconds();
+      if (t - mark > 0.003) std::fprintf(stderr, "events: %s %.1f ms (seq %llu)\n", what, (t - mark) * 1e3, (unsigned long long)rec.seq);
+      mark = t;
+    };
     SDL_UpdateJoysticks();
+    lap("SDL_UpdateJoysticks");
     input_->syncPads();  // which controller is which player: what is connected now, every frame
+    lap("syncPads");
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, rec.sample);
+    lap("events");
     input_->tick(nowSeconds());  // L or R held alone past the chord window fires now
+    lap("input tick");
+    updateOverlay(script ? script->overlay : -1);
+    updateScreensaver(nowSeconds());
+    lap("overlay / screensaver");
     if (!running_) break;
     rec.polled = nowSeconds();
     double ev = input_->lastEventTime();

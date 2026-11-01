@@ -51,6 +51,16 @@
         }
       }
     },
+    "8:7 pixels, hide the edges, blurred sides, orientation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8:7・端を隠す・ぼかし背景・画面の向き"
+          }
+        }
+      }
+    },
     "8:7 pixels, hide the edges, orientation": {
       "localizations": {
         "ja": {

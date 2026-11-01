@@ -1,4 +1,6 @@
 #include "core/ICore.h"
+
+#include <algorithm>
 #include "replaynes/product.h"
 
 #include "core/MockCore.h"
@@ -152,6 +154,25 @@ void write(std::vector<uint8_t>& out, const std::string& compat, uint64_t frame,
   w.u64(n);
   w.bytes(payload, n);
   out.swap(w.buf);
+}
+
+uint8_t* begin(std::vector<uint8_t>& out, const std::string& compat, uint64_t frame, size_t n) {
+  ByteWriter w;
+  w.u32(kMagic);
+  w.u32(kVersion);
+  w.str(compat);
+  w.u64(frame);
+  w.u64(n);
+  const size_t header = w.buf.size();
+  if (out.size() == header + n) {
+    // A recycled buffer of the same layout (CheckpointStore::takeSpare): no fresh memory to zero and
+    // fault in, only the header rewritten.
+    std::copy(w.buf.begin(), w.buf.end(), out.begin());
+  } else {
+    out.swap(w.buf);
+    out.resize(header + n);
+  }
+  return out.data() + header;
 }
 
 Status read(const uint8_t* data, size_t n, const std::string& expectCompat, uint64_t& frame, const uint8_t*& payload,

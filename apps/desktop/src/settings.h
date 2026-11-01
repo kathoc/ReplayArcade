@@ -26,6 +26,7 @@ struct Settings {
   std::string preservedFlashLines;  // opaque settings lines: ignore the value without rewriting it
 #endif
   bool showFlashIndicator = true;
+  bool backdrop = true;   // the empty sides show the picture enlarged, blurred, dimmed (render/backdrop.h)
   bool vtrEffect = true;  // the VTR tape look while rewinding / returning to A (rnf_vtr; display only)
   float uiScale = 1.0f;  // multiplies the automatic scale (window height / 800)
   // CRT display (nesterm physical model; display only). Defaults are nesterm's.
@@ -44,6 +45,7 @@ struct Settings {
   // value that was surely chosen, and it stays off).
   bool pauseAfterRewind = false;
   double autosaveInterval = 2.0;  // seconds
+  int screensaverMinutes = 5;     // demos after this long without input (docs/design/SCREENSAVER.md); 0 = off
   bool dpadStepWhenPaused = true;
   // The mouse plays games with analog controls (sticks, dials, levers; Controls > More). Off by default: a
   // mouse moved by accident would leave the lever pushed.

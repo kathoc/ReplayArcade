@@ -493,7 +493,7 @@ TEST_CASE("menu: the Quick Menu is six tiles in one row, Resume first") {
 #if RN_PRODUCT_OVERSCAN_CROP
                                                                  "display.overscan",
 #endif
-  }));
+                                                                 "display.backdrop"}));
   CHECK((itemIds(m, "settings.sound") == std::vector<std::string>{"sound.volume"}));
   rnf_menu_free(m);
   // Features: no CRT -> no CRT row / details page; no export and no stream -> no Share tile.
@@ -518,7 +518,7 @@ TEST_CASE("menu: the Quick Menu is six tiles in one row, Resume first") {
   CHECK((itemIds(m, "system.about") == std::vector<std::string>{"about.version", "updates.status", "updates.check",
                                                                 "updates.apply", "updates.auto", "about.folders"}));
   CHECK((itemIds(m, "about.folders") ==
-         std::vector<std::string>{"about.roms", "about.projects", "about.settings", "about.license"}));
+         std::vector<std::string>{"about.roms", "about.projects", "about.settings", "about.license", "system.stats"}));
   {
     int sys = rnf_menu_page_find(m, "settings.system"), about = rnf_menu_page_find(m, "system.about");
     REQUIRE(sys >= 0);
@@ -748,6 +748,6 @@ TEST_CASE("product overscan flag: picture shape explanation matches available co
   rnf_menu_item_info item{};
   REQUIRE(rnf_menu_item_get(m, size_t(page), size_t(row), &item));
   CHECK_EQ(std::string(rnf_menu_text(item.description)),
-           RN_PRODUCT_OVERSCAN_CROP ? "8:7 pixels, hide the edges" : "8:7 Pixels");
+           RN_PRODUCT_OVERSCAN_CROP ? "8:7 pixels, hide the edges, blurred sides" : "8:7 pixels, blurred sides");
   rnf_menu_free(m);
 }

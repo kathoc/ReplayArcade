@@ -239,7 +239,7 @@ enum QuickMenuPages {
             choice("flash", "bolt.trianglebadge.exclamationmark", String(localized: "Reduce Flashing"),
                    String(localized: "Tone down full-screen flashes (photosensitivity)"),
                    levels.map(\.label), levels.firstIndex(of: m.flashLevel) ?? 2) { m.flashReduction = levels[$0].rawValue },
-            link("shape", "aspectratio", String(localized: "Picture Shape"), L("8:7 pixels, hide the edges, orientation"), .displayShape),
+            link("shape", "aspectratio", String(localized: "Picture Shape"), L("8:7 pixels, hide the edges, blurred sides, orientation"), .displayShape),
             detail,
         ]
     }
@@ -250,6 +250,8 @@ enum QuickMenuPages {
         var items = [
             toggle("par", "rectangle.arrowtriangle.2.outward", "8:7", String(localized: "Pixel aspect ratio of a CRT TV"), m.displayPAR87) { m.displayPAR87 = $0 },
             toggle("overscan", "crop", String(localized: "Hide Edges"), String(localized: "Hide 8 pixels at each edge (overscan)"), m.hideOverscan) { m.hideOverscan = $0 },
+            toggle("backdrop", "photo", String(localized: "Blurred Sides"),
+                   String(localized: "The empty sides show the game enlarged, blurred and dimmed"), m.backdrop) { m.backdrop = $0 },
         ]
         if UIDevice.current.userInterfaceIdiom == .phone {
             items.append(choice("orientation", "rectangle.portrait.rotate", L("Orientation"),

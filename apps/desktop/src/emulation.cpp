@@ -73,7 +73,7 @@ void EmulationController::reportError(const std::string& title) {
 }
 
 void EmulationController::setMuted(bool m) {
-  if (audio_) audio_->setMuted(m);
+  if (audio_) audio_->setMuted(m || silent);
 }
 
 void EmulationController::setPaused(bool p) {
@@ -1499,6 +1499,9 @@ std::string EmulationController::resetProject(bool keepPracticeSlots,
 void EmulationController::afterFrame(double slack) {
   rn_session* s = session_;
   if (!s) return;
+  // The checkpoint of the frame just shown, after its picture (defer_checkpoints): in a large state
+  // (Sega System 32: 22 MB) it took most of a frame between the input and the picture.
+  rn_session_checkpoint_work(s);
   if (pendingThumb_) {
     pendingThumb_ = false;
     if (observer) observer->frameShown(s, pendingThumbFrame_);
@@ -1520,7 +1523,7 @@ void EmulationController::maybeAutosave(double slack) {
     st = rn_session_save(s);
     if (st == RN_OK) lastFullSave_ = now;
   } else {
-    st = rn_session_autosave(s);
+    st = rn_session_autosave_background(s);  // while playing: the frame thread does not wait for state files
   }
   if (st == RN_OK) {
     autosaveFailed_ = false;
