@@ -59,3 +59,5 @@ target_link_libraries(analog_response PRIVATE replayarcade_core)
 target_include_directories(analog_response PRIVATE ${REPLAYNES_DIR}/apps/desktop/src)  # stick_shape.h
 add_executable(fbneo_rewind_probe tools/fbneo_rewind_probe.cpp)
 target_link_libraries(fbneo_rewind_probe PRIVATE replayarcade_core)
+add_executable(thumb_bench tools/thumb_bench.cpp)  # the seek bar thumbnails, timed
+target_link_libraries(thumb_bench PRIVATE replayarcade_core)
