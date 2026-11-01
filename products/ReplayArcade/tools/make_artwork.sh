@@ -5,7 +5,7 @@
 set -euo pipefail
 art="$(cd "$(dirname "$0")/.." && pwd)/packaging/linux/artwork"
 svg="$art/src/icon.svg"
-bg="#000000"  # the icon's black
+bg="#040000"  # the icon's black
 font="${ARTWORK_FONT:-DejaVu-Sans-Bold}"  # a name ImageMagick knows, or a font file
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -21,27 +21,46 @@ cp "$art/png/hicolor/256.png" "$art/png/icon.png"
 for s in 16 24 32 48; do render "$svg" $s "$tmp/ico-$s.png"; done
 convert "$tmp"/ico-16.png "$tmp"/ico-24.png "$tmp"/ico-32.png "$tmp"/ico-48.png \
   "$art/png/hicolor/64.png" "$art/png/hicolor/128.png" "$art/png/hicolor/256.png" "$art/replayarcade.ico"
+# The emblem is the icon itself: its black is the artwork's background colour, so only the white stick
+# and its red buttons show (the white is the icon's square: it must stay).
 emblem() { render "$svg" "$1" "$2"; }
+# The icon as a tile with rounded corners (an app icon's shape): where the stick runs off the icon's
+# square, the tile's edge cuts it, not the middle of the artwork.
+tile() {
+  render "$svg" "$1" "$tmp/tile-src.png"
+  convert "$tmp/tile-src.png" \( -size "$1x$1" xc:black -fill white -draw "roundrectangle 0,0 $(($1 - 1)),$(($1 - 1)) $(($1 / 9)),$(($1 / 9))" \) \
+    -alpha off -compose CopyOpacity -composite "$2"
+}
 
-# Text fitted into a box (the point size follows the box).
-text() { convert -background none -fill white -font "$font" -gravity center -size "$1x$2" label:"ReplayArcade" "$3"; }
+# The Steam artwork in the icon's look (user decision 2026-11-01): its black as the background, so
+# the stick and its red buttons stand on it; the name in two lines, "Replay" white, "Arcade" red.
+red="#e60012"
+name() {  # name <width> <height of each line> <out>: "Replay" over "Arcade", fitted into the box
+  convert \( -background none -fill white -font "$font" -size "$1x$2" -gravity center label:"Replay" \) \
+    \( -background none -fill "$red" -font "$font" -size "$1x$2" -gravity center label:"Arcade" \) -append "$3"
+}
+name_line() {  # name_line <width> <height> <out>: "Replay" white + "Arcade" red on one line
+  convert \( -background none -fill white -font "$font" -size "x$2" label:"Replay" \) \
+    \( -background none -fill "$red" -font "$font" -size "x$2" label:"Arcade" \) +append -resize "$1x$2" "$3"
+}
 
-# Capsule 600x900: emblem over the name.
-emblem 420 "$tmp/e.png"; text 500 110 "$tmp/t.png"
-convert -size 600x900 "xc:$bg" "$tmp/e.png" -gravity north -geometry +0+150 -composite \
-  "$tmp/t.png" -gravity north -geometry +0+620 -composite "$art/png/capsule.png"
+# Capsule 600x900: the tile over the name.
+tile 500 "$tmp/e.png"; name 520 110 "$tmp/t.png"
+convert -size 600x900 "xc:$bg" "$tmp/e.png" -gravity north -geometry +0+70 -composite \
+  "$tmp/t.png" -gravity north -geometry +0+640 -composite "$art/png/capsule.png"
 
-# Wide 920x430: emblem left, name right.
-emblem 300 "$tmp/e.png"; text 520 120 "$tmp/t.png"
+# Wide 920x430: the tile left, the name right.
+tile 330 "$tmp/e.png"; name 420 115 "$tmp/t.png"
 convert -size 920x430 "xc:$bg" "$tmp/e.png" -gravity west -geometry +50+0 -composite \
-  "$tmp/t.png" -gravity west -geometry +370+0 -composite "$art/png/wide.png"
+  "$tmp/t.png" -gravity west -geometry +440+0 -composite "$art/png/wide.png"
 
-# Hero 1920x620 (no text: Steam draws the logo over it).
-emblem 520 "$tmp/e.png"
-convert -size 1920x620 "xc:$bg" "$tmp/e.png" -gravity center -geometry +0+0 -composite "$art/png/hero.png"
+# Hero 1920x620 (no text: Steam draws the logo over it, bottom left): the icon 2.8 times the height of
+# its square's 400 units, top at the top - the stick leaves the square at its top (on the hero's top
+# edge), its left (from 222 units down: below the hero) and its bottom (below the hero), so no cut shows.
+emblem 1120 "$tmp/e.png"
+convert -size 1920x620 "xc:$bg" "$tmp/e.png" -gravity northeast -geometry +0+0 -composite "$art/png/hero.png"
 
-# Logo 1280x360, transparent: emblem and name.
-emblem 300 "$tmp/e.png"; text 860 160 "$tmp/t.png"
-convert -size 1280x360 xc:none "$tmp/e.png" -gravity west -geometry +40+0 -composite \
-  "$tmp/t.png" -gravity west -geometry +380+0 -composite "$art/png/logo.png"
+# Logo 1280x360, transparent (over the hero): the name on one line.
+name_line 1200 220 "$tmp/t.png"
+convert -size 1280x360 xc:none "$tmp/t.png" -gravity west -geometry +40+0 -composite "$art/png/logo.png"
 echo "artwork: $art/png"
