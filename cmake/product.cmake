@@ -40,8 +40,9 @@ set(RN_PRODUCT_LINUX_METAINFO_FILE "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux
 set(RN_PRODUCT_STEAM_ARTWORK_DIR "${CMAKE_CURRENT_LIST_DIR}/../packaging/linux/artwork")
 # The cabinet bezel around horizontal games (ReplayNES docs/design/BEZEL.md): data/bezel/bezel.png is the
 # artwork at the repository root ("レトロアーケード・ベゼルとネオン装飾.png") with its screen made transparent
-# (a rounded rectangle, radius 10); the window in its pixels: x y width height.
-set(RN_PRODUCT_BEZEL_PNG "${CMAKE_CURRENT_LIST_DIR}/../data/bezel/bezel.png")
+# (a rounded rectangle, radius 10; the iPhone app's Assets.xcassets/Bezel), bezel.qoi the same for the
+# desktop frontend (magick bezel.png bezel.qoi); the window in its pixels: x y width height.
+set(RN_PRODUCT_BEZEL_IMAGE "${CMAKE_CURRENT_LIST_DIR}/../data/bezel/bezel.qoi")
 set(RN_PRODUCT_BEZEL_WINDOW "321 98 944 739")
 
 # ReplayArcade's targets (FBNeo, its core, the start-up hook): defined once per configure.
