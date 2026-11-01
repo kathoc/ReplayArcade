@@ -63,3 +63,5 @@ add_executable(thumb_bench tools/thumb_bench.cpp)  # the seek bar thumbnails, ti
 target_link_libraries(thumb_bench PRIVATE replayarcade_core)
 add_executable(frame_times tools/frame_times.cpp)  # per-frame record time, periodic stalls
 target_link_libraries(frame_times PRIVATE replayarcade_core)
+add_executable(checkpoint_cost tools/checkpoint_cost.cpp)  # state size and checkpoint frame cost per game
+target_link_libraries(checkpoint_cost PRIVATE replayarcade_core)
