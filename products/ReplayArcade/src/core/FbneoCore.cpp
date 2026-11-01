@@ -384,13 +384,15 @@ class FbneoCore final : public rn::ICore {
   rn::Status saveState(std::vector<uint8_t>& out) override {
     std::lock_guard<std::mutex> g(host().m);
     if (!loaded_) return rn::Error(rn::Err::InvalidArg, "no content loaded");
-    std::vector<uint8_t> machine;
-    if (host().owner == this) {
-      RN_TRY(serializeInto(machine));
-    } else {
-      machine = parked_;
+    if (host().owner != this) {
+      rn::stateenv::write(out, kCompat, frame_, parked_.data(), parked_.size());
+      return rn::Status::Ok();
     }
-    rn::stateenv::write(out, kCompat, frame_, machine.data(), machine.size());
+    // Serialized in place, after the envelope's header: a state is megabytes (Sega System 32: 22 MB),
+    // and a buffer copied into the envelope cost a copy of it on every dense checkpoint.
+    const size_t size = host().powerOn.size();
+    uint8_t* payload = rn::stateenv::begin(out, kCompat, frame_, size);
+    if (!retro_serialize(payload, size)) return rn::Error(rn::Err::StateError, "FinalBurn Neo could not save");
     return rn::Status::Ok();
   }
 
