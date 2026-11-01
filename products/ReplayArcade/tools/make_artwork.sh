@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
-# Builds every PNG under packaging/linux/artwork/png from src/icon.svg (ImageMagick):
+# Builds every PNG under packaging/linux/artwork/png from src/icon.svg (ImageMagick 6 or 7, librsvg):
 # app icons (hicolor 64-512, icon.png) and the Steam artwork (capsule, wide, hero, logo).
 #   tools/make_artwork.sh
 set -euo pipefail
 art="$(cd "$(dirname "$0")/.." && pwd)/packaging/linux/artwork"
 svg="$art/src/icon.svg"
-bg="#1b1033"
-font="DejaVu-Sans-Bold"
+bg="#000000"  # the icon's black
+font="${ARTWORK_FONT:-DejaVu-Sans-Bold}"  # a name ImageMagick knows, or a font file
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-render() { convert -background none -density 576 "$1" -resize "$2x$2" "$3"; }
+im=$(command -v magick || command -v convert)
+convert() { "$im" "$@"; }
+render() { rsvg-convert -w "$2" -h "$2" "$1" -o "$3"; }
 
-# The icon, and the emblem: the icon without its rounded backdrop (the first <rect>).
+# The icon (square, it fills its square: no backdrop of its own).
 for s in 64 128 256 512; do render "$svg" $s "$art/png/hicolor/$s.png"; done
 cp "$art/png/hicolor/256.png" "$art/png/icon.png"
 # Windows icon: 16-256 px in one .ico.
 for s in 16 24 32 48; do render "$svg" $s "$tmp/ico-$s.png"; done
 convert "$tmp"/ico-16.png "$tmp"/ico-24.png "$tmp"/ico-32.png "$tmp"/ico-48.png \
   "$art/png/hicolor/64.png" "$art/png/hicolor/128.png" "$art/png/hicolor/256.png" "$art/replayarcade.ico"
-sed '0,/<rect /{/<rect /d}' "$svg" > "$tmp/emblem.svg"
-emblem() { render "$tmp/emblem.svg" "$1" "$2"; }
+emblem() { render "$svg" "$1" "$2"; }
 
 # Text fitted into a box (the point size follows the box).
 text() { convert -background none -fill white -font "$font" -gravity center -size "$1x$2" label:"ReplayArcade" "$3"; }
