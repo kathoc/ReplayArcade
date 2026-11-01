@@ -71,6 +71,13 @@ struct RelativeInputs { const char* set; const char* names; };
 constexpr RelativeInputs kRelativeInputs[] = {
 #include "core/FbneoRelative.inc"
 };
+// The dead zone of an analog position axis end to end (FBNeo's libretro input plus the driver's own),
+// measured (tools/make_fbneo_analog_deadzones.py): the Sega flight sticks and wheels answer from a third
+// of the travel, not from kRelativeDeadzone. The frontend starts a controller stick past it.
+struct AnalogDeadzone { const char* set; const char* axis; float deadzone; };
+constexpr AnalogDeadzone kAnalogDeadzones[] = {
+#include "core/FbneoAnalogDeadzones.inc"
+};
 constexpr const char* kCompat = "fbneo-libretro@2b0c1c067+replayarcade-1";
 constexpr const char* kStateMagic = "fbneo";
 
@@ -227,9 +234,23 @@ void buildLayout(Host& h) {
       rn::InputLayout::Axis axis{"p" + std::to_string(d.port + 1) + ".axis." + axisName, h.descriptorNames[i], uint16_t(byte)};
       axis.relative = relative.count({d.port, h.descriptorNames[i]}) != 0;
       if (signedInputs.count({d.port, h.descriptorNames[i]})) axis.deadzone = kRelativeDeadzone;
+      const std::string p1Axis = "p1.axis." + axisName;  // the table has player 1's; player 2's are the same
+      for (const AnalogDeadzone& m : kAnalogDeadzones)
+        if (set == m.set && p1Axis == m.axis) axis.deadzone = m.deadzone;
       l.axes.push_back(axis);
       h.axes.push_back({d.port, d.index, d.id, byte});
     }
+  }
+  // A stick whose two axes are both positions (not a dial, not FBNeo's fake stick for the d-pad): a
+  // flight stick or a gun's aim, whose travel is a square ("square" hint: a round controller stick's
+  // diagonals reach both ends).
+  auto real = [](const rn::InputLayout::Axis& a) { return !a.relative && a.label.find("Fake") == std::string::npos; };
+  for (auto& a : l.axes) {
+    const size_t k = a.id.rfind('.');
+    const std::string name = a.id.substr(k + 1);  // x, y, rx, ry
+    std::string other = a.id.substr(0, k + 1) + (name.back() == 'x' ? name.substr(0, name.size() - 1) + "y" : name.substr(0, name.size() - 1) + "x");
+    for (auto& b : l.axes)
+      if (b.id == other && real(a) && real(b)) a.square = true;
   }
   for (auto& kv : buttons) {
     unsigned port = kv.first.first, id = kv.first.second;
