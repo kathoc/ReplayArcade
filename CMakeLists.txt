@@ -61,3 +61,5 @@ add_executable(fbneo_rewind_probe tools/fbneo_rewind_probe.cpp)
 target_link_libraries(fbneo_rewind_probe PRIVATE replayarcade_core)
 add_executable(thumb_bench tools/thumb_bench.cpp)  # the seek bar thumbnails, timed
 target_link_libraries(thumb_bench PRIVATE replayarcade_core)
+add_executable(frame_times tools/frame_times.cpp)  # per-frame record time, periodic stalls
+target_link_libraries(frame_times PRIVATE replayarcade_core)
