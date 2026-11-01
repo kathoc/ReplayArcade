@@ -1,11 +1,13 @@
 // Filmstrip thumbnails of the active take (Filmstrip.swift + TimelineActions.swift on macOS):
 //  * the cache and its policy are the shared core's rnf_thumb_cache (fixed grid of 5 s * 2^k,
 //    shared-prefix rebase on take switches); payloads are ThumbImage (128 pixels wide, display aspect, refcounted);
-//  * live capture: a picture the emulation shows anyway is kept when the grid wants it;
+//  * live capture: a picture the emulation shows anyway is kept when it is on the finest grid (also
+//    before the seek bar was laid out: rnf_thumb_cache_wants_live), so what was played is never
+//    rendered again;
 //  * background batches: the missing pictures are rendered from the take's checkpoints with one
 //    rn_renderer per picture (created on the frame thread, a few per frame), run on low-priority
-//    worker threads, and committed to the cache in one go (a reopened project shows its whole
-//    filmstrip at once).
+//    worker threads; each picture is shown as soon as it is done (the first version committed a
+//    batch in one go: nothing showed until its last picture).
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
@@ -13,8 +15,10 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -75,8 +79,14 @@ class ThumbnailManager : public FrameObserver {
 
   /// -no-thumbnails / perf runs: nothing is captured or rendered.
   bool enabled = true;
+  /// Pictures kept across sessions: the folder of their files, one per project ("" = none). A picture
+  /// is keyed by the input hash of the take up to its frame (rn_take_input_hashes), so a take edited
+  /// since (cut, re-recorded, another app) never gets a stale one; a reopened project's seek bar shows
+  /// at once what any earlier session showed.
+  std::string storeDir;
 
   void sessionInstalled(rn_session* s) override;
+  void sessionClosing(rn_session* s) override;
   void frameShown(rn_session* s, uint64_t frame) override;
   void takeCut(rn_session* s, uint64_t keepThrough) override;
 
@@ -101,14 +111,9 @@ class ThumbnailManager : public FrameObserver {
     std::vector<uint64_t> targets;
     uint64_t take = 0, generation = 0;
     size_t next = 0;
+    double started = 0;  // when it was planned (the log line at its end)
     std::atomic<int> pending{0};
     std::atomic<bool> cancelled{false}, failed{false};
-    std::mutex m;
-    std::vector<std::pair<uint64_t, ThumbImage*>> results;
-    ~Job() {
-      // A cancelled, partly admitted batch never reaches pending == 0.
-      for (auto& result : results) result.second->release();
-    }
   };
   struct Task {
     std::shared_ptr<Job> job;
@@ -117,7 +122,19 @@ class ThumbnailManager : public FrameObserver {
     bool nesPicture;
   };
   void syncTake(rn_session* s);
-  void reconcile(double now);
+  void reconcile(rn_session* s, double now);
+  // Kept pictures (storeDir): loaded with the session, used before rendering, saved when it closes
+  // and after a batch.
+  struct Stored {
+    uint64_t frame;
+    ThumbImage* image;  // retained
+  };
+  void loadStore(rn_session* s);
+  void saveStore(rn_session* s);
+  void clearStore();
+  std::string storeFile_;
+  std::map<uint64_t, Stored> stored_;  // input hash -> picture
+  bool storeDirty_ = false;
   void finishOne(const std::shared_ptr<Job>& j, uint64_t frame, ThumbImage* img, bool failed);
   void workerLoop();
   void resizeWorkers(unsigned count);
@@ -130,6 +147,11 @@ class ThumbnailManager : public FrameObserver {
   double nextReconcile_ = 0, retryAfter_ = 0;
   std::shared_ptr<Job> job_;
   std::vector<std::shared_ptr<Job>> finished_;  // guarded by qMutex_
+  struct Ready {
+    uint64_t take, generation, frame;
+    ThumbImage* image;  // retained
+  };
+  std::vector<Ready> ready_;  // rendered, not in the cache yet; guarded by qMutex_
   std::vector<std::thread> workers_;
   std::mutex qMutex_;
   std::condition_variable qCv_;

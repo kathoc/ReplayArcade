@@ -739,8 +739,7 @@ typedef enum rnf_menu_feature {
   RNF_MENU_FEATURE_CORE = 1u << 11,       /* System > Core (a second core is built in) */
   RNF_MENU_FEATURE_LAYOUT_TURBO = 1u << 12, /* Non-NES layout: global and per-button Turbo pages */
   RNF_MENU_FEATURE_BACKGROUND = 1u << 13,   /* System > More > Play in the background (RN_PRODUCT_FOCUS_PAUSE) */
-  RNF_MENU_FEATURE_MOUSE = 1u << 14,        /* Controls > More > Mouse (non-NES layout: the mouse plays analog controls) */
-  RNF_MENU_FEATURE_BEZEL = 1u << 15         /* Display > Picture Shape > Bezel (a product with a bezel) */
+  RNF_MENU_FEATURE_MOUSE = 1u << 14         /* Controls > More > Mouse (non-NES layout: the mouse plays analog controls) */
 } rnf_menu_feature;
 typedef enum rnf_menu_page_kind {
   RNF_MENU_PAGE_TILES = 0,    /* one row of large icon tiles (Quick Menu, Retry, Share, Game) */
@@ -1054,6 +1053,10 @@ void rnf_thumb_cache_reset(rnf_thumb_cache* c, uint64_t take);
 void rnf_thumb_cache_rebase(rnf_thumb_cache* c, uint64_t take, uint64_t keep_through);
 void rnf_thumb_cache_set_step(rnf_thumb_cache* c, double step);
 int rnf_thumb_cache_wants(rnf_thumb_cache* c, uint64_t frame, uint64_t take);
+/* Live capture (a picture the emulation shows anyway): the finest grid (RNF_THUMB_MIN_EXPONENT) and
+ * the start picture, whatever step the timeline shows now or whether it was laid out yet - every
+ * coarser grid is part of the finest, so no zoom level has to render what was played. */
+int rnf_thumb_cache_wants_live(rnf_thumb_cache* c, uint64_t frame, uint64_t take);
 int rnf_thumb_cache_insert(rnf_thumb_cache* c, uint64_t frame, uint64_t take, int has_generation, uint64_t generation,
                            void* payload);
 int rnf_thumb_cache_insert_batch(rnf_thumb_cache* c, const uint64_t* frames, void* const* payloads, size_t count,

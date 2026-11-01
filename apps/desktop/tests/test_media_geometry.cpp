@@ -8,6 +8,7 @@
 #include "replaynes/product.h"
 #include "library_thumbs.h"
 #include "png_writer.h"
+#include "qoi.h"
 #include "support/rn_test.h"
 #include "thumbnails.h"
 
@@ -47,42 +48,27 @@ TEST_CASE("media game rectangle follows rotation and pixel aspect") {
   CHECK_EQ(smaller.h, 720);
 }
 
-TEST_CASE("bezel: fitted into the screen, the game laid out in its window") {
-  // ReplayArcade's: 1586 x 992, the window at 321,98 944 x 739.
-  const BezelLayout deck = placeBezel(1280, 800, 1586, 992, 321, 98, 944, 739);  // Steam Deck, 16:10
-  CHECK_EQ(deck.w, 1279);
-  CHECK_EQ(deck.h, 800);
-  CHECK_EQ(deck.x, 1);
-  CHECK_EQ(deck.y, 0);
-  CHECK_EQ(deck.wx, 260);
-  CHECK_EQ(deck.wy, 79);
-  CHECK_EQ(deck.ww, 761);
-  CHECK_EQ(deck.wh, 596);
-  const BezelLayout wide = placeBezel(1920, 1080, 1586, 992, 321, 98, 944, 739);  // 16:9: bars left and right
-  CHECK_EQ(wide.w, 1727);
-  CHECK_EQ(wide.h, 1080);
-  CHECK_EQ(wide.x, 97);
-  CHECK_EQ(wide.wx, 446);
-  CHECK_EQ(wide.ww, 1028);
-  CHECK_EQ(wide.wh, 805);
-  CHECK_EQ(placeBezel(0, 800, 1586, 992, 321, 98, 944, 739).w, 0);
-  // The picture of the test above (320 x 224, pixels 4:3 wide) in the Deck's window: as large as the
-  // window allows, centred in it.
-  rn_media_info m{320, 224, 5963, 100, 2, 4, 3, 0};
-  rn_video_frame_info f{nullptr, 320, 224, 336};
-  const GameRect g = moveIntoBezel(computeGameRect(int(deck.ww), int(deck.wh), m, f, false, true, false), deck);
-  REQUIRE(g.visible);
-  CHECK_EQ(g.w, 761);
-  CHECK_EQ(g.h, 400);
-  CHECK_EQ(g.x, 260);
-  CHECK_EQ(g.y, 79 + 98);
-  CHECK(g.x >= deck.wx && g.x + g.w <= deck.wx + deck.ww && g.y >= deck.wy && g.y + g.h <= deck.wy + deck.wh);
-  // Integer scale inside the window: whole multiples that fit it.
-  const GameRect i = moveIntoBezel(computeGameRect(int(deck.ww), int(deck.wh), m, f, true, false, false), deck);
-  CHECK_EQ(i.w, 640);
-  CHECK_EQ(i.h, 448);
-  CHECK_EQ(i.x, 260 + 61);
-  CHECK_EQ(i.y, 79 + 74);
+TEST_CASE("QOI decoding, every chunk kind; cut short or not QOI is refused") {
+  // 3 x 2: RGBA, RUN (+1), DIFF, LUMA, INDEX (of the first colour), then the end marker.
+  const std::vector<uint8_t> qoi = {'q', 'o', 'i', 'f', 0, 0, 0, 3, 0, 0, 0, 2, 4, 0,
+                                    0xFF, 10, 20, 30, 40,  // QOI_OP_RGBA
+                                    0xC1,                  // QOI_OP_RUN: 2 pixels
+                                    0x76,                  // QOI_OP_DIFF: r +1, g -1, b 0
+                                    0xA5, 0xA5,            // QOI_OP_LUMA: g +5, r - g +2, b - g -3
+                                    0x0C,                  // QOI_OP_INDEX: (10*3 + 20*5 + 30*7 + 40*11) % 64
+                                    0, 0, 0, 0, 0, 0, 0, 1};
+  uint32_t w = 0, h = 0;
+  std::vector<uint8_t> px;
+  REQUIRE(decodeQoi(qoi.data(), qoi.size(), &w, &h, &px));
+  CHECK_EQ(w, 3u);
+  CHECK_EQ(h, 2u);
+  const std::vector<uint8_t> want = {10, 20, 30, 40, 10, 20, 30, 40, 10, 20, 30, 40,
+                                     11, 19, 30, 40, 18, 24, 32, 40, 10, 20, 30, 40};
+  CHECK(px == want);
+  CHECK_FALSE(decodeQoi(qoi.data(), qoi.size() - 10, &w, &h, &px));  // cut inside the chunks
+  std::vector<uint8_t> png = qoi;
+  png[0] = 0x89;
+  CHECK_FALSE(decodeQoi(png.data(), png.size(), &w, &h, &px));
 }
 
 TEST_CASE("media NES game rectangle equals legacy placement") {
