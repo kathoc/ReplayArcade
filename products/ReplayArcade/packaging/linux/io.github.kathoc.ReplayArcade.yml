@@ -14,6 +14,9 @@ finish-args:
   # Controllers: /dev/input and /dev/hidraw* (Steam Deck built-in controls), as ReplayNES.
   - --device=all
   - --socket=pulseaudio
+  # Steam's screen dimming / sleep held off while the app runs (game mode has no portal Inhibit;
+  # Steam serves this name itself): apps/linux/src/steam_inhibit.h.
+  - --talk-name=org.freedesktop.ScreenSaver
   - --filesystem=xdg-run/pipewire-0
   # ROM sets and projects: ~/Documents/ReplayArcade/{ROM,Projects}
   - --filesystem=xdg-documents/ReplayArcade:create
