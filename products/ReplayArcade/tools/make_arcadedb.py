@@ -14,6 +14,9 @@
 # Readings: arcadedb-ja.tsv > Wikidata kana name (P1814) > the title itself when written in kana >
 # the reading in Japanese Wikipedia's opening > the set's FBNeo title read as romaji (Daimakaimura) >
 # none; the last two only when they fit the kana of the title (kanji may stand for 1-4 kana each).
+# Then data/arcadedb-reading.tsv ("R<TAB>shown title<TAB>katakana reading") for every row whose reading
+# is still missing or not kana alone (digits, Latin letters: "1942" sorts as イチキューヨンニ): the
+# library sorts Japanese titles by reading (user decision 2026-11-01: every title, kana order).
 #
 # usage: python3 -I make_arcadedb.py [--check] [--report] <FBNeo src/burn/drv> <data dir>
 #   --check: write nothing, fail when data/arcadedb.tsv differs from what would be written
@@ -316,13 +319,35 @@ def main():
         if c[0] == "G" and len(c) >= 10:
             taken.update(c[9].split("|"))
     makers = sorted({g["maker"] for s, g in sets.items() if s not in taken and g["maker"]})
-    out = [base.rstrip("\n")]
+    readings = {}
+    reading_file = data / "arcadedb-reading.tsv"
+    if reading_file.exists():
+        for line in reading_file.read_text(encoding="utf-8").splitlines():
+            c = line.split("\t")
+            if c[0] == "R" and len(c) >= 3 and c[2]:
+                readings[c[1]] = c[2]
+
+    def reading_for(shown, r):
+        """The row's reading, kana alone (katakana and ー), else the table's for its shown title, else ""."""
+        k = katakana(DROP.sub("", unicodedata.normalize("NFKC", r)))
+        if k and re.fullmatch(r"[ァ-ヺー]+", k):
+            return k
+        return readings.get(shown, "")
+
+    lines = []
+    for line in base.rstrip("\n").splitlines():  # the hand-written rows get a reading the same way
+        c = line.split("\t")
+        if c[0] == "G" and len(c) >= 5:
+            c[4] = reading_for(c[3] or c[2], c[4])
+        lines.append("\t".join(c))
+    out = ["\n".join(lines)]
     out += [f"P\tm:{m}\t{m}\t{makers_ja.get(m, '')}" for m in makers]
     for s in sorted(sets):
         if s in taken:
             continue
         g = sets[s]
         t, r = ja.get(s, ("", ""))
+        r = reading_for(t or g["en"], r)
         out.append("\t".join(["G", "a-" + s, g["en"], t, r, "m:" + g["maker"] if g["maker"] else "", g["year"], g["genre"], "", s]))
     text = "\n".join(out) + "\n"
     target = data / "arcadedb.tsv"
@@ -337,6 +362,9 @@ def main():
         by = collections.Counter(sources[s] for s in ja if s not in taken)
         print("  Japanese title by source:", dict(by))
         print("  with a reading:", sum(1 for s in ja if s not in taken and ja[s][1]))
+    without = sorted({(c[3] or c[2]) for c in (l.split("\t") for l in out[1:] + lines) if c[0] == "G" and len(c) > 4 and not c[4]})
+    if without:
+        print(f"  {len(without)} shown titles without a reading (data/arcadedb-reading.tsv):", " / ".join(without[:20]))
 
 
 if __name__ == "__main__":
