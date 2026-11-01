@@ -679,7 +679,7 @@ final class GameRenderer {
 
     /// The blurred backdrop under the picture `r` (pixels): where it leaves the screen empty, the picture
     /// enlarged to cover the screen (centered, the part on screen drawn), blurred, dimmed - the rules of
-    /// apps/desktop/src/render/backdrop.h (kBackdropTexels 24, kBackdropDim 0.6). `g`: the picture in
+    /// apps/desktop/src/render/backdrop.h (kBackdropTexels 12, kBackdropDim 0.6). `g`: the picture in
     /// `texture` (its size and rotation; a rotated picture's source axes are the screen's swapped).
     private func drawBackdrop(_ enc: MTLRenderCommandEncoder, size: CGSize, picture r: CGRect, crop: Int, geometry g: PictureGeometry) {
         let sw = Double(size.width), sh = Double(size.height)
@@ -696,7 +696,7 @@ final class GameRenderer {
         var uvr = SIMD4<Float>(Float((Double(crop) + srcW * (1 - cu) / 2) / tw), Float((Double(crop) + srcH * (1 - cv) / 2) / th),
                                Float(srcW * cu / tw), Float(srcH * cv / th))
         var rotation = rot
-        let lod = max(0, log2(Double(max(g.width, g.height)) / 24)), texel = exp2(lod)
+        let lod = max(0, log2(Double(max(g.width, g.height)) / 12)), texel = exp2(lod)
         var p = SIMD4<Float>(Float(lod), 0.6, Float(texel / tw), Float(texel / th))
         enc.setRenderPipelineState(backdropPipeline)
         enc.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
