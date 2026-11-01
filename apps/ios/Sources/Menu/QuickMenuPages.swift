@@ -251,6 +251,9 @@ enum QuickMenuPages {
             toggle("par", "rectangle.arrowtriangle.2.outward", "8:7", String(localized: "Pixel aspect ratio of a CRT TV"), m.displayPAR87) { m.displayPAR87 = $0 },
             toggle("overscan", "crop", String(localized: "Hide Edges"), String(localized: "Hide 8 pixels at each edge (overscan)"), m.hideOverscan) { m.hideOverscan = $0 },
         ]
+        if Bezel.available {
+            items.append(toggle("bezel", "tv", L("Bezel"), L("A cabinet frame around horizontal games (landscape)"), m.displayBezel) { m.displayBezel = $0 })
+        }
         if UIDevice.current.userInterfaceIdiom == .phone {
             items.append(choice("orientation", "rectangle.portrait.rotate", L("Orientation"),
                                 L("Auto follows the iPhone · Portrait / Landscape lock the screen"),

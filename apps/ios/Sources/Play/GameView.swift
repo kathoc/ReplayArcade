@@ -120,6 +120,9 @@ final class GameLayerView: UIView {
 /// (`onZone`, 2026-10-30; the picture is no longer tapped to pause: the pause button is above MENU).
 final class PlaySurfaceView: UIView {
     let game: GameLayerView
+    /// The product's bezel (Bezel), between the picture and the controls; never takes touches.
+    let bezel = UIImageView(image: Bezel.image)
+    var bezelOn = false { didSet { if bezelOn != oldValue { setNeedsLayout() } } }
     let controls = TouchControlsView()
     let extras = TouchExtrasView()
     var options = TouchLayout.Options() { didSet { if options != oldValue { setNeedsLayout() } } }
@@ -136,7 +139,13 @@ final class PlaySurfaceView: UIView {
     /// control took: down at the touch, up at its lift.
     var onZone: ((TouchButton, Bool) -> Void)?
     /// The display options the renderer places the picture with (the zones follow the picture).
-    var displayOptions = DisplayOptions() { didSet { if displayOptions != oldValue, let l = lastLayout { updateProbe(l) } } }
+    var displayOptions = DisplayOptions() {
+        didSet {
+            guard displayOptions != oldValue else { return }
+            if let l = lastLayout { updateProbe(l) }
+            if bezelOn { setNeedsLayout() }  // the picture's shape moves the bezel
+        }
+    }
     private var zoneTouches: [ObjectIdentifier: TouchButton] = [:]
     private var lastLayout: TouchLayout?
     /// TestHooks -logTouch: an accessibility element for the UI tests (ReplayNESUITests): its label
@@ -150,6 +159,10 @@ final class PlaySurfaceView: UIView {
         // .bb-root { background: var(--bb-bg) }
         backgroundColor = BBColor.bg
         addSubview(game)
+        bezel.isUserInteractionEnabled = false
+        bezel.contentMode = .scaleToFill
+        bezel.isHidden = true
+        addSubview(bezel)
         addSubview(controls)
         addSubview(extras)
         if UserDefaults.standard.bool(forKey: "logTouch") {
@@ -249,6 +262,7 @@ final class PlaySurfaceView: UIView {
         let l = TouchLayout.make(size: bounds.size, safe: TouchInsets(top: s.top, left: s.left, bottom: s.bottom, right: s.right),
                                  options: options)
         game.frame = l.gameArea
+        layoutBezel(l)
         controls.frame = bounds
         extras.frame = bounds
         if let old = lastLayout, old.landscape != l.landscape { extras.releaseAll() }
@@ -267,9 +281,28 @@ final class PlaySurfaceView: UIView {
     }
 }
 
+extension PlaySurfaceView {
+    /// Landscape, a horizontal game, the setting on: the bezel's window around the picture as the
+    /// renderer places it in the game area (GameRenderer.viewport, bottom-left based pixels).
+    func layoutBezel(_ l: TouchLayout) {
+        let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        let px = CGSize(width: l.gameArea.width * scale, height: l.gameArea.height * scale)
+        let (r, _) = GameRenderer.viewport(drawableSize: px, options: displayOptions)
+        let picture = CGRect(x: l.gameArea.minX + r.minX / scale, y: l.gameArea.minY + (px.height - r.maxY) / scale,
+                             width: r.width / scale, height: r.height / scale)
+        if bezelOn, l.landscape, picture.width >= picture.height, let f = Bezel.frame(around: picture) {
+            bezel.frame = f
+            bezel.isHidden = false
+        } else {
+            bezel.isHidden = true
+        }
+    }
+}
+
 struct PlaySurface: UIViewRepresentable {
     let model: AppModel
     var displayOptions: DisplayOptions
+    var bezel = false
     var touchOptions: TouchLayout.Options
     var controlsVisible: Bool
     var opacity: Double
@@ -303,6 +336,7 @@ struct PlaySurface: UIViewRepresentable {
     private func update(_ v: PlaySurfaceView) {
         v.game.setOptions(displayOptions)
         v.displayOptions = displayOptions
+        v.bezelOn = bezel
         v.options = touchOptions
         v.controls.setWays(touchOptions.ways)
         v.controls.setHomeGain(x: CGFloat(followX), y: CGFloat(followY))
