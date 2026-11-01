@@ -24,6 +24,7 @@ int main(int argc, char** argv) {
   rn_session_options opt;
   rn_session_options_init(&opt);
   opt.core = RN_CORE_EXTERNAL;
+  if (std::getenv("FRAME_TIMES_NO_CHECKPOINTS")) opt.dense_interval = opt.sparse_interval = 1u << 30;  // the game alone
   rn_session* s = nullptr;
   if (rn_session_new(argv[1], dir, &opt, &s) != RN_OK) return std::fprintf(stderr, "%s\n", rn_last_error()), 1;
   if (dir && rn_session_save(s) != RN_OK) return std::fprintf(stderr, "save: %s\n", rn_last_error()), 1;
@@ -36,7 +37,7 @@ int main(int argc, char** argv) {
     ms[f] = std::chrono::duration<double, std::milli>(clock::now() - a).count();
     if (dir && f % 300 == 299) {
       a = clock::now();
-      rn_session_autosave(s);
+      rn_session_autosave_background(s);  // as the app does while playing
       saveMs.push_back(std::chrono::duration<double, std::milli>(clock::now() - a).count());
     }
   }
@@ -55,6 +56,12 @@ int main(int argc, char** argv) {
   int shown = 0;
   for (auto it = gaps.begin(); it != gaps.end() && shown < 8; ++it, ++shown) std::printf("  gap %llu frames: %d times\n", (unsigned long long)it->first, it->second);
   for (size_t i = 0; i < slow.size() && i < 12; ++i) std::printf("  frame %llu: %.2f ms\n", (unsigned long long)slow[i], ms[slow[i]]);
+  std::vector<uint64_t> worst(frames);
+  for (uint64_t f = 0; f < frames; ++f) worst[f] = f;
+  std::sort(worst.begin(), worst.end(), [&](uint64_t a, uint64_t b) { return ms[a] > ms[b]; });
+  std::printf("worst:");
+  for (size_t i = 0; i < worst.size() && i < 8; ++i) std::printf(" %llu (%.1f ms)", (unsigned long long)worst[i], ms[worst[i]]);
+  std::printf("\n");
   if (!saveMs.empty()) {
     std::sort(saveMs.begin(), saveMs.end());
     std::printf("autosave: %zu times, median %.1f ms, max %.1f ms\n", saveMs.size(), saveMs[saveMs.size() / 2], saveMs.back());
