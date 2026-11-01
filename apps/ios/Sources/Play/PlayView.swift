@@ -22,7 +22,7 @@ struct PlayView: View {
         // then laid out for - and kept, rotation after rotation.
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                PlaySurface(model: model, displayOptions: model.displayOptions, bezel: model.displayBezel, touchOptions: model.touchOptions,
+                PlaySurface(model: model, displayOptions: model.displayOptions, touchOptions: model.touchOptions,
                             controlsVisible: model.touchControlsVisible && !model.quickMenu.isOpen,
                             opacity: model.touchOpacity, haptics: model.touchHaptics,
                             followX: model.touchFollowX, followY: model.touchFollowY)
