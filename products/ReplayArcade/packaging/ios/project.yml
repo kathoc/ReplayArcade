@@ -36,8 +36,6 @@ targets:
       path: Config/Info.plist
       properties:
         CFBundleDisplayName: ReplayArcade
-        # The bezel (Assets.xcassets/Bezel: data/bezel/bezel.png): its window in the image's pixels.
-        RNBezelWindow: "321 98 944 739"
         NSHumanReadableCopyright: "ReplayArcade - personal build. Includes ReplayNES (GPL-2.0-or-later) and FinalBurn Neo (non-commercial licence)."
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: io.github.kathoc.replayarcade.arcrec
