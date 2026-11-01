@@ -53,5 +53,9 @@ add_executable(project_roundtrip tools/project_roundtrip.cpp)
 target_link_libraries(project_roundtrip PRIVATE replayarcade_core)
 add_executable(fbneo_bisect tools/fbneo_bisect.cpp)
 target_link_libraries(fbneo_bisect PRIVATE replayarcade_core ${CMAKE_DL_LIBS})
+# How a game responds to an analog axis: dead zone end to end and steps (tools/analog_response.cpp); not a test.
+add_executable(analog_response tools/analog_response.cpp)
+target_link_libraries(analog_response PRIVATE replayarcade_core)
+target_include_directories(analog_response PRIVATE ${REPLAYNES_DIR}/apps/desktop/src)  # stick_shape.h
 add_executable(fbneo_rewind_probe tools/fbneo_rewind_probe.cpp)
 target_link_libraries(fbneo_rewind_probe PRIVATE replayarcade_core)

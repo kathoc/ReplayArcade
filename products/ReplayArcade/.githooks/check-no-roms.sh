@@ -7,7 +7,8 @@ rev="${1:-}"
 bad=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
-  case "${f,,}" in
+  # Lower case by tr: macOS's /bin/bash (3.2) has no ${f,,}.
+  case "$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')" in
     *.zip|*.7z|*.rar|*.chd|*.nes|*.fds|*.unf|*.bin|*.rom|*.fs|*.nv|*.arcrec/*|roms/*|*/roms/*|rom/*|*/rom/*)
       echo "refused (game data): $f" >&2; bad=1; continue ;;
   esac
