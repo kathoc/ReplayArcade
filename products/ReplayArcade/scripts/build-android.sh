@@ -13,6 +13,7 @@ TASK="assemble$(tr '[:lower:]' '[:upper:]' <<< "${VARIANT:0:1}")${VARIANT:1}"
 # A build directory of its own: the ReplayNES APK and this one do not share CMake caches.
 (cd "$RN/apps/android" && gradle --no-daemon "$TASK" -PrnProductFile="$ROOT/cmake/product.cmake" \
   -PrnApplicationId=io.github.kathoc.replayarcade -PrnAppName=ReplayArcade \
+  -PrnIcon="$ROOT/packaging/linux/artwork/png/hicolor/512.png" \
   -Dorg.gradle.project.buildDir="$ROOT/build/android/gradle")
 mkdir -p "$ROOT/build/android"
 cp "$(ls "$ROOT/build/android/gradle"/outputs/apk/"$VARIANT"/*.apk | head -1)" "$ROOT/build/android/ReplayArcade-$VARIANT.apk"
