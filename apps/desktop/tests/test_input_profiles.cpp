@@ -51,12 +51,9 @@ struct Devices {
     ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
   }
 };
-void connect(rnl::InputRouter& router, SDL_JoystickID id, bool added = true) {
-  SDL_Event e{};
-  e.type = added ? SDL_EVENT_GAMEPAD_ADDED : SDL_EVENT_GAMEPAD_REMOVED;
-  e.gdevice.which = id;
-  router.handleEvent(e, 1.0, false);
-}
+// A controller connected / disconnected: the router sees it at its next syncPads (every frame in the
+// app), not from the event. Disconnecting: call after the device is gone (Devices::remove).
+void connect(rnl::InputRouter& router, SDL_JoystickID, bool = true) { router.syncPads(); }
 std::set<std::string> pairs(rn_input* input) {
   const auto json = take(rn_input_save_json(input));
   rnf_input_config* config = nullptr;
@@ -151,6 +148,7 @@ TEST_CASE("P mixed slots edit only their kind and use P1 keyboard and turbo sett
   CHECK(pairs(router.input()).count("gc0:face.south=p1.b1"));
   router.setKindOverride(0, rnl::KindOverride::automatic);
   CHECK(router.deviceKind(0) == rnl::DeviceKind::stick);
+  devices.remove(stick);
   connect(router, stick, false);
   CHECK(router.deviceKind(0) == rnl::DeviceKind::pad);
 }
@@ -297,6 +295,7 @@ TEST_CASE("P SDL stick triggers hold transport and LB LT chord leaves RB as a ga
   CHECK_FALSE(router.stepRepeatHeld());
   button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, true, 8.0);
   CHECK(router.stepRepeatHeld());
+  devices.remove(id);
   connect(router, id, false);
   CHECK_FALSE(router.stepRepeatHeld());
 }
@@ -530,6 +529,76 @@ TEST_CASE("P the mouse is off by default; a pad or a game key puts its stick bac
   CHECK_EQ(axisAt(r, 9), 0);
 }
 
+TEST_CASE("P stick shape: rest, past the core's dead zone, square travel for a two-axis stick") {
+  using rnl::shapeStick;
+  using rnl::StickShape;
+  const StickShape off{};
+  auto pr = shapeStick(0.03f, -0.5f, off);
+  CHECK_EQ(pr.first, 0.03f);  // no hint: the raw position
+  CHECK_EQ(pr.second, -0.5f);
+  const StickShape round{true, false, 0.334f}, square{true, true, 0.334f};
+  pr = shapeStick(0.05f, 0.02f, round);  // inside the rest radius: the centre
+  CHECK_EQ(pr.first, 0.f);
+  CHECK_EQ(pr.second, 0.f);
+  pr = shapeStick(0.08f, 0.f, round);  // just out of it: just past the core's dead zone, nothing on y
+  CHECK(pr.first > 0.334f);
+  CHECK(pr.first < 0.36f);
+  CHECK_EQ(pr.second, 0.f);
+  pr = shapeStick(1.f, 0.01f, square);  // straight right with a little noise on y
+  CHECK(std::fabs(pr.first - 1.f) < 1e-4f);
+  CHECK_EQ(pr.second, 0.f);
+  const float d = std::sqrt(0.5f);
+  pr = shapeStick(d, -d, square);  // a round stick's full diagonal reaches the square's corner
+  CHECK(std::fabs(pr.first - 1.f) < 1e-4f);
+  CHECK(std::fabs(pr.second + 1.f) < 1e-4f);
+  pr = shapeStick(d, -d, round);  // without the hint it stays on the circle
+  CHECK(pr.first < 0.95f);
+  // Smooth: along a direction the value never goes back and steps by little.
+  float last = 0;
+  for (int i = 7; i <= 100; ++i) {
+    const float v = shapeStick(i / 100.f * 0.8f, i / 100.f * 0.6f, square).first;
+    CHECK(v >= last);
+    if (last > 0) CHECK(v - last < 0.02f);
+    last = v;
+  }
+}
+
+TEST_CASE("P a controller's left stick on a flight stick gets the shape the layout's hints ask for") {
+  const char* squareLayout = R"({"name":"fbneo:sq","recordBytes":11,"buttons":[{"id":"p1.b1","byte":3,"bit":0},{"id":"p1.coin","byte":3,"bit":2},{"id":"p1.start","byte":3,"bit":3},{"id":"p1.up","byte":4,"bit":0},{"id":"p1.down","byte":4,"bit":1},{"id":"p1.left","byte":4,"bit":2},{"id":"p1.right","byte":4,"bit":3}],"axes":[{"id":"p1.axis.x","byte":5,"deadzone":0.334,"square":true},{"id":"p1.axis.y","byte":7,"deadzone":0.334,"square":true}]})";
+  Files files;
+  Devices devices;
+  rnl::Settings settings;
+  rnl::InputRouter router((files.root / "bindings.json").string(), &settings);
+  router.setLayout(squareLayout);
+  const auto id = devices.add("Pad", 0x0101);
+  connect(router, id);
+  auto move = [&](int axis, int16_t v, double t) {
+    SDL_Event a{};
+    a.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+    a.gaxis.which = id;
+    a.gaxis.axis = Uint8(axis);
+    a.gaxis.value = v;
+    router.handleEvent(a, t, false);
+  };
+  // A full diagonal (SDL: y down) reaches both ends.
+  move(SDL_GAMEPAD_AXIS_LEFTX, 23170, 1);
+  move(SDL_GAMEPAD_AXIS_LEFTY, -23170, 1.01);
+  rn_input_record r = sample(router, 0);
+  CHECK(std::abs(std::abs(axisAt(r, 5)) - 32767) <= 2);
+  CHECK(std::abs(std::abs(axisAt(r, 7)) - 32767) <= 2);
+  // A little push right: just past the game's dead zone (the smallest motion moves it).
+  move(SDL_GAMEPAD_AXIS_LEFTY, 0, 2);
+  move(SDL_GAMEPAD_AXIS_LEFTX, 3000, 2.01);
+  r = sample(router, 1);
+  const int x = std::abs(axisAt(r, 5));
+  CHECK(x > int(0.334f * 32767));
+  CHECK(x < int(0.37f * 32767));
+  CHECK_EQ(axisAt(r, 7), 0);
+  // At rest (drift): nothing.
+  move(SDL_GAMEPAD_AXIS_LEFTX, 1200, 3);
+  CHECK_EQ(axisAt(sample(router, 2), 5), 0);
+}
+
 TEST_CASE("P players: a controller connected takes player 1 from the Steam Deck's own controls, which get it back") {
   Files files;
   Devices devices;
@@ -544,8 +613,8 @@ TEST_CASE("P players: a controller connected takes player 1 from the Steam Deck'
     return id;
   };
   auto unplug = [&](SDL_JoystickID id) {
-    connect(router, id, false);
     devices.remove(id);
+    connect(router, id, false);
   };
   const auto deck = plug("Steam Deck", 0x1205, 0x28de);
   CHECK_EQ(players(), std::string("Steam Deck|-|-|-"));
@@ -598,6 +667,150 @@ TEST_CASE("P players: a controller connected takes player 1 from the Steam Deck'
   (void)a2;
   (void)b3;
   (void)c3;
+}
+
+TEST_CASE("P Steam Input: players are Steam's virtual pads by number, without gaps, whatever came and went before") {
+  Files files;
+  Devices devices;
+  rnl::Settings settings;
+  rnl::InputRouter router((files.root / "bindings.json").string(), &settings);
+  router.setLayout(kFlightLayout);
+  // Steam's pads by their number (SDL names every pad of one GUID alike), the others by name.
+  auto name = [&](int s) {
+    const rnl::PadInfo& p = router.pad(s);
+    return !p.pad ? std::string("-") : p.steamSlot >= 0 ? "pad " + std::to_string(p.steamSlot) : p.name;
+  };
+  auto players = [&] { return name(0) + "|" + name(1) + "|" + name(2) + "|" + name(3) + (router.standbyConnected() ? " (waiting)" : ""); };
+  // A Steam virtual gamepad: 28de:11ff, SDL's player index = Steam's number ("Microsoft X-Box 360 pad N").
+  auto steamPad = [&](int n) {
+    const std::string label = "pad " + std::to_string(n);
+    const auto id = devices.add(label.c_str(), 0x11ff, 0x28de);
+    SDL_Joystick* j = SDL_OpenJoystick(id);
+    REQUIRE(j);
+    REQUIRE(SDL_SetJoystickPlayerIndex(j, n));
+    SDL_CloseJoystick(j);
+    connect(router, id);
+    return id;
+  };
+  auto unplug = [&](SDL_JoystickID id) {
+    devices.remove(id);
+    connect(router, id, false);
+  };
+  auto press = [&](SDL_JoystickID id, double t) {
+    SDL_Event e{};
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.which = id;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_SOUTH;
+    e.gbutton.down = true;
+    router.handleEvent(e, t, false);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.down = false;
+    router.handleEvent(e, t, false);
+  };
+  // Started with two (the order SDL reports them in does not matter).
+  const auto p1 = steamPad(1);
+  const auto p0 = steamPad(0);
+  CHECK_EQ(players(), std::string("pad 0|pad 1|-|-"));
+  // The Steam Deck, 2026-11-01: pad 0 (an 8BitDo over Bluetooth) left when it was plugged in by USB;
+  // Steam made pad 2 for it. Steam's players: pad 1 and pad 2 - nobody is missing player 1.
+  unplug(p0);
+  CHECK_EQ(players(), std::string("pad 1|-|-|-"));
+  const auto p2 = steamPad(2);
+  CHECK_EQ(players(), std::string("pad 1|pad 2|-|-"));
+  // A press is its player's: pad 1 is player 1, pad 2 player 2.
+  press(p1, 3);
+  press(p2, 4);
+  CHECK_EQ(router.pad(0).lastPress, 3.0);
+  CHECK_EQ(router.pad(1).lastPress, 4.0);
+  // Numbers beyond the four players count by their order too.
+  const auto p7 = steamPad(7);
+  const auto p5 = steamPad(5);
+  CHECK_EQ(players(), std::string("pad 1|pad 2|pad 5|pad 7"));
+  // One leaves from the middle: the later ones move up.
+  unplug(p2);
+  CHECK_EQ(players(), std::string("pad 1|pad 5|pad 7|-"));
+  // A lower number comes back: it is player 1, the others move down.
+  const auto p0b = steamPad(0);
+  CHECK_EQ(players(), std::string("pad 0|pad 1|pad 5|pad 7"));
+  unplug(p7);
+  unplug(p5);
+  // A controller outside Steam Input (one Steam does not hide) never takes a Steam player's place.
+  const auto other = devices.add("Pad X", 0x0b00, 0x045e);
+  connect(router, other);
+  CHECK_EQ(players(), std::string("pad 0|pad 1|Pad X|-"));
+  unplug(p0b);
+  CHECK_EQ(players(), std::string("pad 1|-|Pad X|-"));
+  const auto p3 = steamPad(3);
+  CHECK_EQ(players(), std::string("pad 1|pad 3|Pad X|-"));
+  const auto p4 = steamPad(4);  // Steam's third player: player 3; the other one moves after Steam's
+  CHECK_EQ(players(), std::string("pad 1|pad 3|pad 4|Pad X"));
+  const auto p2b = steamPad(2);  // four already: Steam's pads first, by number; the other one moves out
+  CHECK_EQ(players(), std::string("pad 1|pad 2|pad 3|pad 4"));
+  (void)p2b;
+  (void)p3;
+  (void)p4;
+}
+
+TEST_CASE("P Player Order: each controller's press names the next player, the press reaches nothing else") {
+  Files files;
+  Devices devices;
+  rnl::Settings settings;
+  rnl::InputRouter router((files.root / "bindings.json").string(), &settings);
+  router.setLayout(kFlightLayout);
+  auto name = [&](int s) { return router.pad(s).pad ? router.pad(s).name : std::string("-"); };
+  auto players = [&] { return name(0) + "|" + name(1) + "|" + name(2) + "|" + name(3) + (router.standbyConnected() ? " (deck waiting)" : ""); };
+  auto plug = [&](const char* n, unsigned product, unsigned vendor) {
+    auto id = devices.add(n, product, vendor);
+    connect(router, id);
+    return id;
+  };
+  auto button = [&](SDL_JoystickID id, bool down) {
+    SDL_Event e{};
+    e.type = down ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.which = id;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_SOUTH;
+    e.gbutton.down = down;
+    CHECK(router.playerOrderOwns(e));
+    router.handleEvent(e, 5, false);
+  };
+  const auto deck = plug("Steam Deck", 0x1205, 0x28de);
+  const auto a = plug("8BitDo Pro 3", 0x6009, 0x2dc8);
+  const auto b = plug("Pad B", 0x0b00, 0x045e);
+  CHECK_EQ(players(), std::string("8BitDo Pro 3|Pad B|-|- (deck waiting)"));
+  router.beginPlayerOrder();
+  CHECK(router.playerOrderActive());
+  CHECK_EQ(router.playerOrderNext(), 0);
+  // Player 2's controller pressed first: player 1, the former player 1 takes its place.
+  button(b, true);
+  CHECK_EQ(players(), std::string("Pad B|8BitDo Pro 3|-|- (deck waiting)"));
+  button(b, false);
+  button(b, true);  // pressed again: still player 1, nothing moves
+  button(b, false);
+  CHECK_EQ(router.playerOrderNext(), 1);
+  // The waiting built-in controls: player 2; the controller there moves to the first free player.
+  button(deck, true);
+  CHECK_EQ(players(), std::string("Pad B|Steam Deck|8BitDo Pro 3|-"));
+  // The last one: already where it goes; every controller has a player, the order ends.
+  button(a, true);
+  CHECK_FALSE(router.playerOrderActive());
+  CHECK_EQ(players(), std::string("Pad B|Steam Deck|8BitDo Pro 3|-"));
+  // The releases of its presses are still the order's (after it ended), not the game's.
+  button(deck, false);
+  button(a, false);
+  for (int s = 0; s < 4; ++s) CHECK(router.pad(s).lastPress < 0);
+  CHECK(router.pressed().empty());
+  // Ended early (Esc): the players stay as they are; presses are the game's again.
+  router.beginPlayerOrder();
+  router.endPlayerOrder();
+  CHECK_FALSE(router.playerOrderActive());
+  SDL_Event e{};
+  e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+  e.gbutton.which = a;
+  e.gbutton.button = SDL_GAMEPAD_BUTTON_SOUTH;
+  e.gbutton.down = true;
+  CHECK_FALSE(router.playerOrderOwns(e));
+  router.handleEvent(e, 6, false);
+  CHECK_EQ(router.pad(2).lastPress, 6.0);
 }
 
 TEST_CASE("P the paused seek bar: L / R switch the practice section on a pad and on a stick, no repeats") {

@@ -180,6 +180,13 @@ void App::handleEvent(const SDL_Event& e, double now) {
   // Another window in front (RN_PRODUCT_FOCUS_PAUSE): unless Play in the Background is on (Settings > System > More), the
   // game pauses and the controllers reach neither the game nor the menus until the window is back.
   // The game stays paused then (play resumes when the player says so).
+  if (input_->debugInput()) {
+    if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST || e.type == SDL_EVENT_WINDOW_FOCUS_GAINED)
+      std::fprintf(stderr, "input: window focus %s\n", e.type == SDL_EVENT_WINDOW_FOCUS_GAINED ? "gained" : "lost");
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
+      std::fprintf(stderr, "input: SDL gamepad %u button %d down (focused %d, play in background %d)\n", unsigned(e.gbutton.which),
+                   int(e.gbutton.button), int(focused_), int(settings_.playInBackground));
+  }
   if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
     focused_ = false;
     if (RN_PRODUCT_FOCUS_PAUSE && !settings_.playInBackground) {
@@ -194,6 +201,18 @@ void App::handleEvent(const SDL_Event& e, double now) {
        e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN ||
        e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_UP))
     return;
+  // Player Order (Settings > Controls): a controller's press names its player and reaches neither the
+  // menus nor the game; Esc ends it.
+  if (input_->playerOrderOwns(e)) {
+    const bool was = input_->playerOrderActive();
+    input_->handleEvent(e, now, false);
+    if (was && !input_->playerOrderActive()) ui_->notice(TR("Players are set"));
+    return;
+  }
+  if (input_->playerOrderActive() && e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_ESCAPE) {
+    input_->endPlayerOrder();
+    return;
+  }
   // A text field with an on-screen keyboard takes the controller and taps on the keyboard
   // (ui_osk.cpp); PadNavFeed still follows the pads (it feeds ImGui nothing meanwhile).
   bool textEntry = ui_->textEntryEvent(e, now);
@@ -561,6 +580,7 @@ int App::run(const AppOptions& opt) {
     // it): the no-signal snow animates and the power-on hiss plays (display / audio output only).
     emu_->setCrtDisplay(renderer_->postProcess().crt && renderer_->postProcessStatus().crtAvailable);
     for (int i = 1; i < frames; ++i) {
+      input_->syncPads();
       SDL_Event e;
       while (SDL_PollEvent(&e)) handleEvent(e, nowSeconds());
       input_->tick(nowSeconds());
@@ -589,6 +609,10 @@ int App::run(const AppOptions& opt) {
     rec.frames = frames;
     rec.refresh = sched_.refresh();
     rec.sample = nowSeconds();
+    // The controllers read once more here (the pad thread's last read is up to 1 ms old): what the
+    // kernel has at the sample point reaches this frame.
+    SDL_UpdateJoysticks();
+    input_->syncPads();  // which controller is which player: what is connected now, every frame
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, rec.sample);
     input_->tick(nowSeconds());  // L or R held alone past the chord window fires now

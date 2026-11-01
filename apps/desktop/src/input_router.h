@@ -29,6 +29,7 @@
 
 #include "replaynes/frontend.h"
 #include "replaynes/replaynes.h"
+#include "stick_shape.h"
 #include "ui_logic.h"
 
 namespace rnl {
@@ -51,7 +52,12 @@ struct PadInfo {
   // The machine's own controls (a Steam Deck's, a Steam Controller): player 1 while no other controller
   // is; waiting aside (standby) while one is (InputRouter::attach).
   bool builtIn = false;
-  std::string key;          // this controller's identity across a disconnect (serial, or guid + name)
+  // Steam's number N of a Steam virtual gamepad ("Microsoft X-Box 360 pad N" on Linux, SDL's player
+  // index), -1 otherwise. Steam decides who is which player there (the user reorders them in Steam):
+  // its pads by number, without gaps (InputRouter::arrangeSteamPads).
+  int steamSlot = -1;
+  Uint64 steamHandle = 0;  // Steam's controller behind it now (SteamVirtualGamepadInfo), 0 when none
+  std::string key;         // this controller's identity across a disconnect (serial, or guid + name)
   double lastPress = -1e9;  // CLOCK_MONOTONIC s of its last button (the player indicator)
 };
 
@@ -125,6 +131,10 @@ class InputRouter {
   void handleEvent(const SDL_Event& e, double evTime, bool keyboardForUI);
   /// Every frame after the events (the chord detector's 100 ms window). now: CLOCK_MONOTONIC s.
   void tick(double now);
+  /// Every frame, before its events: the controllers connected now (SDL_GetGamepads), and for Steam's
+  /// virtual pads their numbers and the controllers behind them - the players follow what is, not the
+  /// connect / disconnect events (InputRouter::arrangeSteamPads).
+  void syncPads();
 
   /// The mouse as game input ("ms:" ids, frontend input.cpp): the game binds it (a game with analog
   /// controls). While captured (the app: playing, not paused, window focused; SDL relative mode)
@@ -159,6 +169,15 @@ class InputRouter {
   int playersVersion() const { return playersVersion_; }
   double playersChanged() const { return playersChanged_; }
   int connectedCount() const;
+  /// Player Order (Settings > Controls; not under Steam Input, where Steam orders the players): the
+  /// controller whose button is pressed next becomes the next player, 1 first, and its press does
+  /// nothing else. Ends when every connected controller has a player, or by endPlayerOrder (Esc).
+  void beginPlayerOrder();
+  void endPlayerOrder();
+  bool playerOrderActive() const { return orderNext_ >= 0; }
+  int playerOrderNext() const { return orderNext_; }
+  /// A gamepad button the Player Order takes (from beginPlayerOrder to that button's release).
+  bool playerOrderOwns(const SDL_Event& e) const;
   /// Slot of the controller used last (-1: none yet); its family picks the UI's button prompts.
   int lastSlot() const { return lastSlot_; }
   const std::set<std::string>& pressed() const { return pressed_; }
@@ -223,6 +242,9 @@ class InputRouter {
   int slotOf(SDL_JoystickID id) const;
   void attach(SDL_JoystickID id);
   void detach(SDL_JoystickID id);
+  void describe(PadInfo& p);              // name, identity, kind and labels, as SDL tells them now
+  void steamInfoChanged(SDL_JoystickID id);  // Steam moved another controller behind this virtual pad
+  void arrangeSteamPads();                   // Steam's virtual pads -> players 1...n by their numbers
 
   void mouseEvent(const SDL_Event& e, double t);
   void setMouseAxes();
@@ -237,6 +259,17 @@ class InputRouter {
   float mouseX_ = 0, mouseY_ = 0, mouseLever_ = 0, mouseDx_ = 0, mouseDy_ = 0;
   int wheelPress_ = 0;
   float stickDeadzone_ = 0, dialDeadzone_ = 0;
+  // Controller sticks driving an analog axis with hints ("gc0:lstick" ...): how their position is
+  // shaped for the game (stick_shape.h). Rebuilt with the bindings.
+  std::map<std::string, StickShape> stickShape_;
+  // Diagnostics: a file "debug-input" next to the bindings (or <PREFIX>DEBUG_INPUT set) logs each pad
+  // press / release, where it went and the game bindings of the controller slots (stderr).
+  bool debugInput_ = false;
+
+ public:
+  bool debugInput() const { return debugInput_; }
+
+ private:
   int editingSlot_ = -1;
   std::map<std::string, KindOverride> kindOverrides_;
   std::string file_;
@@ -247,11 +280,16 @@ class InputRouter {
   Settings* settings_;
   PadInfo pads_[kSlots];
   PadInfo standby_;                         // the built-in controls while another controller is player 1
+  std::vector<PadInfo> overflow_;           // connected, no player (more than four; arrangeSteamPads)
   std::map<std::string, int> formerSlot_;   // PadInfo::key -> the player (slot 1..3) it last was
   int playersVersion_ = 0;
   double playersChanged_ = -1e9;
   void releaseSlot(int s);                  // a slot's held inputs and per-slot state let go
   void playersMoved();
+  void playerOrderPress(SDL_JoystickID id);
+  int orderNext_ = -1;                      // Player Order: the player the next press names (-1: off)
+  std::set<SDL_JoystickID> orderNamed_;     // controllers given a player in this Player Order
+  std::set<std::pair<SDL_JoystickID, int>> orderHeld_;  // buttons pressed in it: their releases are its too
   bool ui_ = false;
   int lastSlot_ = -1;
   bool pausedStepMode_ = false;

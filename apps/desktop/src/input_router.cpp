@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "input_router.h"
+#include "replaynes/product.h"
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +33,8 @@ std::string slotPrefix(int slot) { return "gc" + std::to_string(slot) + ":"; }
 InputRouter::InputRouter(std::string bindingsFile, Settings* settings)
     : in_(rn_input_new()), file_(std::move(bindingsFile)), baseFile_(file_), settings_(settings), chord_(rnf_chord_new(0)),
       undoChord_(rnf_chord_new(0)) {
+  debugInput_ = std::getenv(productEnvName("DEBUG_INPUT").c_str()) ||
+                std::filesystem::exists(std::filesystem::path(baseFile_).parent_path() / "debug-input");
   profiles_[0] = rn_input_new();
   profiles_[1] = rn_input_new();
   loadKindOverrides();
@@ -148,15 +152,39 @@ void InputRouter::rebuildRuntime() {
     } else if (k == primary) bindings.push(b);
   }
   runtime.set("bindings", bindings);
+  if (debugInput_) {
+    std::string pads;
+    for (const auto& b : bindings.items())
+      if (b["input"].asString().compare(0, 2, "gc") == 0) pads += " " + b["input"].asString() + "=" + b["action"].asString();
+    std::fprintf(stderr, "input: runtime bindings (layout %s, slot 0 kind %s):%s\n", rnf_input_layout_name(),
+                 deviceKind(0) == DeviceKind::stick ? "stick" : "pad", pads.c_str());
+  }
   mouseGame_ = false;
   for (const auto& b : bindings.items())
     mouseGame_ = mouseGame_ || (b["input"].asString().compare(0, 3, "ms:") == 0 && b["action"].asString().compare(0, 3, "hk.") != 0);
   rn::Json layout;
   stickDeadzone_ = dialDeadzone_ = 0;
-  if (rn::Json::parse(layoutJson_, layout))
-    for (const auto& a : layout["axes"].items())
+  stickShape_.clear();
+  if (rn::Json::parse(layoutJson_, layout)) {
+    std::map<std::string, StickShape> axisHint;  // position axes (not dials) with a hint, by action
+    for (const auto& a : layout["axes"].items()) {
       (a["relative"].asBool(false) ? dialDeadzone_ : stickDeadzone_) =
           std::max(a["relative"].asBool(false) ? dialDeadzone_ : stickDeadzone_, float(a["deadzone"].asDouble(0)));
+      StickShape h{true, a["square"].asBool(false), float(a["deadzone"].asDouble(0))};
+      if (!a["relative"].asBool(false) && (h.square || h.deadzone > 0)) axisHint[a["id"].asString()] = h;
+    }
+    // A controller stick ("gc0:lstick.x", ".-y" ...) bound to such an axis is shaped for it.
+    for (const auto& b : bindings.items()) {
+      const std::string in = b["input"].asString();
+      auto h = axisHint.find(b["action"].asString());
+      const size_t dot = in.rfind('.');
+      if (h == axisHint.end() || in.compare(0, 2, "gc") != 0 || dot == std::string::npos) continue;
+      StickShape& s = stickShape_[in.substr(0, dot)];
+      s.active = true;
+      s.square = s.square || h->second.square;
+      s.deadzone = std::max(s.deadzone, h->second.deadzone);
+    }
+  }
   rn_input_release_all(in_);
   rn_input_load_json(in_, runtime.dump().c_str());
   setMouseAxes();
@@ -821,6 +849,7 @@ void InputRouter::setPressed(const std::string& id, bool down, double t, bool ga
   } else {
     pressed_.erase(id);
   }
+  if (debugInput_) std::fprintf(stderr, "input: %s %s -> %s\n", id.c_str(), down ? "down" : "up", game ? "game" : "ui");
   if (!game) return;
   rn_input_set_pressed(in_, id.c_str(), down ? 1 : 0);
   if (down) {
@@ -859,27 +888,30 @@ void InputRouter::playersMoved() {
 
 void InputRouter::attach(SDL_JoystickID id) {
   if (slotOf(id) >= 0 || (standby_.pad && standby_.id == id)) return;
+  for (const PadInfo& w : overflow_)
+    if (w.id == id) return;
   PadInfo p;
   p.pad = SDL_OpenGamepad(id);
-  if (!p.pad) return;
-  p.id = id;
-  const char* n = SDL_GetGamepadName(p.pad);
-  p.name = n ? n : "";
-  char guid[33]{};
-  SDL_GUIDToString(SDL_GetJoystickGUID(SDL_GetGamepadJoystick(p.pad)), guid, sizeof(guid));
-  p.guid = guid;
-  const char* serial = SDL_GetGamepadSerial(p.pad);
-  p.key = serial && *serial ? std::string("serial:") + serial : p.guid + "/" + p.name;
-  p.builtIn = isBuiltInControls(p.pad, p.name);
-  p.detectedKind = detectDeviceKind(SDL_GetJoystickType(SDL_GetGamepadJoystick(p.pad)), p.name);
-  p.family = rnf_sdl_controller_family(int(SDL_GetGamepadType(p.pad)), p.name.c_str());
-  for (int b : {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH}) {
-    const char* l = rnf_sdl_button_label_text(int(SDL_GetGamepadButtonLabel(p.pad, SDL_GamepadButton(b))));
-    if (l) p.labels[rnf_sdl_button_element(b)] = l;
+  if (!p.pad) {
+    std::fprintf(stderr, "gamepad: cannot open SDL gamepad %u: %s\n", unsigned(id), SDL_GetError());
+    return;
   }
-  // Player 1: another controller takes over from the built-in controls (they wait aside); the built-in
-  // controls take it only when it is free. Players 2-4: the controller's former player when free, else the
-  // first free one.
+  p.id = id;
+  describe(p);
+  // Under Steam Input: Steam's players (arrangeSteamPads). Its name and vendor say nothing reliable about
+  // which controller is behind it: Steam moves controllers between its virtual pads when the order
+  // changes (steamInfoChanged), the pad itself stays.
+  // Otherwise: player 1, another controller takes over from the built-in controls (they wait aside);
+  // the built-in controls take it only when it is free. Players 2-4: the controller's former player when
+  // free, else the first free one.
+  if (p.steamSlot >= 0) {
+    std::fprintf(stderr, "gamepad: %s (Steam's pad %d, SDL id %u, type %d)\n", p.name.c_str(), p.steamSlot, unsigned(id),
+                 int(SDL_GetGamepadType(p.pad)));
+    overflow_.push_back(std::move(p));  // placed by arrangeSteamPads, with every other controller
+    arrangeSteamPads();
+    playersMoved();
+    return;
+  }
   int slot = -1;
   if (p.builtIn) {
     if (!pads_[0].pad) slot = 0;
@@ -889,7 +921,7 @@ void InputRouter::attach(SDL_JoystickID id) {
       playersMoved();
       return;
     }
-  } else if (!pads_[0].pad || pads_[0].builtIn) {
+  } else if (!pads_[0].pad || (pads_[0].builtIn && pads_[0].steamSlot < 0)) {
     if (pads_[0].pad) {
       releaseSlot(0);
       standby_ = std::move(pads_[0]);
@@ -903,13 +935,137 @@ void InputRouter::attach(SDL_JoystickID id) {
     for (int s = 1; slot < 0 && s < kSlots; ++s)
       if (!pads_[s].pad) slot = s;
   }
-  if (slot < 0) {  // four players already
-    SDL_CloseGamepad(p.pad);
+  if (slot < 0) {  // four players already: it waits for a free one
+    std::fprintf(stderr, "gamepad: %s waits (four players already)\n", p.name.c_str());
+    overflow_.push_back(std::move(p));
+    playersMoved();
     return;
   }
   pads_[slot] = std::move(p);
-  std::fprintf(stderr, "gamepad: %s (slot %d, type %d%s)\n", pads_[slot].name.c_str(), slot,
+  std::fprintf(stderr, "gamepad: %s (slot %d, SDL id %u, type %d%s)\n", pads_[slot].name.c_str(), slot, unsigned(id),
                int(SDL_GetGamepadType(pads_[slot].pad)), pads_[slot].builtIn ? ", built-in" : "");
+  playersMoved();
+}
+
+// Steam's players are its virtual pads in the order of their numbers, without gaps: Steam keeps a pad's
+// number when another one leaves ("pad 1" and "pad 2" with no "pad 0" are players 1 and 2). Recomputed
+// from every connected controller each time one comes or goes, so the players only ever follow Steam's
+// pads as they are now. Steam's pads take players 1...n (beyond four they wait, in number order); a
+// controller outside Steam Input keeps its player when that is not one of them, else takes the first
+// free one, else waits.
+void InputRouter::arrangeSteamPads() {
+  struct Item {
+    PadInfo* pad;
+    int from;  // slot, or -1 - 1 - index in overflow_
+  };
+  std::vector<Item> steam, others;
+  for (int s = 0; s < kSlots; ++s)
+    if (pads_[s].pad) (pads_[s].steamSlot >= 0 ? steam : others).push_back({&pads_[s], s});
+  for (size_t i = 0; i < overflow_.size(); ++i)
+    (overflow_[i].steamSlot >= 0 ? steam : others).push_back({&overflow_[i], -1 - int(i)});
+  std::stable_sort(steam.begin(), steam.end(), [](const Item& a, const Item& b) { return a.pad->steamSlot < b.pad->steamSlot; });
+  // The new place of each: a slot, or -1 (waiting).
+  std::vector<std::pair<Item, int>> plan;
+  bool taken[kSlots] = {};
+  int placed = 0;
+  for (const Item& it : steam) {
+    const int t = placed < kSlots ? placed++ : -1;
+    if (t >= 0) taken[t] = true;
+    plan.push_back({it, t});
+  }
+  for (const Item& it : others) {
+    int t = it.from >= 0 && !taken[it.from] ? it.from : -1;
+    for (int s = placed; t < 0 && s < kSlots; ++s)
+      if (!taken[s]) t = s;
+    if (t >= 0) taken[t] = true;
+    plan.push_back({it, t});
+  }
+  // A slot whose controller changes lets go of what the old one held (and of the new one's state).
+  bool moved = false;
+  for (const auto& [it, t] : plan) {
+    if (it.from == t) continue;
+    moved = true;
+    if (it.from >= 0) releaseSlot(it.from);
+    if (t >= 0) releaseSlot(t);
+  }
+  if (!moved) return;
+  PadInfo next[kSlots];
+  std::vector<PadInfo> waiting;
+  for (auto& [it, t] : plan) {
+    if (t >= 0) next[t] = std::move(*it.pad);
+    else waiting.push_back(std::move(*it.pad));
+  }
+  overflow_ = std::move(waiting);
+  for (int s = 0; s < kSlots; ++s) {
+    pads_[s] = std::move(next[s]);
+    if (pads_[s].pad) std::fprintf(stderr, "gamepad: %s is player %d\n", pads_[s].name.c_str(), s + 1);
+  }
+  for (const PadInfo& w : overflow_) std::fprintf(stderr, "gamepad: %s waits (four players already)\n", w.name.c_str());
+}
+
+void InputRouter::describe(PadInfo& p) {
+  SDL_Joystick* js = SDL_GetGamepadJoystick(p.pad);
+  const char* n = SDL_GetGamepadName(p.pad);
+  p.name = n ? n : "";
+  const SDL_GUID g = SDL_GetJoystickGUID(js);
+  char guid[33]{};
+  SDL_GUIDToString(g, guid, sizeof(guid));
+  p.guid = guid;
+  const char* serial = SDL_GetGamepadSerial(p.pad);
+  p.key = serial && *serial ? std::string("serial:") + serial : p.guid + "/" + p.name;
+  p.builtIn = isBuiltInControls(p.pad, p.name);
+  p.detectedKind = detectDeviceKind(SDL_GetJoystickType(js), p.name);
+  p.family = rnf_sdl_controller_family(int(SDL_GetGamepadType(p.pad)), p.name.c_str());
+  p.labels.clear();
+  for (int b : {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH}) {
+    const char* l = rnf_sdl_button_label_text(int(SDL_GetGamepadButtonLabel(p.pad, SDL_GamepadButton(b))));
+    if (l) p.labels[rnf_sdl_button_element(b)] = l;
+  }
+  // A Steam virtual gamepad: the GUID's own vendor / product (SDL_GetGamepadVendor reports the controller
+  // Steam put behind it). SDL gives it Steam's player as its player index ("pad N").
+  Uint16 vendor = 0, product = 0;
+  SDL_GetJoystickGUIDInfo(g, &vendor, &product, nullptr, nullptr);
+  p.steamSlot = vendor == 0x28de && product == 0x11ff ? SDL_GetGamepadPlayerIndex(p.pad) : -1;
+  p.steamHandle = SDL_GetGamepadSteamHandle(p.pad);
+}
+
+void InputRouter::syncPads() {
+  int n = 0;
+  SDL_JoystickID* list = SDL_GetGamepads(&n);
+  std::vector<SDL_JoystickID> now(list, list + std::max(0, n));
+  SDL_free(list);
+  auto connected = [&](SDL_JoystickID id) { return std::find(now.begin(), now.end(), id) != now.end(); };
+  std::vector<SDL_JoystickID> known;
+  for (const PadInfo& p : pads_)
+    if (p.pad) known.push_back(p.id);
+  if (standby_.pad) known.push_back(standby_.id);
+  for (const PadInfo& p : overflow_) known.push_back(p.id);
+  for (SDL_JoystickID id : known)
+    if (!connected(id)) detach(id);
+  for (SDL_JoystickID id : now)
+    if (std::find(known.begin(), known.end(), id) == known.end()) attach(id);
+  // Steam's number of each pad and the controller behind it, as SDL tells them now.
+  std::vector<SDL_JoystickID> changed;
+  auto check = [&](const PadInfo& p) {
+    if (p.pad && (p.steamSlot >= 0 || p.steamHandle) &&
+        (SDL_GetGamepadPlayerIndex(p.pad) != p.steamSlot || SDL_GetGamepadSteamHandle(p.pad) != p.steamHandle))
+      changed.push_back(p.id);
+  };
+  for (const PadInfo& p : pads_) check(p);
+  for (const PadInfo& p : overflow_) check(p);
+  for (SDL_JoystickID id : changed) steamInfoChanged(id);
+}
+
+void InputRouter::steamInfoChanged(SDL_JoystickID id) {
+  const int s = slotOf(id);
+  PadInfo* p = s >= 0 ? &pads_[s] : standby_.pad && standby_.id == id ? &standby_ : nullptr;
+  for (PadInfo& w : overflow_)
+    if (!p && w.id == id) p = &w;
+  if (!p) return;
+  describe(*p);
+  std::fprintf(stderr, "gamepad: %s (slot %d, SDL id %u: Steam's controller behind it changed)\n", p->name.c_str(), s,
+               unsigned(id));
+  arrangeSteamPads();
   playersMoved();
 }
 
@@ -941,6 +1097,12 @@ void InputRouter::releaseSlot(int s) {
 }
 
 void InputRouter::detach(SDL_JoystickID id) {
+  for (auto it = overflow_.begin(); it != overflow_.end(); ++it)
+    if (it->id == id) {
+      SDL_CloseGamepad(it->pad);
+      overflow_.erase(it);
+      return;
+    }
   if (standby_.pad && standby_.id == id) {
     SDL_CloseGamepad(standby_.pad);
     standby_ = PadInfo();
@@ -950,11 +1112,13 @@ void InputRouter::detach(SDL_JoystickID id) {
   int s = slotOf(id);
   if (s < 0) return;
   std::string name = pads_[s].name;
-  if (s > 0 && !pads_[s].key.empty()) formerSlot_[pads_[s].key] = s;
+  const bool steam = pads_[s].steamSlot >= 0;
+  if (s > 0 && !steam && !pads_[s].key.empty()) formerSlot_[pads_[s].key] = s;
   releaseSlot(s);
   SDL_CloseGamepad(pads_[s].pad);
   pads_[s] = PadInfo();
-  if (s == 0 && standby_.pad) {  // player 1 back to the built-in controls
+  if (steam) arrangeSteamPads();  // the players after it move up, as Steam's do
+  if (s == 0 && standby_.pad && !pads_[0].pad) {  // player 1 back to the built-in controls
     pads_[0] = std::move(standby_);
     standby_ = PadInfo();
     std::fprintf(stderr, "gamepad: %s (slot 0 again)\n", pads_[0].name.c_str());
@@ -963,8 +1127,68 @@ void InputRouter::detach(SDL_JoystickID id) {
   if (onDisconnect) onDisconnect(name);
 }
 
+void InputRouter::beginPlayerOrder() {
+  for (int s = 0; s < kSlots; ++s)
+    if (pads_[s].pad) releaseSlot(s);  // nothing stays held for the game across the reorder
+  orderNamed_.clear();
+  orderNext_ = connectedCount() + (standby_.pad ? 1 : 0) > 0 ? 0 : -1;
+  if (orderNext_ >= 0) std::fprintf(stderr, "input: player order: waiting for player 1\n");
+}
+
+void InputRouter::endPlayerOrder() {
+  if (orderNext_ < 0) return;
+  orderNext_ = -1;
+  std::fprintf(stderr, "input: player order: done\n");
+  playersMoved();
+}
+
+bool InputRouter::playerOrderOwns(const SDL_Event& e) const {
+  if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) return orderNext_ >= 0;
+  if (e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) return orderHeld_.count({e.gbutton.which, int(e.gbutton.button)}) > 0;
+  return false;
+}
+
+// The pressed controller takes player orderNext_; the one there takes the pressed one's former place
+// (its slot, or waiting aside when that was the built-in controls' standby).
+void InputRouter::playerOrderPress(SDL_JoystickID id) {
+  if (orderNext_ < 0 || orderNamed_.count(id)) return;
+  const int to = orderNext_;
+  const int from = slotOf(id);
+  const bool fromStandby = from < 0 && standby_.pad && standby_.id == id;
+  if (from < 0 && !fromStandby) return;
+  if (from != to) {
+    PadInfo moving = fromStandby ? std::move(standby_) : std::move(pads_[from]);
+    if (fromStandby) standby_ = PadInfo();
+    else pads_[from] = PadInfo();
+    if (pads_[to].pad) {
+      PadInfo other = std::move(pads_[to]);
+      pads_[to] = PadInfo();
+      if (!fromStandby) {
+        pads_[from] = std::move(other);
+      } else {
+        int free = -1;
+        for (int s = to + 1; free < 0 && s < kSlots; ++s)
+          if (!pads_[s].pad) free = s;
+        if (free >= 0) pads_[free] = std::move(other);
+        else if (other.builtIn) standby_ = std::move(other);
+        else SDL_CloseGamepad(other.pad);
+      }
+    }
+    pads_[to] = std::move(moving);
+  }
+  if (to > 0 && !pads_[to].key.empty()) formerSlot_[pads_[to].key] = to;
+  std::fprintf(stderr, "input: player order: %s is player %d\n", pads_[to].name.c_str(), to + 1);
+  orderNamed_.insert(id);
+  ++orderNext_;
+  playersMoved();
+  if (orderNext_ >= kSlots || orderNext_ >= connectedCount() + (standby_.pad ? 1 : 0)) endPlayerOrder();
+}
+
 void InputRouter::padButton(int slot, int button, bool down, double t) {
   const char* el = rnf_sdl_button_element(button);
+  if (debugInput_)
+    std::fprintf(stderr, "input: pad slot %d (%s) button %d (%s) %s, ui %d, capture %d\n", slot, pads_[slot].name.c_str(), button,
+                 el ? el : "-", down ? "down" : "up", int(ui_), int(bool(capture_)));
   if (!el || rnf_input_element_ignored(el)) return;  // HOME / guide: the system's (Steam, Game Bar)
   std::string id = slotPrefix(slot) + el;
   if (down) {
@@ -1100,10 +1324,14 @@ void InputRouter::padAxis(int slot, int axis, float v, double t) {
   if (!ui_) {
     rn_input_set_axis(in_, (g + stick).c_str(), x, y);
     if (!nesLayout_) {
-      rn_input_set_axis_value(in_, (g + stick + ".x").c_str(), x);
-      rn_input_set_axis_value(in_, (g + stick + ".-x").c_str(), -x);
-      rn_input_set_axis_value(in_, (g + stick + ".y").c_str(), y);
-      rn_input_set_axis_value(in_, (g + stick + ".-y").c_str(), -y);
+      // The analog axes get the shaped position (round dead zone, square travel, past the core's dead
+      // zone: stick_shape.h); the digital directions above keep the raw one.
+      auto it = stickShape_.find(g + stick);
+      const auto [ax, ay] = it == stickShape_.end() ? std::make_pair(x, y) : shapeStick(x, y, it->second);
+      rn_input_set_axis_value(in_, (g + stick + ".x").c_str(), ax);
+      rn_input_set_axis_value(in_, (g + stick + ".-x").c_str(), -ax);
+      rn_input_set_axis_value(in_, (g + stick + ".y").c_str(), ay);
+      rn_input_set_axis_value(in_, (g + stick + ".-y").c_str(), -ay);
     }
   }
   stickDirections(slot, stick, x, y, t);
@@ -1111,11 +1339,26 @@ void InputRouter::padAxis(int slot, int axis, float v, double t) {
 
 void InputRouter::handleEvent(const SDL_Event& e, double evTime, bool keyboardForUI) {
   switch (e.type) {
-    case SDL_EVENT_GAMEPAD_ADDED: attach(e.gdevice.which); break;
-    case SDL_EVENT_GAMEPAD_REMOVED: detach(e.gdevice.which); break;
+    // Controllers coming and going, Steam moving them: not from these events - syncPads reads what is
+    // connected now, every frame.
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+      if (playerOrderOwns(e)) {
+        const std::pair<SDL_JoystickID, int> b{e.gbutton.which, int(e.gbutton.button)};
+        if (e.gbutton.down) {
+          orderHeld_.insert(b);
+          playerOrderPress(e.gbutton.which);
+        } else {
+          orderHeld_.erase(b);
+        }
+        break;
+      }
       int s = slotOf(e.gbutton.which);
+      if (debugInput_ && s < 0)
+        std::fprintf(stderr, "input: SDL gamepad %u is in no slot (standby %u, slots %u %u %u %u)\n", unsigned(e.gbutton.which),
+                     unsigned(standby_.pad ? standby_.id : 0), unsigned(pads_[0].pad ? pads_[0].id : 0),
+                     unsigned(pads_[1].pad ? pads_[1].id : 0), unsigned(pads_[2].pad ? pads_[2].id : 0),
+                     unsigned(pads_[3].pad ? pads_[3].id : 0));
       if (s >= 0 && e.gbutton.down && !ui_) centerMouse();
       if (s >= 0) padButton(s, e.gbutton.button, e.gbutton.down, evTime);
       break;

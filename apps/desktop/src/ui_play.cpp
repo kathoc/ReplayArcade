@@ -624,10 +624,7 @@ void UI::buildPlayers(double now) {
   bool any = false;
   for (int s = 0; s < n; ++s) any = any || d_.input->pad(s).pad != nullptr;
   if (!any) return;  // keyboard / touch only
-  const double since = now - d_.input->playersChanged();
-  const bool paused = d_.emu->status().paused;
-  const float a = paused || since < 4.6 ? 1.0f : since < 5.0 ? float((5.0 - since) / 0.4) : 0.0f;
-  if (a <= 0) return;
+  const float a = 1.0f;  // always shown: which controller is which player is never a guess
   const UiMetrics& m = metrics_;
   ImDrawList* dl = ImGui::GetForegroundDrawList();
   const float h = pill_.h > 0 ? pill_.h : m.label() + 14 * m.s;
@@ -648,6 +645,46 @@ void UI::buildPlayers(double now) {
     }
   }
   playersW_ = w + S(8);
+}
+
+void UI::buildPlayerOrder() {
+  const int n = RN_PRODUCT_NES ? 2 : rnl::InputRouter::kSlots;
+  const int next = d_.input->playerOrderNext();
+  const UiMetrics& m = metrics_;
+  ImGuiIO& io = ImGui::GetIO();
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 150));
+  const std::string title = TR("Player Order");
+  const std::string ask = TRF("Press a button on player %lld's controller", {(long long)(next + 1)});
+  const std::string foot = TR("Esc: done");
+  const float fs = m.label(), hs = m.hint(), box = fs * 2.2f, gap = box * 0.5f;
+  const float rowW = n * box + (n - 1) * gap;
+  const float w = std::max({rowW, measure(fs * 1.2f, title.c_str()).x, measure(fs, ask.c_str()).x}) + S(64);
+  const float h = S(24) + fs * 1.2f + S(14) + fs + S(14) + box + S(18) + hs + S(24);  // the rows below
+  const ImVec2 p0((io.DisplaySize.x - w) / 2, (io.DisplaySize.y - h) / 2);
+  dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(22, 22, 25, 245), S(16));
+  dl->AddRect(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(255, 255, 255, 40), S(16), 0, 1.0f);
+  float y = p0.y + S(24);
+  auto centered = [&](float size, const std::string& t, ImU32 col) {
+    dl->AddText(ImGui::GetFont(), size, ImVec2(p0.x + (w - measure(size, t.c_str()).x) / 2, y), col, t.c_str());
+    y += size + S(14);
+  };
+  centered(fs * 1.2f, title, kText);
+  centered(fs, ask, kText);
+  // A box per player: filled = a controller has it (red: named in this order), the next one outlined red.
+  const float x0 = p0.x + (w - rowW) / 2;
+  for (int s = 0; s < n; ++s) {
+    const ImVec2 b0(x0 + s * (box + gap), y), b1(b0.x + box, b0.y + box);
+    const bool has = d_.input->pad(s).pad != nullptr;
+    if (s < next) dl->AddRectFilled(b0, b1, kBrand, S(8));
+    else if (has) dl->AddRectFilled(b0, b1, IM_COL32(242, 242, 246, 90), S(8));
+    dl->AddRect(b0, b1, s == next ? kBrand : IM_COL32(255, 255, 255, 120), S(8), 0, S(s == next ? 3.0f : 1.5f));
+    const std::string label = std::to_string(s + 1) + "P";
+    const ImVec2 ls = measure(fs, label.c_str());
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(b0.x + (box - ls.x) / 2, b0.y + (box - ls.y) / 2), kText, label.c_str());
+  }
+  y += box + S(18);
+  centered(hs, foot, kTextDim);
 }
 
 std::string UI::statusLabelText(bool practicePart) const {
