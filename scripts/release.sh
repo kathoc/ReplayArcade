@@ -4,6 +4,8 @@
 #   scripts/release.sh <version>             build, sign, publish (gh-pages Flatpak repository + GitHub release)
 #   NO_PUBLISH=1 scripts/release.sh <version> build and sign into dist/ only
 #   CHANGES=<file.md>: what is new, at the top of the release notes
+#   ANDROID_APK=<file.apk>: the signed Android APK of this version (scripts/build-android.sh release, on a
+#   machine with the Android SDK), attached as ReplayArcade-<v>-android-arm64.apk
 # Outputs (dist/):
 #   ReplayArcade-<v>-windows-x64.zip           ReplayArcade.exe, WinSparkle.dll, README.txt, licences
 #   appcast-windows.xml                        WinSparkle feed, the zip signed with the EdDSA key
@@ -239,6 +241,13 @@ cd "$ROOT"
 echo "==> GitHub release $TAG"
 git -C "$ROOT" tag -f "$TAG" HEAD
 git_gh -C "$ROOT" push -f "https://github.com/$REPO.git" "refs/tags/$TAG"
+ANDROID_ASSET=()
+if [ -n "${ANDROID_APK:-}" ]; then
+  [ -f "$ANDROID_APK" ] || { echo "no $ANDROID_APK"; exit 1; }
+  unzip -Z1 "$ANDROID_APK" | no_game_data || exit 1
+  cp "$ANDROID_APK" "$DIST/ReplayArcade-$VERSION-android-arm64.apk"
+  ANDROID_ASSET=("$DIST/ReplayArcade-$VERSION-android-arm64.apk")
+fi
 NOTES="$WORK/notes.md"
 { echo "ReplayArcade $VERSION. **No ROMs are included.**"; echo
   if [ -n "${CHANGES:-}" ]; then cat "$CHANGES"; echo; fi; } > "$NOTES"
@@ -246,11 +255,19 @@ cat >> "$NOTES" <<EOF
 - **Windows x64**: \`$NAME.zip\` (unzip, run \`ReplayArcade.exe\`; in-app updates use the signed \`appcast-windows.xml\`).
 - **Steam Deck / Linux**: \`flatpak install --user ${PAGES_URL}$APP_ID.flatpakref\` (signed repository, updates with
   \`flatpak update\`), or the bundle \`$BUNDLE\`.
+EOF
+if [ ${#ANDROID_ASSET[@]} -gt 0 ]; then cat >> "$NOTES" <<EOF
+- **Android (arm64, Android 10 or later with Vulkan)**: \`ReplayArcade-$VERSION-android-arm64.apk\` (install the APK; the
+  ROM folder is \`Android/data/io.github.kathoc.replayarcade/files/ReplayArcade/ROM\`). Early: no touch controls yet, a
+  controller is needed.
+EOF
+fi
+cat >> "$NOTES" <<EOF
 
 Put the ROM zips you are entitled to use (FinalBurn Neo set names, non-merged) in \`Documents/ReplayArcade/ROM\`.
 Licences: GPL-2.0-or-later with an additional permission for FinalBurn Neo, which is under its own non-commercial
 licence (COPYING.md, LICENSE-FBNeo.txt).
 EOF
 gh release create "$TAG" --repo "$REPO" --title "ReplayArcade $VERSION" --notes-file "$NOTES" --latest \
-  "$DIST/$NAME.zip" "$DIST/appcast-windows.xml" "$DIST/$BUNDLE" "$DIST/$APP_ID.flatpakref"
+  "$DIST/$NAME.zip" "$DIST/appcast-windows.xml" "$DIST/$BUNDLE" "$DIST/$APP_ID.flatpakref" "${ANDROID_ASSET[@]}"
 echo "==> done: https://github.com/$REPO/releases/tag/$TAG"
