@@ -1,5 +1,7 @@
 # ReplayArcade
 
+[日本語](README.ja.md)
+
 ReplayArcade is [ReplayNES](https://github.com/kathoc/ReplayNES) for arcade games: the same
 record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/FBNeo) as its core.
 
@@ -26,21 +28,58 @@ record-everything player, with [FinalBurn Neo](https://github.com/finalburnneo/F
   to save the machine state its save states left out (`patches/fbneo/`); in a per-game test of 256 games,
   a seek, a rewind, an export or a reopened project replays identically in every one.
 
-Platforms: Steam Deck / Linux (Flatpak) and Windows x64.
+Platforms: Steam Deck / Linux (Flatpak), Windows x64 and Android (64-bit).
+
+## Download
+
+**[Latest release](https://github.com/kathoc/ReplayArcade/releases/latest)** - pick the file for your system:
+
+| System | File |
+|---|---|
+| Steam Deck / Linux | [io.github.kathoc.ReplayArcade.flatpakref](https://github.com/kathoc/ReplayArcade/releases/latest/download/io.github.kathoc.ReplayArcade.flatpakref) (or `io.github.kathoc.ReplayArcade-<version>-x86_64.flatpak`) |
+| Windows x64 | `ReplayArcade-<version>-windows-x64.zip` |
+| Android (64-bit, Android 10 or later, Vulkan) | `ReplayArcade-<version>-android-arm64.apk` |
 
 ## Install and updates
 
-- **Steam Deck / Linux**: `flatpak install --user https://kathoc.github.io/ReplayArcade/flatpak/io.github.kathoc.ReplayArcade.flatpakref`
-  (GPG-signed repository). The app finds new versions itself (Settings > System > ReplayArcade Version)
-  and installs them through the Flatpak portal; `flatpak update` works too. Gaming Mode has no dialog
-  for the portal's one-time "allow updates" question: answer it once in Desktop Mode, or run
-  `flatpak permission-set flatpak updates io.github.kathoc.ReplayArcade yes`.
-- **Windows x64**: unzip `ReplayArcade-<version>-windows-x64.zip` from the
-  [releases](https://github.com/kathoc/ReplayArcade/releases) and run `ReplayArcade.exe`. In-app updates
-  read the release's `appcast-windows.xml` and verify its EdDSA signature.
+### Steam Deck / Linux
+
+1. In Desktop Mode, open Konsole and run:
+   ```bash
+   flatpak install --user https://kathoc.github.io/ReplayArcade/flatpak/io.github.kathoc.ReplayArcade.flatpakref
+   ```
+   (or open the downloaded `.flatpakref` with Discover). The repository is GPG-signed.
+2. Start it from the application menu. To play it in Gaming Mode, add it to Steam with
+   "Add a Non-Steam Game".
+3. Updates: the app finds new versions itself (Settings > System > ReplayArcade Version) and installs
+   them through the Flatpak portal; `flatpak update --user` and Discover work too. Gaming Mode has no
+   dialog for the portal's one-time "allow updates" question: answer it once in Desktop Mode, or run
+   `flatpak permission-set flatpak updates io.github.kathoc.ReplayArcade yes`. A version that asks for
+   new Flatpak permissions (the release notes say so) is installed with Discover or `flatpak update`.
+
+### Windows x64
+
+1. Download `ReplayArcade-<version>-windows-x64.zip` from the latest release and unzip it to a folder
+   of your choice.
+2. Run `ReplayArcade.exe`. Windows may warn about an unknown publisher: "More info" > "Run anyway".
+3. Updates: the app checks the latest release (Settings > System > ReplayArcade Version), verifies the
+   download's EdDSA signature and installs it.
+
+### Android
+
+1. Download `ReplayArcade-<version>-android-arm64.apk` on the device and open it. Allow your browser
+   or file manager to install apps when Android asks.
+2. Start ReplayArcade once (it creates its folders), then copy ROM zips into
+   `Android/data/io.github.kathoc.replayarcade/files/ReplayArcade/ROM` (USB file transfer from a
+   computer, or a file manager that can open `Android/data`).
+3. Updates: install the newer APK over the installed one; recordings and settings stay.
+   Controllers are needed for now (touch controls are coming).
+
+### ROMs
 
 **No ROMs are included.** Put the ROM zips you are entitled to use (FinalBurn Neo set names,
-non-merged; e.g. `gradius.zip`) in `Documents/ReplayArcade/ROM`.
+non-merged; e.g. `gradius.zip`) in `Documents/ReplayArcade/ROM` (Steam Deck / Linux / Windows; Android:
+see above), then start ReplayArcade again: the library lists them.
 
 ## Building
 
