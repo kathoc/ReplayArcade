@@ -26,6 +26,9 @@ The following are used as in ReplayNES; their full licence texts are in
 - SDL3 (zlib) - window, audio, gamepads; Vulkan loader on Linux (Apache-2.0).
 - Tabler Icons (MIT) - menu icons.
 - Noto Sans Black (SIL Open Font License 1.1) - Steam artwork wordmark.
+- Noto Sans JP (SIL Open Font License 1.1, © Adobe) - the Japanese UI font of the Android app, shipped with its
+  licence.
+- Brickboy touch controller (Apache-2.0, © Katsuya Hokamura) - the Android app's on-screen controls.
 - nesterm physical CRT model (MIT, by kathoc) - CRT display code (used by the NES picture path only).
 - WinSparkle (MIT) - in-app updates of the Windows app, when updates are enabled.
 
