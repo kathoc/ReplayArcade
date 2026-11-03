@@ -73,7 +73,7 @@ Platforms: Steam Deck / Linux (Flatpak), Windows x64 and Android (64-bit).
    `Android/data/io.github.kathoc.replayarcade/files/ReplayArcade/ROM` (USB file transfer from a
    computer, or a file manager that can open `Android/data`).
 3. Updates: install the newer APK over the installed one; recordings and settings stay.
-   Controllers are needed for now (touch controls are coming).
+   Play with the on-screen touch controls or a controller (they hide while a controller is connected).
 
 ### ROMs
 

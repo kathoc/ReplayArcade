@@ -19,12 +19,16 @@ if [ "$VARIANT" = release ]; then
   set -a; . "$SIGNING"; set +a
 fi
 # A build directory of its own: the ReplayNES APK and this one do not share CMake caches.
+# Gradle's work folder per ReplayNES tree: two trees (the submodule, a worktree via REPLAYNES_DIR) in one folder
+# left the other tree's intermediates behind (2026-11-03: compressReleaseAssets "already contains entry
+# assets/fonts/NotoSansJP-Regular.otf" after a worktree build).
+GBUILD="$ROOT/build/android/gradle-$(printf '%s' "$(cd "$RN" && pwd)" | shasum | cut -c1-8)"
 (cd "$RN/apps/android" && gradle --no-daemon "$TASK" -PrnProductFile="$ROOT/cmake/product.cmake" \
   -PrnApplicationId=io.github.kathoc.replayarcade -PrnAppName=ReplayArcade \
   -PrnIcon="$ROOT/packaging/linux/artwork/png/hicolor/512.png" -PrnVersion="$VERSION" \
-  -Dorg.gradle.project.buildDir="$ROOT/build/android/gradle")
+  -Dorg.gradle.project.buildDir="$GBUILD")
 mkdir -p "$ROOT/build/android"
-cp "$(ls "$ROOT/build/android/gradle"/outputs/apk/"$VARIANT"/*.apk | head -1)" "$ROOT/build/android/ReplayArcade-$VARIANT.apk"
+cp "$(ls "$GBUILD"/outputs/apk/"$VARIANT"/*.apk | head -1)" "$ROOT/build/android/ReplayArcade-$VARIANT.apk"
 if [ "$VARIANT" = release ]; then
   cp "$ROOT/build/android/ReplayArcade-release.apk" "$ROOT/build/android/ReplayArcade-$VERSION-android-arm64.apk"
   ls -la "$ROOT/build/android/ReplayArcade-$VERSION-android-arm64.apk"
