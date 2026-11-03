@@ -78,7 +78,7 @@ ReplayArcade は、[ReplayNES](https://github.com/kathoc/ReplayNES) のアーケ
    `Android/data/io.github.kathoc.replayarcade/files/ReplayArcade/ROM` に入れてください
    （パソコンから USB で転送するか、`Android/data` を開けるファイルマネージャーを使います）。
 3. 更新: 新しい APK を、入っているものの上からインストールします。記録と設定はそのまま残ります。
-   いまはコントローラーが必要です（タッチ操作は準備中です）。
+   画面のタッチ操作か、コントローラーで遊べます（コントローラーをつなぐとタッチのボタンは隠れます）。
 
 ### ROM
 

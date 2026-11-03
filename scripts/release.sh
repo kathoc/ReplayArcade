@@ -4,6 +4,8 @@
 #   scripts/release.sh <version>             build, sign, publish (gh-pages Flatpak repository + GitHub release)
 #   NO_PUBLISH=1 scripts/release.sh <version> build and sign into dist/ only
 #   CHANGES=<file.md>: what is new, at the top of the release notes
+#   RELEASE_ONLY=1: only the GitHub release, from the files already in dist/ and the existing tag (a run that
+#   stopped after publishing gh-pages: 2026-11-03, 0.3.10)
 #   ANDROID_APK=<file.apk>: the signed Android APK of this version (scripts/build-android.sh release, on a
 #   machine with the Android SDK), attached as ReplayArcade-<v>-android-arm64.apk
 # Outputs (dist/):
@@ -67,12 +69,25 @@ no_game_data() {  # file names on stdin; the same rules as the git hooks, withou
   return $bad
 }
 mkdir -p "$DIST" "$WORK"
+# Every input checked before anything is published (0.3.10: a missing APK stopped the run after gh-pages).
+if [ -n "${ANDROID_APK:-}" ]; then
+  [ -f "$ANDROID_APK" ] || { echo "no $ANDROID_APK"; exit 1; }
+  unzip -Z1 "$ANDROID_APK" | no_game_data || exit 1
+fi
+NAME="ReplayArcade-$VERSION-windows-x64"
+BUNDLE="$APP_ID-$VERSION-x86_64.flatpak"
+if [ "${RELEASE_ONLY:-0}" = 1 ]; then
+  for f in "$DIST/$NAME.zip" "$DIST/appcast-windows.xml" "$DIST/$BUNDLE" "$DIST/$APP_ID.flatpakref"; do
+    [ -f "$f" ] || { echo "RELEASE_ONLY: no $f"; exit 1; }
+  done
+  git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "RELEASE_ONLY: no tag $TAG"; exit 1; }
+fi
+if [ "${RELEASE_ONLY:-0}" != 1 ]; then
 
 # ---- Windows
 echo "==> Windows x64"
 "$ROOT/scripts/build-windows.sh" x86_64 >"$WORK/windows.log" 2>&1 || { tail -20 "$WORK/windows.log"; exit 1; }
 B="$ROOT/build/windows/windows-x86_64/apps/windows"
-NAME="ReplayArcade-$VERSION-windows-x64"
 STAGE="$WORK/$NAME"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
 cp "$B/ReplayArcade.exe" "$STAGE/"
@@ -206,7 +221,6 @@ SuggestRemoteName=replayarcade
 Homepage=https://github.com/$REPO
 GPGKey=$GPGKEY_B64
 EOF
-BUNDLE="$APP_ID-$VERSION-x86_64.flatpak"
 flatpak build-bundle --arch=x86_64 --repo-url="$PAGES_URL" --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
   --gpg-keys="$ROOT/packaging/linux/replayarcade-repo.gpg" "$DEST" "$DIST/$BUNDLE" "$APP_ID" master
 cp "$DEST/$APP_ID.flatpakref" "$DIST/"
@@ -238,13 +252,14 @@ gh api "repos/$REPO/pages" >/dev/null 2>&1 ||
   gh api -X POST "repos/$REPO/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' >/dev/null 2>&1 ||
   gh api "repos/$REPO/pages" >/dev/null
 cd "$ROOT"
+fi  # RELEASE_ONLY
 echo "==> GitHub release $TAG"
-git -C "$ROOT" tag -f "$TAG" HEAD
-git_gh -C "$ROOT" push -f "https://github.com/$REPO.git" "refs/tags/$TAG"
+if [ "${RELEASE_ONLY:-0}" != 1 ]; then
+  git -C "$ROOT" tag -f "$TAG" HEAD
+  git_gh -C "$ROOT" push -f "https://github.com/$REPO.git" "refs/tags/$TAG"
+fi
 ANDROID_ASSET=()
 if [ -n "${ANDROID_APK:-}" ]; then
-  [ -f "$ANDROID_APK" ] || { echo "no $ANDROID_APK"; exit 1; }
-  unzip -Z1 "$ANDROID_APK" | no_game_data || exit 1
   cp "$ANDROID_APK" "$DIST/ReplayArcade-$VERSION-android-arm64.apk"
   ANDROID_ASSET=("$DIST/ReplayArcade-$VERSION-android-arm64.apk")
 fi
@@ -258,8 +273,8 @@ cat >> "$NOTES" <<EOF
 EOF
 if [ ${#ANDROID_ASSET[@]} -gt 0 ]; then cat >> "$NOTES" <<EOF
 - **Android (arm64, Android 10 or later with Vulkan)**: \`ReplayArcade-$VERSION-android-arm64.apk\` (install the APK; the
-  ROM folder is \`Android/data/io.github.kathoc.replayarcade/files/ReplayArcade/ROM\`). Early: no touch controls yet, a
-  controller is needed.
+  ROM folder is \`Android/data/io.github.kathoc.replayarcade/files/ReplayArcade/ROM\`). Touch controls or a
+  controller.
 EOF
 fi
 cat >> "$NOTES" <<EOF
