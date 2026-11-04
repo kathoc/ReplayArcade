@@ -18,7 +18,10 @@ app_top() { top | grep -q "$P/"; }
 picker_top() { top | grep -q "documentsui.picker.PickActivity"; }
 files_top() { top | grep -q "documentsui.files.FilesActivity"; }
 wait_for() { for i in $(seq 1 ${2:-20}); do eval "$1" && return 0; sleep 0.5; done; return 1; }
-upright() { $A shell "grep 'surface: changed' $LOG | tail -1" | grep -q "1080x2424"; }
+# Upright since this start: a line after the log's length at the start says the swapchain is 1080x2424 (a cold
+# start makes a landscape surface first and turns it; an older line of the log must not count).
+mark() { START_LINE=$($A shell "wc -l < $LOG" | tr -d '\r '); }
+upright() { $A shell "tail -n +$((START_LINE+1)) $LOG" | grep -q "swapchain 1080x2424\|surface: changed 1080x2424"; }
 log_lines() { $A shell "grep -c '$1' $LOG" | tr -d '\r'; }
 # Tap a node of a system screen by its text (the first one; the centre of its bounds).
 tap_text() {
@@ -36,7 +39,7 @@ press_text() {
 }
 screen_has() { $A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; $A shell cat /sdcard/ui.xml | grep -q "text=\"$1\""; }
 close_system() { for i in $(seq 1 10); do app_top && return 0; $A shell input keyevent KEYCODE_BACK; sleep 1.2; done; }
-front() { $A shell am start -n $ACT > /dev/null 2>&1; wait_for app_top; wait_for upright 30; sleep 2; }
+front() { mark; $A shell am start -n $ACT > /dev/null 2>&1; wait_for app_top; wait_for upright 30; sleep 2.5; }
 cold() { $A shell am force-stop $P; front; }
 folders_page() { $A shell input tap 930 55; sleep 1.5; $A shell input tap 699 157; sleep 1.2; $A shell input tap 540 532; sleep 1.5; }
 ROW_ADD=170; ROW_ROMS=266
