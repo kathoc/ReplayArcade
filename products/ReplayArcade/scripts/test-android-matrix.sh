@@ -23,6 +23,9 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   rm -rf "$LOCK"; mkdir "$LOCK"   # a stale lock: its run is gone
 fi
 echo $$ > "$LOCK/pid"
+# The test as it is now: bash reads a script as it runs, and an edit made meanwhile would be read from the
+# middle (2026-11-05: an edit during a run spoiled its later versions).
+cp "$here/test-android-emu.sh" "$LOCK/test-android-emu.sh"
 EP=""; SERIAL=""; TP=""
 stop_emulator() {
   [ -n "$TP" ] && { pkill -P "$TP" 2>/dev/null; kill "$TP" 2>/dev/null; }; TP=""
@@ -38,13 +41,14 @@ trap 'exit 130' INT TERM
 total=0; port=5580
 for avd in $AVDS; do
   echo "===== $avd"
+  name=$avd; [ -e "$out/$name.txt" ] && name=$avd-$port   # the same version again: kept apart
   SERIAL=emulator-$port
   "$E" -avd "$avd" -port "$port" -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -wipe-data \
-    > "$out/$avd-emulator.log" 2>&1 &
+    > "$out/$name-emulator.log" 2>&1 &
   EP=$!
   booted=0; t0=$(date +%s)
   while [ $(( $(date +%s) - t0 )) -lt "$BOOT_MAX" ]; do
-    kill -0 "$EP" 2>/dev/null || { echo "FAIL $avd: the emulator exited while booting ($out/$avd-emulator.log)"; break; }
+    kill -0 "$EP" 2>/dev/null || { echo "FAIL $avd: the emulator exited while booting ($out/$name-emulator.log)"; break; }
     [ "$(timeout 10 "$ADB" -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && { booted=1; break; }
     sleep 3
   done
@@ -58,11 +62,11 @@ for avd in $AVDS; do
   $a shell input keyevent KEYCODE_WAKEUP; $a shell wm dismiss-keyguard >/dev/null 2>&1
   # In the background and waited for: a stop (TERM, INT) is handled at once - bash runs a trap only after a
   # foreground child ends, so a stopped run went on with its test and emulator (2026-11-05).
-  SERIAL=$SERIAL EMU_SHOTS="$out/$avd" bash "$here/test-android-emu.sh" "$ZIP" "$APK" > "$out/$avd.txt" 2>&1 &
+  SERIAL=$SERIAL EMU_SHOTS="$out/$name" bash "$LOCK/test-android-emu.sh" "$ZIP" "$APK" > "$out/$name.txt" 2>&1 &
   TP=$!; wait "$TP"; TP=""
-  grep -E "Android SDK|FAIL|failures" "$out/$avd.txt"
-  n=$(grep -oE "failures: [0-9]+" "$out/$avd.txt" | tail -1 | grep -oE "[0-9]+"); total=$((total + ${n:-1}))
-  grep -q "aborting" "$out/$avd-emulator.log" && echo "  (the emulator logged an abort: $out/$avd-emulator.log)"
+  grep -E "Android SDK|FAIL|failures" "$out/$name.txt"
+  n=$(grep -oE "failures: [0-9]+" "$out/$name.txt" | tail -1 | grep -oE "[0-9]+"); total=$((total + ${n:-1}))
+  grep -q "aborting" "$out/$name-emulator.log" && echo "  (the emulator logged an abort: $out/$name-emulator.log)"
   stop_emulator; port=$((port + 2))
 done
 echo "all versions: failures $total"
