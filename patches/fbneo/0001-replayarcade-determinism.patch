@@ -3452,10 +3452,39 @@ index 8f5e48cd1..39e3b667d 100644
  {
  #if defined FBNEO_DEBUG
 diff --git a/src/burner/libretro/libretro.cpp b/src/burner/libretro/libretro.cpp
-index 9e8983568..7650ad119 100644
+index 9e8983568..67de51ffe 100644
 --- a/src/burner/libretro/libretro.cpp
 +++ b/src/burner/libretro/libretro.cpp
-@@ -1474,6 +1474,15 @@ void retro_run()
+@@ -1080,6 +1080,10 @@ static bool open_archive()
+ #endif
+ 
+ 		// Going over every rom to see if they are properly loaded before we continue ...
++		// ReplayArcade loads many games in one process (the library's pictures): the list of this game's
++		// missing files starts empty, or it grew game after game past its 2048 bytes and overwrote the
++		// statics after it (a crash in realloc at the next load).
++		text_missing_files[0] = '\0';
+ 		bool ret = true;
+ 		unsigned num_missing = 0;
+ 		for (unsigned i = 0; i < nRomCount; i++)
+@@ -1098,7 +1102,7 @@ static bool open_archive()
+ 					{
+ 						static char prev[2048];
+ 						strcpy(prev, text_missing_files);
+-						sprintf(text_missing_files, RETRO_ERROR_MESSAGES_11, prev, rom_name, ri.nCrc);
++						snprintf(text_missing_files, sizeof(text_missing_files), RETRO_ERROR_MESSAGES_11, prev, rom_name, ri.nCrc);
+ 					}
+ 					log_cb(RETRO_LOG_ERROR, "[FBNeo] ROM at index %d with name %s and CRC 0x%08x is required\n", i, rom_name, ri.nCrc);
+ 					ret = false;
+@@ -1109,7 +1113,7 @@ static bool open_archive()
+ 		{
+ 			static char prev[2048];
+ 			strcpy(prev, text_missing_files);
+-			sprintf(text_missing_files, RETRO_ERROR_MESSAGES_12, prev, (num_missing - 18));
++			snprintf(text_missing_files, sizeof(text_missing_files), RETRO_ERROR_MESSAGES_12, prev, (num_missing - 18));
+ 		}
+ 
+ 		BurnExtLoadRom = archive_load_rom;
+@@ -1474,6 +1478,15 @@ void retro_run()
  		bUpdateAudioLatency = false;
  	}
  
