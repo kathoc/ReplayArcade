@@ -88,6 +88,10 @@ close_system() { for i in $(seq 1 10); do app_top && return 0; $A shell input ke
 UPRIGHT='swapchain 1080x2424\|surface: changed 1080x2424'
 mark() { UP0=$(log_lines "$UPRIGHT"); }
 upright() { [ "$(log_lines "$UPRIGHT")" -gt "$UP0" ]; }
+# Back from a system screen (marked before leaving): the app's surface is made again before the next tap on
+# it. A tap while it is being made is lost (2026-11-05: the Settings taps after B's pick went nowhere, and the
+# dialog's keys that followed started the game in the library).
+settle() { wait_for upright 20 || echo "  (no new surface: $*)"; sleep 1; }
 front() { mark; $A shell am start -n $ACT > /dev/null 2>&1; wait_for app_top 30; wait_for upright 40; sleep 2.5; }
 cold() { $A shell am force-stop $P; front; }
 # The app runs in the system's language (pm clear: Language = Auto); the emulator's is English. Rows and the
@@ -101,9 +105,19 @@ empty_add_button() { tap 230 1172; }   # the empty library's first button
 # "dialog: <title> -> <button>" when answered: keys are sent once one is up (a fixed wait sent them early
 # on a slow start, and the dialog stayed open with the picker's run after it failed in a chain).
 dialog_up() { applog | grep -- "dialog: " | tail -1 | grep -qv -- " -> "; }   # the last one appeared, not answered
-dialog_wait() { wait_for dialog_up 30; sleep 0.5; }
+# Keys go to the focused window only (a tap does not need it): back from a system screen the app may have its
+# surface again before the input focus (2026-11-05, Android 13: a dialog up, its keys gone).
+focused() { $A shell dumpsys window | grep -m1 mCurrentFocus | grep -q "$P/"; }
+dialog_wait() { wait_for dialog_up 30; focused || echo "  (a dialog up, the focus elsewhere: $($A shell dumpsys window | grep -m1 mCurrentFocus | tr -d '\r'))"; wait_for focused 20 || echo "  (keys sent without the focus: $(applog | grep 'dialog: ' | tail -1 | sed 's/.*dialog: //'))"; sleep 0.5; }
 dialog_first() { dialog_wait; key KEYCODE_ENTER; }                          # Add ROMs: Search the Device
 dialog_second() { dialog_wait; key KEYCODE_DPAD_RIGHT; sleep 0.4; key KEYCODE_ENTER; }  # Add ROMs: Choose Files
+# Add ROMs' "Choose Files" by touch, as a phone is used (A keeps the keys: the keyboard / gamepad route).
+# The button: measured on the 1080x2424 screen, English.
+# Open (2026-11-05): on a wiped Android 13 emulator (2 GB) early in its life, right after a ROM was added,
+# the app sometimes ignored taps and keys for 20 s and more while it drew (the input reached its focused
+# window; the system sent trim-memory 5..15). Not seen on the same emulator later, nor in 30 rounds outside
+# the matrix. C1 saves the app log, dumpsys input and the focus when it fails.
+dialog_choose() { dialog_wait; tap 409 1260; }
 results_add_all() { dialog_wait; key KEYCODE_ENTER; }                       # the search's result: Add All
 # The device's own storage in the picker (its name is the model's: "sdk_gphone64_arm64", "Android SDK built for arm64" ...).
 STORAGE='sdk_gphone[^"]*|Android SDK[^"]*|Internal storage|内部ストレージ'
@@ -141,42 +155,43 @@ check "A1 empty library: Add ROMs > Choose Files opens the picker" wait_for pick
 check "A2 the picker starts with 1942.zip listed" wait_for 'screen_has "1942.zip"' 40
 # B. Pick it: copied, the library shows it (a scan result applied without slack).
 lib0=$(log_lines "library: 1 ROMs")
-tap_text "1942.zip"; wait_for app_top 30
+mark; tap_text "1942.zip"; wait_for app_top 30; settle B
 check "B1 the zip is copied into the ROM folder" wait_for "applog | grep -q 'import: 1942.zip ->'" 20
 check "B2 the library lists it" wait_for "[ \$(log_lines 'library: 1 ROMs') -gt $lib0 ]" 20
 # C. Settings > Add ROMs > Choose Files, cancel, again at the same spot, five times.
 folders_page
 # Back from the picker, the tap waits for the app's surface to be made again (what a user sees) - and is not
 # repeated: a tap that does nothing after coming back is the fault this check is for.
-ok=1; for n in 1 2 3 4 5; do tap 540 $ROW_ADD; sleep 1.2; dialog_second; wait_for picker_top 60 || { ok=0; echo "  C1: no picker at round $n: $(applog | grep 'dialog: .* -> ' | tail -1 | sed 's/.*dialog: //') / $(applog | grep 'import:' | tail -1 | sed 's/.*import: //')"; break; }
-  mark; close_system; wait_for upright 20 || echo "  C1: no new surface after round $n"; sleep 1; done
+ok=1; for n in 1 2 3 4 5; do tap 540 $ROW_ADD; sleep 1.2; dialog_choose; wait_for picker_top 60 || { ok=0; echo "  C1: no picker at round $n: $(applog | grep 'dialog: .* -> ' | tail -1 | sed 's/.*dialog: //') / $(applog | grep 'import:' | tail -1 | sed 's/.*import: //')"
+    applog > "$OUT/C1-applog.txt"; $A shell dumpsys input > "$OUT/C1-input.txt"; $A shell dumpsys window | grep -E "mCurrentFocus|mFocusedApp" > "$OUT/C1-focus.txt"; break; }
+  mark; close_system; settle "C1 round $n"; done
 check "C1 Choose Files opens the picker again after each cancel (5x)" [ $ok = 1 ]
 # D. The picker remembers the folder of the last pick: pick from /sdcard/ROMs, then it starts there.
-tap 540 $ROW_ADD; sleep 1.2; dialog_second; wait_for picker_top; sleep 2
+tap 540 $ROW_ADD; sleep 1.2; dialog_choose; wait_for picker_top; sleep 2
 # The picker starts in Download (B's pick): its path bar's first part is the device's storage; Android 10
 # has no path bar (a drop-down title), there the storage is in the roots drawer.
 rem0=$(log_lines "import: remembered .*ROMs")
 wait_for 'screen_has "1942.zip"' 20
 in_roms='! screen_has "Download" && screen_has "1942.zip"'
 tap_until "$STORAGE" 'screen_has "ROMs"' || { tap_until "Show roots|ルートを表示" 'screen_has "$STORAGE"'; tap_until "$STORAGE" 'screen_has "ROMs"'; }
-tap_until "ROMs" "$in_roms"; sleep 1; tap_text "1942.zip"
+tap_until "ROMs" "$in_roms"; sleep 1; mark; tap_text "1942.zip"
 wait_for app_top 30 && wait_for "[ \$(log_lines 'import: remembered .*ROMs') -gt $rem0 ]" 10 \
   || { fail "D0 picked 1942.zip in /sdcard/ROMs"; close_system; }
-sleep 2
-tap 540 $ROW_ADD; sleep 1.2; dialog_second; wait_for picker_top; sleep 2
+settle D0
+tap 540 $ROW_ADD; sleep 1.2; dialog_choose; wait_for picker_top; sleep 2
 check "D1 the next picker starts in /sdcard/ROMs" screen_has "ROMs"
-close_system; sleep 1.5
+mark; close_system; settle D1
 # E. Open Folder (ROM Folder > Open Folder): Files shows the ROM folder; back in the app.
 tap 540 $ROW_ROMS; sleep 1.5; dialog_first   # ROM Folder: Open Folder
 check "E1 Files opens" wait_for files_top
 sleep 2; check "E2 Files shows the ROM folder with the zip" screen_has "1942.zip"
-close_system; check "E3 back in the app" wait_for app_top
+mark; close_system; check "E3 back in the app" wait_for app_top; settle E3
 # F. Home and back three times: the surface is released before it goes, no acquire on a lost surface.
 before=$(log_lines "vkAcquireNextImageKHR failed"); rel0=$(log_lines "Vulkan surface released")
 for n in 1 2 3; do $A shell input keyevent KEYCODE_HOME; sleep 2; front; done
 check "F1 the surface released each time" [ $(( $(log_lines "Vulkan surface released") - rel0 )) -ge 3 ]
 check "F2 no frame on a lost surface" [ "$(log_lines "vkAcquireNextImageKHR failed")" = "$before" ]
-tap 540 $ROW_ADD; sleep 1.2; dialog_second
+tap 540 $ROW_ADD; sleep 1.2; dialog_choose
 check "F3 Add ROMs works after home and back" wait_for picker_top
 close_system
 fi
