@@ -57,7 +57,7 @@ final class FrontendBridgeTests: XCTestCase {
         XCTAssertEqual(InputCatalog.hotkeyActions.first?.id, "hk.rewind")
         XCTAssertEqual(InputCatalog.gameActions.first?.label, "↑ Up")
         XCTAssertEqual(InputAction.Group.hotkey.title, "Hotkeys")
-        XCTAssertEqual(InputCatalog.controllerLayoutVersion, 8)
+        XCTAssertEqual(InputCatalog.controllerLayoutVersion, 9)
         let c = InputCatalog.parse(InputCatalog.defaultConfigJSON())!
         XCTAssertEqual(c.turboPeriod, 4)
         XCTAssertEqual(c.socd, "neutral")

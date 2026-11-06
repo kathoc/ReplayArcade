@@ -12,13 +12,15 @@ enum QMPage: String, CaseIterable, Hashable {
     case practice
     case share, stream
     case display, displayShape, crtDetail
-    case controls, controller, assign, bindings, controlsDetail
+    case controls, controller, assign, bindings, controlsDetail, turbo
     case sound
+    case play
     case system, about   // about = System › ReplayNES Version (the version and the updates)
     case game, reset
 
-    /// The four settings pages (L / R switch between them; the Settings tile opens the first).
-    static let settingsTabs: [QMPage] = [.display, .controls, .sound, .system]
+    /// The five settings pages (L / R switch between them; the Settings tile opens the first).
+    /// Matches the shared frontend's "Settings by purpose" order (frontend/src/menu.cpp).
+    static let settingsTabs: [QMPage] = [.display, .controls, .sound, .play, .system]
 
     /// The top level's tiles, in order: the item ids of the shared core's "quick" page
     /// (frontend/src/menu.cpp, rnf_menu_*), which the Linux / Windows frontends draw.
@@ -49,6 +51,8 @@ enum QMPage: String, CaseIterable, Hashable {
         case .bindings: return "controls.keyboard"
         case .controlsDetail: return "controls.detail"
         case .sound: return "settings.sound"
+        case .play: return "settings.play"
+        case .turbo: return "controls.turbo_page"
         case .system: return "settings.system"
         case .about: return "system.about"
         case .game: return "game"
@@ -60,11 +64,11 @@ enum QMPage: String, CaseIterable, Hashable {
         switch self {
         case .top: return nil
         case .retry, .practice, .share, .game: return .top
-        case .display, .controls, .sound, .system: return .top
+        case .display, .controls, .sound, .play, .system: return .top
         case .bookmarks: return .retry
         case .stream: return .share
         case .crtDetail, .displayShape: return .display
-        case .controller, .bindings, .controlsDetail: return .controls
+        case .controller, .bindings, .controlsDetail, .turbo: return .controls
         case .assign: return .controller   // the action picker of a button on the diagram
         case .about: return .system
         case .reset: return .game
@@ -133,7 +137,7 @@ enum QMPage: String, CaseIterable, Hashable {
         case .retry, .bookmarks: return "clock.arrow.circlepath"
         case .practice: return "target"
         case .share, .stream: return "square.and.arrow.up"
-        case .display, .displayShape, .crtDetail, .controls, .controller, .assign, .bindings, .controlsDetail, .sound, .system, .about:
+        case .display, .displayShape, .crtDetail, .controls, .controller, .assign, .bindings, .controlsDetail, .turbo, .sound, .play, .system, .about:
             return "gearshape"
         case .game, .reset: return "gamecontroller"
         }
@@ -156,6 +160,8 @@ enum QMPage: String, CaseIterable, Hashable {
         case .bindings: return String(localized: "Keyboard")
         case .controlsDetail: return String(localized: "Controls Details")
         case .sound: return String(localized: "Sound")
+        case .play: return String(localized: "Play")
+        case .turbo: return String(localized: "Turbo")
         case .system: return String(localized: "System")
         case .about: return String(localized: "ReplayNES Version")
         case .game: return String(localized: "Game")

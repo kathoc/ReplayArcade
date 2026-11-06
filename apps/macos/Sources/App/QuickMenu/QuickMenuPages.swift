@@ -84,6 +84,8 @@ enum QuickMenuPages {
         case .bindings: return bindings(m, menu)
         case .controlsDetail: return QMContent(items: controlsDetail(m))
         case .sound: return QMContent(items: sound(m))
+        case .play: return QMContent(items: play(m))
+        case .turbo: return QMContent(items: turbo(m))
         case .system: return QMContent(items: system(m))
         case .about: return QMContent(items: about())
         case .game: return QMContent(items: game(m, menu))
@@ -255,14 +257,12 @@ enum QuickMenuPages {
             choice("flash", "bolt.trianglebadge.exclamationmark", String(localized: "Reduce Flashing"),
                    String(localized: "Tone down full-screen flashes (photosensitivity)"),
                    levels.map(\.label), levels.firstIndex(of: m.flashLevel) ?? 2) { m.flashReduction = levels[$0].rawValue },
-            toggle("vtr", "backward.fill", String(localized: "VTR Effect"),
-                   String(localized: "Videotape-style noise while rewinding (display only)"), m.vtrEffect) { m.vtrEffect = $0 },
             link("shape", "aspectratio", String(localized: "Picture Shape"), String(localized: "8:7 pixels, hide the edges, blurred sides"), .displayShape),
             link("crtDetail", "slider.horizontal.3", String(localized: "CRT Details"), String(localized: "Scanlines, afterglow and signal of the CRT"), .crtDetail),
         ]
     }
 
-    /// Settings › Display › Picture Shape (moved here so Display keeps six rows with VTR Effect).
+    /// Settings › Display › Picture Shape (its own page; VTR Effect now lives on Settings › Play).
     private static func displayShape(_ m: AppModel) -> [QMItem] {
         [
             toggle("par", "rectangle.arrowtriangle.2.outward", "8:7", String(localized: "Pixel aspect ratio of a CRT TV"), m.displayPAR87) { m.displayPAR87 = $0 },
@@ -305,12 +305,9 @@ enum QuickMenuPages {
                  String(localized: "See and change the buttons on a picture of your controller"), .controller),
             link("bindings", "keyboard", String(localized: "Keyboard"), String(localized: "Keys for the game and the hotkeys"), .bindings),
             confirmButton(m),
-            toggle("dpadPaused", "dpad", String(localized: "D-pad While Paused"),
-                   String(localized: "← / → step one frame while paused"), m.dpadStepWhenPaused) { m.dpadStepWhenPaused = $0 },
-            toggle("pauseRewind", "pause.circle", String(localized: "Pause After Rewind"),
-                   String(localized: "Pause when rewind / fast-forward is released"), m.pauseAfterRewind) { m.pauseAfterRewind = $0 },
-            link("controlsDetail", "slider.horizontal.3", String(localized: "Controls Details"),
-                 String(localized: "Turbo, opposite directions, stick"), .controlsDetail),
+            link("turbo", "bolt", String(localized: "Turbo"), String(localized: "How fast turbo buttons repeat"), .turbo),
+            link("controlsDetail", "slider.horizontal.3", String(localized: "Input Details"),
+                 String(localized: "Opposite directions, stick threshold"), .controlsDetail),
         ]
     }
 
@@ -327,9 +324,32 @@ enum QuickMenuPages {
                       confirm: { set(!south) }, adjust: { _ in set(!south) }, verb: String(localized: "Change"))
     }
 
+    /// Settings › Controls › Input Details: opposite directions, stick threshold, reset. Turbo (speed /
+    /// length) is its own page (Settings › Controls › Turbo); the countdown moved to Settings › Play.
     private static func controlsDetail(_ m: AppModel) -> [QMItem] {
         let c = m.inputConfig
         let policies = ["neutral", "last_wins", "allow"]
+        return [
+            choice("socd", "arrow.left.and.right", String(localized: "Opposite Directions"),
+                   String(localized: "What ←+→ or ↑+↓ pressed together does"),
+                   [String(localized: "Neither"), String(localized: "Last Wins"), String(localized: "Both")],
+                   policies.firstIndex(of: c.socd) ?? 0) { m.input.setSOCD(policies[$0]) },
+            slider("stick", "l.joystick", String(localized: "Stick Threshold"),
+                   String(localized: "How far the stick must tilt to count as the D-pad"),
+                   c.analogThreshold, 0.2...0.9, step: 0.05, text: String(format: "%.2f", c.analogThreshold)) { m.input.setAnalogThreshold($0) },
+            QMItem(id: "resetBindings", icon: "arrow.counterclockwise", title: String(localized: "Default Buttons"),
+                   detail: String(localized: "Restore the default keys and buttons"),
+                   confirm: {
+                       m.input.resetToDefaults()
+                       m.flash(String(localized: "Buttons restored to the defaults"))
+                   }, verb: String(localized: "Restore")),
+        ]
+    }
+
+    /// Settings › Controls › Turbo: speed (presses per second) and press length. Mirrors the shared
+    /// frontend's controls.turbo_page (the per-button "Buttons" sub-page is for many-button layouts, not NES).
+    private static func turbo(_ m: AppModel) -> [QMItem] {
+        let c = m.inputConfig
         let rate = 60.0988 / Double(max(1, c.turboPeriod))
         return [
             QMItem(id: "turbo", icon: "bolt", title: String(localized: "Turbo Speed"),
@@ -343,25 +363,28 @@ enum QuickMenuPages {
                        let p = min(30, max(2, 30 - Int((f * 28).rounded())))
                        m.input.setTurbo(period: p, duty: min(c.turboDuty, p - 1))
                    }),
-            choice("socd", "arrow.left.and.right", String(localized: "Opposite Directions"),
-                   String(localized: "What ←+→ or ↑+↓ pressed together does"),
-                   [String(localized: "Neither"), String(localized: "Last Wins"), String(localized: "Both")],
-                   policies.firstIndex(of: c.socd) ?? 0) { m.input.setSOCD(policies[$0]) },
-            slider("stick", "l.joystick", String(localized: "Stick Threshold"),
-                   String(localized: "How far the stick must tilt to count as the D-pad"),
-                   c.analogThreshold, 0.2...0.9, step: 0.05, text: String(format: "%.2f", c.analogThreshold)) { m.input.setAnalogThreshold($0) },
             slider("duty", "timer", String(localized: "Turbo Press Length"), String(localized: "Frames each turbo press is held"),
                    Double(c.turboDuty), 1...Double(max(2, c.turboPeriod - 1)), step: 1,
                    text: String(localized: "\(c.turboDuty) f")) { m.input.setTurbo(period: c.turboPeriod, duty: Int($0)) },
-            // Here: Controls is full (six rows); its sibling Pause After Rewind is on Controls.
-            toggle("resumeCountdown", "play.circle", String(localized: "Resume Countdown"),
+        ]
+    }
+
+    /// Settings › Play: how play, rewind and resume behave. Mirrors the shared frontend's settings.play
+    /// (frontend/src/menu.cpp). "Play in the Background" is omitted: macOS always keeps emulating when the
+    /// window is hidden or minimised (EmulationController), so there is no toggle.
+    private static func play(_ m: AppModel) -> [QMItem] {
+        let intervals: [Double] = [2, 3, 5, 10, 30]
+        return [
+            toggle("pauseRewind", "pause.circle", String(localized: "Pause After Rewind"),
+                   String(localized: "Pause when rewind / fast-forward is released"), m.pauseAfterRewind) { m.pauseAfterRewind = $0 },
+            toggle("dpadPaused", "dpad", String(localized: "D-pad While Paused"),
+                   String(localized: "← / → step one frame while paused"), m.dpadStepWhenPaused) { m.dpadStepWhenPaused = $0 },
+            toggle("resumeCountdown", "play.circle", String(localized: "Countdown"),
                    String(localized: "3, 2, 1 before play resumes after a pause"), m.resumeCountdown) { m.resumeCountdown = $0 },
-            QMItem(id: "resetBindings", icon: "arrow.counterclockwise", title: String(localized: "Default Buttons"),
-                   detail: String(localized: "Restore the default keys and buttons"),
-                   confirm: {
-                       m.input.resetToDefaults()
-                       m.flash(String(localized: "Buttons restored to the defaults"))
-                   }, verb: String(localized: "Restore")),
+            toggle("vtr", "backward.fill", String(localized: "VTR Effect"),
+                   String(localized: "Videotape-style noise while rewinding (display only)"), m.vtrEffect) { m.vtrEffect = $0 },
+            choice("autosave", "clock", String(localized: "Autosave"), String(localized: "How often your recording is saved in the background"),
+                   intervals.map { "\(Int($0))s" }, intervals.firstIndex(of: m.autosaveInterval) ?? 0) { m.autosaveInterval = intervals[$0] },
         ]
     }
 
@@ -488,7 +511,6 @@ enum QuickMenuPages {
         let cores = ["nestopia", "replaynescore"]
         let langs = ["auto", "ja", "en"]
         let current = langs.firstIndex(of: UILanguage.preference) ?? 0
-        let intervals: [Double] = [2, 3, 5, 10, 30]
         // Only a build with a second core offers the choice; a stale non-default setting stays visible so it can be fixed.
         let offerCore = rn_core_available(RN_CORE_REPLAYNESCORE) != 0 || m.selectedCore != "nestopia"
         let core = offerCore ? [choice("core", "cpu", String(localized: "Core"),
@@ -499,8 +521,6 @@ enum QuickMenuPages {
                    [String(localized: "Auto"), UILanguage.nativeName("ja"), UILanguage.nativeName("en")], current) {
                 UILanguage.preference = langs[$0]
             },
-            choice("autosave", "clock", String(localized: "Autosave"), String(localized: "How often your recording is saved in the background"),
-                   intervals.map { "\(Int($0))s" }, intervals.firstIndex(of: m.autosaveInterval) ?? 0) { m.autosaveInterval = intervals[$0] },
             toggle("latency", "speedometer", String(localized: "Latency Meter"),
                    String(localized: "Show input and display latency over the game"), m.showLatency) { m.showLatency = $0 },
             toggle("flashBadge", "bolt.badge.checkmark", String(localized: "Flash Notice"),

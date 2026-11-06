@@ -685,26 +685,6 @@
         }
       }
     },
-    "The confirm button, where the buttons are": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "決定ボタンと、ボタンの位置"
-          }
-        }
-      }
-    },
-    "ABXY Buttons": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ABXYボタン"
-          }
-        }
-      }
-    },
     "ABXY Button Positions": {
       "localizations": {
         "ja": {
@@ -871,16 +851,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "練習するにはマーカーを2個置いてください"
-          }
-        }
-      }
-    },
-    "The empty sides show the game enlarged, blurred and dimmed": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "画面の空いた部分に、ゲーム画面を拡大してぼかし、少し暗くして表示します"
           }
         }
       }
@@ -1432,16 +1402,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "8:7"
-          }
-        }
-      }
-    },
-    "8:7 pixels, hide the edges": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "8:7・端を隠す"
           }
         }
       }
@@ -2096,16 +2056,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "やり直す前に戻しました"
-          }
-        }
-      }
-    },
-    "Back to nesterm’s defaults": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "nesterm の初期値に戻す"
           }
         }
       }
@@ -3537,16 +3487,6 @@
         }
       }
     },
-    "Fast-Forward": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "早送り"
-          }
-        }
-      }
-    },
     "FILL": {
       "localizations": {
         "ja": {
@@ -3598,16 +3538,6 @@
       }
     },
     "Flash Notice": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "点滅抑制の表示"
-          }
-        }
-      }
-    },
-    "Flash Badge": {
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -3747,16 +3677,6 @@
         }
       }
     },
-    "Full screen, UI size, autosave": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "フルスクリーン・UI の大きさ・自動保存"
-          }
-        }
-      }
-    },
     "Game": {
       "localizations": {
         "ja": {
@@ -3803,16 +3723,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "全体の設定"
-          }
-        }
-      }
-    },
-    "Global and per-button turbo timing": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全体とボタンごとの連射の設定"
           }
         }
       }
@@ -4461,16 +4371,6 @@
         }
       }
     },
-    "Latency Stats": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "遅延の表示"
-          }
-        }
-      }
-    },
     "Left": {
       "localizations": {
         "ja": {
@@ -4877,16 +4777,6 @@
         }
       }
     },
-    "ROM and project folders, settings file": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ROMとプロジェクトのフォルダ、設定ファイル"
-          }
-        }
-      }
-    },
     "RX": {
       "localizations": {
         "ja": {
@@ -5214,16 +5104,6 @@
         }
       }
     },
-    "Measured latency and timing (F3)": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "測った遅延とタイミング（F3）"
-          }
-        }
-      }
-    },
     "Menu": {
       "localizations": {
         "ja": {
@@ -5270,36 +5150,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "リフレッシュ遅れ / ジャダー"
-          }
-        }
-      }
-    },
-    "More": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "詳細"
-          }
-        }
-      }
-    },
-    "More Controls": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "操作の詳細"
-          }
-        }
-      }
-    },
-    "More Settings": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "システムの詳細"
           }
         }
       }
@@ -5902,16 +5752,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "巻き戻し・早送りを離したら一時停止する"
-          }
-        }
-      }
-    },
-    "Resume Countdown": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "再開時のカウントダウン"
           }
         }
       }
@@ -7061,16 +6901,6 @@
         }
       }
     },
-    "Scanlines, afterglow, signal": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "走査線・残光・電波"
-          }
-        }
-      }
-    },
     "Search": {
       "localizations": {
         "ja": {
@@ -7177,16 +7007,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "キー設定"
-          }
-        }
-      }
-    },
-    "Settings File": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "設定ファイル"
           }
         }
       }
@@ -7513,16 +7333,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "入力・表示の遅延をゲームの上に表示します"
-          }
-        }
-      }
-    },
-    "Show a badge while flashes are reduced": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "点滅を抑えている間バッジを表示"
           }
         }
       }
@@ -8455,16 +8265,6 @@
         }
       }
     },
-    "Turbo, opposite directions, stick": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "連射、逆方向の同時押し、スティック"
-          }
-        }
-      }
-    },
     "Turn the console off and on again (recorded)": {
       "localizations": {
         "ja": {
@@ -8689,16 +8489,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "バージョン"
-          }
-        }
-      }
-    },
-    "Version, updates and folders": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バージョン・アップデート・フォルダ"
           }
         }
       }
@@ -9369,16 +9159,6 @@
         }
       }
     },
-    "Screensaver · press any button to return": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "スクリーンセーバー · 何か押すと戻ります"
-          }
-        }
-      }
-    },
     "No ROMs in the ROM folder yet": {
       "localizations": {
         "ja": {
@@ -9435,6 +9215,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "縦"
+          }
+        }
+      }
+    },
+    "Opposite directions, stick threshold": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "反対方向の同時押し、スティックのしきい値"
           }
         }
       }

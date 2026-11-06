@@ -172,6 +172,7 @@ final class InputManager {
     /// layout 6: bindings to HOME / guide (never assignable) are dropped.
     /// layout 7: pad 1's L3 = "hk.undo_take" (Undo of a retry) unless L3 is taken.
     /// layout 8: pad 1's L slow / R pause dropped (L / R alone do nothing in play: no misfires).
+    /// layout 9: pad 1's Undo of a retry moves from L3 alone to L3 + R3 together (L3 alone misfired).
     private func migrateControllerLayout() {
         let d = UserDefaults.standard
         let from = d.integer(forKey: "controllerLayoutVersion")
@@ -185,6 +186,7 @@ final class InputManager {
         if from < 6 { changed = apply(InputCatalog.homeMigration(config)) || changed }
         if from < 7 { changed = apply(InputCatalog.undoMigration(config)) || changed }
         if from < 8 { changed = apply(InputCatalog.shoulderStepMigration(config)) || changed }
+        if from < 9 { changed = apply(InputCatalog.undoChordMigration(config)) || changed }
         guard changed else { return }
         if let p = rn_input_save_json(handle) {
             try? String(cString: p).write(to: Self.configURL, atomically: true, encoding: .utf8)

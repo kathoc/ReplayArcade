@@ -146,7 +146,7 @@ final class MenuMigrationTests: XCTestCase {
         XCTAssertTrue(plan.unbind.isEmpty)
         XCTAssertEqual(Set(plan.bind.map { "\($0.0)=\($0.1)" }),
                        ["gc0:leftShoulder+gc0:rightShoulder=hk.menu", "kb:53=hk.menu"])
-        XCTAssertEqual(InputCatalog.controllerLayoutVersion, 8)
+        XCTAssertEqual(InputCatalog.controllerLayoutVersion, 9)
         XCTAssertTrue(InputCatalog.isCombo("gc0:leftShoulder+gc0:rightShoulder"))
         XCTAssertFalse(InputCatalog.isCombo("kb:53"))
         // Esc already bound to something else: kept, only the pad chord is added.
@@ -156,9 +156,12 @@ final class MenuMigrationTests: XCTestCase {
     }
 
     /// Layout 6 -> 7 (InputManager.migrateControllerLayout): pad 1's L3 = Undo Retry, unless L3 is taken.
+    /// (Layout 9 default moved Undo to the L3 + R3 chord; the 6 -> 7 step below still binds L3 alone, which
+    /// the later 8 -> 9 chord migration converts.)
     func testLayout6FileGetsUndoOnL3() {
         let defaults = InputCatalog.parse(InputCatalog.defaultConfigJSON())!
-        XCTAssertEqual(InputCatalog.boundInput(defaults, action: "hk.undo_take", pad: true), "gc0:leftThumb")
+        XCTAssertTrue(defaults.bindings.contains { $0.input == "gc0:leftThumb+gc0:rightThumb" && $0.action == "hk.undo_take" },
+                      "layout 9 default: Undo of a retry is the L3 + R3 chord")
         let old = defaults.bindings.filter { $0.action != "hk.undo_take" || !$0.input.hasPrefix("gc0:") }
         func config(_ b: [(input: String, action: String)]) -> InputCatalog.Config {
             InputCatalog.Config(bindings: b, turboPeriod: defaults.turboPeriod, turboDuty: defaults.turboDuty,
