@@ -139,8 +139,12 @@ main の 0.6.5 リリース成果（`scripts/build-linux-flatpak.sh` の `ARCH`�
 - **データ移行（同エミュレータ）**: 旧の内部 `roms/seedrom.nes`・`projects/seedrom.nesrec/journal.bin` を seed →
   更新・起動後、外部 `ROM/`・`Projects/` へ中身そのまま移動、内部は空、ログに
   「migrate: moved 1 ROMs and 1 projects」。
-- **Q2（RomImport）**: リリースビルドでコンパイル通過（文言含む）。on-device の重複スキップ動作そのものは未実施
-  （共通 RomImport なので ReplayArcade のエミュレータ試験マトリクスが同経路を網羅する）。
+- **Q2（RomImport）on-device**: ReplayNES Android エミュレータ（API36/arm64）で、同名同内容・同名異内容・
+  非 NES の 3 種を 1 回の SEND_MULTIPLE で取り込み検証。結果: 同名同内容＝スキップ、同名異内容＝`game (2).nes`
+  で別名取り込み（原 `game.nes` は上書きされず、SHA-256 で確認）、非 NES（`note.txt`）＝追加されず。件数は
+  1 追加 / 1 スキップ / 1 非ROM、ライブラリに 2 件表示（スキャンログ「2 ROMs」）。スクリーンショット取得。
+  検証は debug 限定の一時フック（`FLAG_DEBUGGABLE` ガード）で本物の SEND_MULTIPLE を本番 RomImport に流す方式。
+  フックは検証後に撤去済み（ブランチに残していない）。
 - **macOS（XCTest）**: 当初ビルド成功・126 中 6 失敗（QuickMenu/入力カタログ/メニュー移行）。原因は新
   フロントエンドの `settings.play`・`controls.turbo_page`・入力カタログ layout 9・L3 Undo に macOS の Swift
   鏡像が未追従で、pristine な generalize(6c32d44) でも同じ 6 件が再現（＝マージ起因でなく generalize の
@@ -151,10 +155,11 @@ main の 0.6.5 リリース成果（`scripts/build-linux-flatpak.sh` の `ARCH`�
   - 判断 1 件: frontend の Play ページにある「Play in the Background」は、macOS が常時背景再生（ウィンドウ非表示でも
     描画継続、トグルなし）のため macOS では行を省略（既存の macOS 固有省略と同じ扱い）。トグル新設が要るなら follow-up。
 - **Linux（Lima）**: merge 版の flatpak ビルド（aarch64、SDK 内コンパイル）が **成功**（exit 0）。
-- Windows の VM 試験は macsrv 不可（Parallels Pro 必要）。必要時に旧 Mac で実施。
+- **Windows（x86_64 / aarch64）**: `scripts/build-windows.sh all` で両アーキのビルド成功
+  （`build/windows-x86_64` / `build/windows-aarch64` に `ReplayNES.exe`＝PE32+ x86-64 / Aarch64、
+  `dist/ReplayNES-0.6.5-windows-{x64,arm64}.zip`）。VM 試験は旧 Mac で実施（macsrv は Parallels Pro 不可）。
 
 ## 8. follow-up（別途・要判断）
 
-- **Q2（RomImport）の on-device 重複スキップ動作**は未実施（共通 RomImport なので ReplayArcade のエミュ試験
-  マトリクスが同経路を網羅）。
 - **ReplayArcade サブモジュール更新**（`dfb3bc5` → `6c32d44` 以降）はユーザー承認制。提案のみ（未実施）。
+- **macOS の「Play in the Background」トグル**: 現状は macOS 固有差分として省略。新設が要るなら対応（§7 参照）。
