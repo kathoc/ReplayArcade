@@ -31,6 +31,10 @@ OUT=${EMU_SHOTS:-$(dirname "$0")/../build/emu-shots}; rm -rf "$OUT"; mkdir -p "$
 SDK=$($A shell getprop ro.build.version.sdk | tr -d '\r')
 echo "Android SDK $SDK ($($A shell getprop ro.build.version.release | tr -d '\r'))"
 fails=0
+# The checks count the app's log lines before and after (logcat): a ring buffer that drops its oldest lines
+# mid-run made the counts go down (2026-11-06, a long-used emulator: F1 and G failed with the releases and the
+# copies in the log). A buffer large enough for a run, emptied at its start.
+$A logcat -G 16M >/dev/null 2>&1; $A logcat -c >/dev/null 2>&1
 # Taps come from the device's own touchscreen (sendevent, as root) when it can: Android 11's picker ignores
 # `input tap` (an event with no input device, deviceId -1) on its files and folders, while a finger works
 # (found 2026-11-05: the same tap through the emulator's touchscreen picks the file). Else `input`.
@@ -81,6 +85,17 @@ press_text() { local xy; xy=$(node_xy "$1") || return 1; set -- $xy; hold $1 $2 
 # tap_until TEXT CONDITION: tap the node with TEXT until CONDITION holds (3 tries): a list still being laid
 # out takes a tap at a place its node is about to leave.
 tap_until() { for t in 1 2 3; do tap_text "$1" && wait_for "$2" 10 && return 0; done; return 1; }
+# share_to_app LABEL: in an open share sheet, LABEL (the app, or its Direct Share entry); if it is not shown, the
+# sheet is pulled up for its whole app list (Android 10 shows one row at first, and "Direct share not available"
+# at times), then LABEL or the app.
+# The sheet is gone when the activity in front is no longer the system's chooser (its text cannot tell: "Share"
+# is also the Files app's button).
+sheet_gone='! top | grep -qiE "ChooserActivity|intentresolver|ResolverActivity"'
+share_to_app() {
+  tap_until "$1" "$sheet_gone" && return 0
+  $A shell input swipe 540 1900 540 600 400; sleep 2
+  tap_until "$1|ReplayArcade" "$sheet_gone"
+}
 screen_has() { ui_dump | grep -qE "(text|content-desc)=\"($1)\""; }
 close_system() { for i in $(seq 1 10); do app_top && return 0; $A shell input keyevent KEYCODE_BACK; sleep 1.2; done; }
 # In front and drawing upright since this start: a line after the log's length at the start says the swapchain
@@ -121,12 +136,18 @@ dialog_choose() { dialog_wait; tap 409 1260; }
 results_add_all() { dialog_wait; key KEYCODE_ENTER; }                       # the search's result: Add All
 # The device's own storage in the picker (its name is the model's: "sdk_gphone64_arm64", "Android SDK built for arm64" ...).
 STORAGE='sdk_gphone[^"]*|Android SDK[^"]*|Internal storage|内部ストレージ'
-grant_all_files() {  # on the system's page / dialog the app opened: allow
-  sleep 2
+# On the system's page / dialog the app opened: allow. Waited for (a slow device showed the page after the 2 s
+# that were waited, the tap found nothing, Back refused: the app fell back to the picker), and on Android 11+
+# checked in the app ops before going back.
+ALL_FILES='Allow access to manage all files|すべてのファイルの管理権を付与|Permit access to manage all files'
+files_allowed() { $A shell appops get $P MANAGE_EXTERNAL_STORAGE | grep -q "allow"; }
+grant_all_files() {
   if [ "$SDK" -ge 30 ]; then
-    tap_text "Allow access to manage all files|すべてのファイルの管理権を付与|Permit access to manage all files" || tap_text "Allow"
+    wait_for "screen_has '$ALL_FILES'" 30
+    tap_until "$ALL_FILES" files_allowed
     sleep 1; $A shell input keyevent KEYCODE_BACK
   else
+    wait_for 'screen_has "Allow|ALLOW|許可"' 30
     tap_text "Allow|ALLOW|許可"
   fi
 }
@@ -153,6 +174,9 @@ empty_add_button; sleep 1.5; dialog_second
 check "A1 empty library: Add ROMs > Choose Files opens the picker" wait_for picker_top
 # The picker may show Recent first and go to its start folder once its places are loaded (slow on a busy host).
 check "A2 the picker starts with 1942.zip listed" wait_for 'screen_has "1942.zip"' 40
+# The picker asks for ROM types (RomImport.ROM_TYPES): no Images / Videos / Audio / Documents views, where no zip
+# ever appears (a person who went there saw no ROMs at all).
+check "A3 the picker offers no Images / Audio / Videos views" eval '! screen_has "Images|Audio|Videos|画像|音声|動画"'
 # B. Pick it: copied, the library shows it (a scan result applied without slack).
 lib0=$(log_lines "library: 1 ROMs")
 mark; tap_text "1942.zip"; wait_for app_top 30; settle B
@@ -182,14 +206,18 @@ tap 540 $ROW_ADD; sleep 1.2; dialog_choose; wait_for picker_top; sleep 2
 check "D1 the next picker starts in /sdcard/ROMs" screen_has "ROMs"
 mark; close_system; settle D1
 # E. Open Folder (ROM Folder > Open Folder): Files shows the ROM folder; back in the app.
+back0=$(log_lines "back from the Files app")
 tap 540 $ROW_ROMS; sleep 1.5; dialog_first   # ROM Folder: Open Folder
 check "E1 Files opens" wait_for files_top
 sleep 2; check "E2 Files shows the ROM folder with the zip" screen_has "1942.zip"
 mark; close_system; check "E3 back in the app" wait_for app_top; settle E3
+sleep 3; check "E4 no search offered with ROMs in the folder" [ "$(log_lines "back from the Files app")" = "$back0" ]
 # F. Home and back three times: the surface is released before it goes, no acquire on a lost surface.
 before=$(log_lines "vkAcquireNextImageKHR failed"); rel0=$(log_lines "Vulkan surface released")
 for n in 1 2 3; do $A shell input keyevent KEYCODE_HOME; sleep 2; front; done
-check "F1 the surface released each time" [ $(( $(log_lines "Vulkan surface released") - rel0 )) -ge 3 ]
+# When the frame loop was paused before a frame saw the surface go, the first frame back releases it (the gate
+# keeps it from drawing meanwhile: docs/design/ANDROID.md "Black screen"): the count is waited for.
+check "F1 the surface released each time" wait_for "[ \$(( \$(log_lines 'Vulkan surface released') - $rel0 )) -ge 3 ]" 20
 check "F2 no frame on a lost surface" [ "$(log_lines "vkAcquireNextImageKHR failed")" = "$before" ]
 tap 540 $ROW_ADD; sleep 1.2; dialog_choose
 check "F3 Add ROMs works after home and back" wait_for picker_top
@@ -198,7 +226,7 @@ fi
 
 if [ "${ONLY:-}" != H ]; then
 # G. Share from Files, the app stopped (the ROM waits for the ROM folder) and running.
-for state in stopped running; do
+for state in stopped running direct; do
   imp0=$(log_lines "import: 1942.zip ->")
   [ $state = stopped ] && $A shell am force-stop $P
   [ $state = running ] && { app_top || front; }
@@ -207,12 +235,37 @@ for state in stopped running; do
   wait_for files_top; sleep 2.5
   press_text "1942.zip"; sleep 1.5
   tap_text "Share|共有"; sleep 2.5
-  tap_text "ReplayArcade"
+  # direct: the share sheet's top row (Direct Share, res/xml/shortcuts.xml); else the app in its app list.
+  # The share sheet may still be settling: tapped until it is gone.
+  if [ $state = direct ]; then share_to_app "Add to the ROM folder|ROM フォルダへ追加"; else share_to_app "ReplayArcade"; fi
   check "G $state: Share copies the zip" wait_for "[ \$(log_lines 'import: 1942.zip ->') -gt $imp0 ]" 30
   close_system
 done
 fi
 
+# I. A share of any type of file lists the app (a sending app names a zip as it likes: the app was left out for
+#    application/x-compressed and others), and only ROMs go in.
+missing=""
+for t in application/zip application/x-zip-compressed application/x-compressed application/x-zip-archive multipart/x-zip \
+         application/x-7z-compressed application/octet-stream text/plain image/jpeg; do
+  for act in SEND SEND_MULTIPLE; do
+    $A shell "cmd package query-activities --brief -a android.intent.action.$act -t '$t'" | grep -q "$P/" || missing="$missing $act:$t"
+  done
+done
+[ -z "$missing" ] || echo "   not listed:$missing"
+check "I1 the share sheet lists the app for any type" [ -z "$missing" ]
+$A shell 'echo note > /sdcard/Download/notes.txt'
+nr0=$(log_lines "notes.txt: not a ROM")
+$A shell am force-stop com.google.android.documentsui
+$A shell "am start -a android.intent.action.VIEW -t vnd.android.document/root -d content://com.android.providers.downloads.documents/root/downloads" >/dev/null
+wait_for files_top; sleep 2.5
+press_text "notes.txt"; sleep 1.5
+tap_text "Share|共有"; sleep 2.5
+share_to_app "Add to the ROM folder|ROM フォルダへ追加"
+check "I2 a shared file that is not a ROM is not added" wait_for "[ \$(log_lines 'notes.txt: not a ROM') -gt $nr0 ]" 30
+close_system
+
+if [ "${ONLY:-}" != G ]; then
 # H. Search the Device: ROMs scattered in any folder, in any state; all-files access asked on the way.
 #    (The copies are 1942's bytes under other set names: the search and the copy go by name; such a "wrong"
 #    set must not crash the app when the library tries it - FBNeo's missing-files list overflowed.)
@@ -240,7 +293,41 @@ sleep 25
 check "H6 the app is still running (the library tried the wrong sets)" app_top
 cold; sleep 15
 check "H7 a cold start with the wrong sets in the library" app_top
+# L. A swipe on the library turns the page and opens no card (it begins on the first row's last card).
+sw0=$(log_lines "library: swipe"); pl0=$(log_lines "library: play ")
+$A shell input swipe 940 200 150 220 250; sleep 3
+check "L1 a swipe on the library turns the page" [ "$(log_lines "library: swipe")" -gt "$sw0" ]
+check "L2 the swipe opened no game" [ "$(log_lines "library: play ")" = "$pl0" ]
+fi
+
+# K. Open Folder with an empty ROM folder: back from the Files app, Search the Device is offered (the Files app's
+#    Documents, Images ... list no zip: a person found no ROMs there).
+$A shell pm clear $P >/dev/null
+cold
+folders_page
+off0=$(log_lines "dialog: No ROMs in the ROM folder yet")
+tap 540 $ROW_ROMS; sleep 1.5; dialog_first   # ROM Folder: Open Folder
+wait_for files_top
+mark; close_system; settle K1
+check "K1 back with the ROM folder empty: Search the Device offered" wait_for "[ \$(log_lines 'dialog: No ROMs in the ROM folder yet') -gt $off0 ]" 30
+sleep 1; key KEYCODE_ESCAPE; sleep 1   # Close
+# O. Settings > App > Screen Orientation: Landscape turns the screen, Portrait back, Automatic follows the device
+#    (the run keeps the device upright: user_rotation 0). Each choice is the row's right arrow (its place
+#    measured on the 1080x2424 screen: x 994 upright, 1749 on its side; y 616 both).
+cur_size() { $A shell dumpsys window displays | grep -m1 -oE "cur=[0-9]+x[0-9]+" | cut -d= -f2; }
+cold; tap 930 55; sleep 1.5; tap 745 146; sleep 1.5   # from the library (K left Settings open)
+# input tap, not the touchscreen: its coordinates are the panel's and do not turn with the screen (a tap meant
+# for the landscape row landed elsewhere). The app takes injected events.
+itap() { $A shell input tap "$@"; }
+itap 994 616
+check "O1 Landscape turns the screen" wait_for '[ "$(cur_size)" = 2424x1080 ]' 20
+sleep 2; itap 1749 616
+check "O2 Portrait turns it back" wait_for '[ "$(cur_size)" = 1080x2424 ]' 20
+sleep 2; itap 994 616
+check "O3 Automatic: the device's (upright here)" wait_for '[ "$(applog | grep "screen: orientation" | tail -1 | grep -c auto)" = 1 ] && [ "$(cur_size)" = 1080x2424 ]' 20
 # The whole run: no crash of the app (the crash buffer keeps native aborts and Java exceptions).
 crashes=$($A logcat -d -b crash 2>/dev/null | grep -c "$P\|SDLActivity")
 check "Z no crash of the app in the whole run" [ "$crashes" = 0 ]
+# A failed run keeps its logs (the emulator is wiped with the next version): the app's, and the device's around it.
+if [ "$fails" -gt 0 ]; then applog > "$OUT/applog.txt"; $A logcat -d -v time > "$OUT/logcat.txt" 2>/dev/null; fi
 echo "failures: $fails"
