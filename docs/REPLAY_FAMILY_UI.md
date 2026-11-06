@@ -141,4 +141,19 @@ main の 0.6.5 リリース成果（`scripts/build-linux-flatpak.sh` の `ARCH`�
   「migrate: moved 1 ROMs and 1 projects」。
 - **Q2（RomImport）**: リリースビルドでコンパイル通過（文言含む）。on-device の重複スキップ動作そのものは未実施
   （共通 RomImport なので ReplayArcade のエミュレータ試験マトリクスが同経路を網羅する）。
-- macOS（XCTest）・Linux（Lima、offscreen UI 描画）は実行中/予定。Windows の VM 試験は macsrv 不可。
+- **macOS（XCTest）**: ビルド成功。126 中 **6 失敗**（`CoreMenuTreeTests` 2、`FrontendBridgeTests` 1、
+  `MenuMigrationTests` 2 ＝実質 QuickMenu/入力カタログ/メニュー移行）。内容は新フロントエンドの
+  `settings.play`・`controls.turbo_page`・入力カタログ 9（旧 8）・L3 の Undo バインドに、macOS の Swift 鏡像が
+  未追従。**pristine な generalize(6c32d44) でも同じ 6 件が同じアサーションで再現**したので（apps/macos の
+  Swift ソース/テストはマージで version 文字列1行以外 byte 一致）、**マージ起因ではなく generalize 由来の
+  未完了**。→ §8 の follow-up。
+- **Linux（Lima）**: merge 版の flatpak ビルド（aarch64、SDK 内コンパイル）で検証中。
+- Windows の VM 試験は macsrv 不可（Parallels Pro 必要）。
+
+## 8. follow-up（別途・要判断）
+
+- **macOS の native クイックメニューを新フロントエンドへ追従**（apps/macos の Swift）: `settings.play` と
+  `controls.turbo_page` の QMPage 追加、入力カタログ 9 への更新、L3=Undo など。generalize 側の未完了作業で、
+  本マージとは独立。upstream（generalize）で直すのが筋。現状、macOS の native メニューに Play 設定ページと
+  turbo ページが出ない。
+- **ReplayArcade サブモジュール更新**（`dfb3bc5` → `6c32d44` 以降）はユーザー承認制。提案のみ（未実施）。
