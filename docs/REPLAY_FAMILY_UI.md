@@ -141,19 +141,20 @@ main の 0.6.5 リリース成果（`scripts/build-linux-flatpak.sh` の `ARCH`�
   「migrate: moved 1 ROMs and 1 projects」。
 - **Q2（RomImport）**: リリースビルドでコンパイル通過（文言含む）。on-device の重複スキップ動作そのものは未実施
   （共通 RomImport なので ReplayArcade のエミュレータ試験マトリクスが同経路を網羅する）。
-- **macOS（XCTest）**: ビルド成功。126 中 **6 失敗**（`CoreMenuTreeTests` 2、`FrontendBridgeTests` 1、
-  `MenuMigrationTests` 2 ＝実質 QuickMenu/入力カタログ/メニュー移行）。内容は新フロントエンドの
-  `settings.play`・`controls.turbo_page`・入力カタログ 9（旧 8）・L3 の Undo バインドに、macOS の Swift 鏡像が
-  未追従。**pristine な generalize(6c32d44) でも同じ 6 件が同じアサーションで再現**したので（apps/macos の
-  Swift ソース/テストはマージで version 文字列1行以外 byte 一致）、**マージ起因ではなく generalize 由来の
-  未完了**。→ §8 の follow-up。
-- **Linux（Lima）**: merge 版の flatpak ビルド（aarch64、SDK 内コンパイル）で検証中。
-- Windows の VM 試験は macsrv 不可（Parallels Pro 必要）。
+- **macOS（XCTest）**: 当初ビルド成功・126 中 6 失敗（QuickMenu/入力カタログ/メニュー移行）。原因は新
+  フロントエンドの `settings.play`・`controls.turbo_page`・入力カタログ layout 9・L3 Undo に macOS の Swift
+  鏡像が未追従で、pristine な generalize(6c32d44) でも同じ 6 件が再現（＝マージ起因でなく generalize の
+  未完了）。**この作業で実装を追従させて修正済み**（ユーザー指示、2026-11-06）。QMPage に Play/Turbo を追加し
+  ページ内容を新 IA へ移設、InputManager 移行ラダーを layout 9 へ、テスト期待値も layout 9 へ。l10n は新規 1 行を
+  日本語付きで追加し未使用 22 件を剪定。結果 **test-macos.sh: 126 tests 0 失敗 / l10n 0 問題 / smoke 180 frames**。
+  コミット f10a036。
+  - 判断 1 件: frontend の Play ページにある「Play in the Background」は、macOS が常時背景再生（ウィンドウ非表示でも
+    描画継続、トグルなし）のため macOS では行を省略（既存の macOS 固有省略と同じ扱い）。トグル新設が要るなら follow-up。
+- **Linux（Lima）**: merge 版の flatpak ビルド（aarch64、SDK 内コンパイル）が **成功**（exit 0）。
+- Windows の VM 試験は macsrv 不可（Parallels Pro 必要）。必要時に旧 Mac で実施。
 
 ## 8. follow-up（別途・要判断）
 
-- **macOS の native クイックメニューを新フロントエンドへ追従**（apps/macos の Swift）: `settings.play` と
-  `controls.turbo_page` の QMPage 追加、入力カタログ 9 への更新、L3=Undo など。generalize 側の未完了作業で、
-  本マージとは独立。upstream（generalize）で直すのが筋。現状、macOS の native メニューに Play 設定ページと
-  turbo ページが出ない。
+- **Q2（RomImport）の on-device 重複スキップ動作**は未実施（共通 RomImport なので ReplayArcade のエミュ試験
+  マトリクスが同経路を網羅）。
 - **ReplayArcade サブモジュール更新**（`dfb3bc5` → `6c32d44` 以降）はユーザー承認制。提案のみ（未実施）。
