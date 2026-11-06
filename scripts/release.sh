@@ -177,10 +177,12 @@ flatpak_local() {  # <arch> <repository dir>: this machine's architecture
   local a="$1" R="$2" SRC="$WORK/flatpak-src"
   echo "    $a built here"
   rm -rf "$SRC" "$R" && mkdir -p "$SRC"
-  # Not copied: build output (also ReplayNES's download cache in third_party/replaynes/build) and FBNeo's
+  # Not copied: build output (also ReplayNES's download cache in third_party/replaynes/build, and the Android
+  # build's CMake / Gradle trees: .cxx/ holds a copy of FBNeo with its Windows SDK archive) and FBNeo's
   # Windows SDK archive (src/dep/mingw), which the Flatpak does not use.
   rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
     --exclude='/third_party/replaynes/build/' --exclude='/third_party/fbneo/src/dep/mingw/' \
+    --exclude='.cxx/' --exclude='.gradle/' --exclude='/third_party/replaynes/apps/android/app/build/' \
     --exclude='*.o' --exclude='*.a' --exclude='*.d' "$ROOT/" "$SRC/"
   (cd "$SRC" && find . -type f) | no_game_data
   flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$WORK/flatpak-state" \
