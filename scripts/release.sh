@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Builds, signs and publishes a ReplayArcade release. The x86_64 Flatpak is built here on an x86_64 machine,
-# otherwise taken unsigned from the GitHub Actions run of HEAD (FLATPAK_FROM=actions forces that, FLATPAK_RUN=<id> picks the run).
+# Builds, signs and publishes a ReplayArcade release. The Flatpak is made for x86_64 (Steam Deck) and aarch64
+# (ARM handhelds: AYN Thor on Armada), each built natively: this machine's own architecture with flatpak-builder,
+# x86_64 on another machine taken unsigned from the GitHub Actions run of HEAD (FLATPAK_FROM=actions forces that,
+# FLATPAK_RUN=<id> picks the run). aarch64 needs an aarch64 machine: run it in macsrv's Lima VM "build".
+#   ARCHES="x86_64 aarch64" (default): the Flatpak architectures; one left out keeps its last build in the repository
 #   scripts/release.sh <version>             build, sign, publish (gh-pages Flatpak repository + GitHub release)
 #   NO_PUBLISH=1 scripts/release.sh <version> build and sign into dist/ only
 #   CHANGES=<file.md>: what is new, at the top of the release notes
@@ -11,7 +14,7 @@
 # Outputs (dist/):
 #   ReplayArcade-<v>-windows-x64.zip           ReplayArcade.exe, WinSparkle.dll, README.txt, licences
 #   appcast-windows.xml                        WinSparkle feed, the zip signed with the EdDSA key
-#   io.github.kathoc.ReplayArcade-<v>-x86_64.flatpak   bundle that registers the update repository
+#   io.github.kathoc.ReplayArcade-<v>-<arch>.flatpak   bundles (x86_64, aarch64) that register the update repository
 # and the signed Flatpak repository on gh-pages (https://kathoc.github.io/ReplayArcade/flatpak/).
 # Keys (never printed or copied): ED_KEY (~/.config/replayarcade/sparkle-ed25519.pem, OpenSSL ed25519),
 # GPG_HOME (~/.config/replayarcade/gnupg) with GPG_KEY. The public halves: RN_PRODUCT_UPDATE_PUBLIC_KEY in
@@ -75,9 +78,17 @@ if [ -n "${ANDROID_APK:-}" ]; then
   unzip -Z1 "$ANDROID_APK" | no_game_data || exit 1
 fi
 NAME="ReplayArcade-$VERSION-windows-x64"
-BUNDLE="$APP_ID-$VERSION-x86_64.flatpak"
+ARCHES="${ARCHES:-x86_64 aarch64}"
+BUNDLES=()
+for a in $ARCHES; do
+  case "$a" in x86_64|aarch64) ;; *) echo "ARCHES: x86_64 and/or aarch64 (got $a)"; exit 1 ;; esac
+  # x86_64 also comes from GitHub Actions; any other architecture only from this machine.
+  [ "${RELEASE_ONLY:-0}" = 1 ] || [ "$a" = x86_64 ] || [ "$a" = "$(uname -m)" ] ||
+    { echo "the $a Flatpak is built on an $a machine (this is $(uname -m)): macsrv's Lima VM \"build\""; exit 1; }
+  BUNDLES+=("$DIST/$APP_ID-$VERSION-$a.flatpak")
+done
 if [ "${RELEASE_ONLY:-0}" = 1 ]; then
-  for f in "$DIST/$NAME.zip" "$DIST/appcast-windows.xml" "$DIST/$BUNDLE" "$DIST/$APP_ID.flatpakref"; do
+  for f in "$DIST/$NAME.zip" "$DIST/appcast-windows.xml" "${BUNDLES[@]}" "$DIST/$APP_ID.flatpakref"; do
     [ -f "$f" ] || { echo "RELEASE_ONLY: no $f"; exit 1; }
   done
   git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "RELEASE_ONLY: no tag $TAG"; exit 1; }
@@ -142,40 +153,48 @@ EOF
 xmllint --noout "$DIST/appcast-windows.xml"
 echo "    dist/$NAME.zip ($(du -h "$DIST/$NAME.zip" | cut -f1)), dist/appcast-windows.xml"
 
-# ---- Flatpak (Linux / Steam Deck)
+# ---- Flatpak (Linux: Steam Deck x86_64, ARM handhelds aarch64)
 echo "==> Flatpak"
-# The Flatpak is x86_64 (Steam Deck). On another machine (or FLATPAK_FROM=actions) the unsigned repository comes
-# from the GitHub Actions run of HEAD (.github/workflows/flatpak.yml, the same flatpak-builder call); it is
-# signed here as a local build would be.
-if [ "${FLATPAK_FROM:-}" = actions ] || [ "$(uname -m)" != x86_64 ]; then
+# Each architecture's unsigned repository, signed below as one. The GitHub Actions run is x86_64
+# (.github/workflows/flatpak.yml, the same flatpak-builder call).
+flatpak_from_actions() {  # <repository dir>
+  local R="$1" HEAD_SHA RUN
   HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
   RUN="${FLATPAK_RUN:-$(gh run list --repo "$REPO" --workflow flatpak.yml --commit "$HEAD_SHA" --status success \
     --limit 1 --json databaseId -q '.[0].databaseId')}"
   [ -n "$RUN" ] || { echo "no successful Flatpak run on GitHub Actions for $HEAD_SHA (push it, wait for the run)"; exit 1; }
-  echo "    from GitHub Actions run $RUN"
-  rm -rf "$WORK/flatpak-ci" "$WORK/flatpak-build-repo" && mkdir -p "$WORK/flatpak-ci"
+  echo "    x86_64 from GitHub Actions run $RUN"
+  rm -rf "$WORK/flatpak-ci" "$R" && mkdir -p "$WORK/flatpak-ci"
   gh run download "$RUN" --repo "$REPO" -n flatpak-repo-x86_64 -D "$WORK/flatpak-ci"
   tar -C "$WORK/flatpak-ci" -xf "$WORK/flatpak-ci/flatpak-repo.tar"
-  mv "$WORK/flatpak-ci/repo" "$WORK/flatpak-build-repo"
-  R="$WORK/flatpak-build-repo"
+  mv "$WORK/flatpak-ci/repo" "$R"
   [ "$(cat "$R/replayarcade-commit")" = "$HEAD_SHA" ] || { echo "run $RUN built $(cat "$R/replayarcade-commit"), not HEAD"; exit 1; }
   [ "$(cat "$R/replaynes-commit")" = "$(git -C "$ROOT/third_party/replaynes" rev-parse HEAD)" ] ||
     { echo "run $RUN built another ReplayNES commit"; exit 1; }
   no_game_data < "$R/replayarcade-files"
-else
-SRC="$WORK/flatpak-src"
-rm -rf "$SRC" && mkdir -p "$SRC"
-# Not copied: build output (also ReplayNES's download cache in third_party/replaynes/build) and FBNeo's
-# Windows SDK archive (src/dep/mingw), which the Flatpak does not use.
-rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
-  --exclude='/third_party/replaynes/build/' --exclude='/third_party/fbneo/src/dep/mingw/' \
-  --exclude='*.o' --exclude='*.a' --exclude='*.d' "$ROOT/" "$SRC/"
-(cd "$SRC" && find . -type f) | no_game_data
-flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$WORK/flatpak-state" \
-  --repo="$WORK/flatpak-build-repo" "$WORK/flatpak-build" "$SRC/packaging/linux/$APP_ID.yml" >"$WORK/flatpak.log" 2>&1 ||
-  { tail -30 "$WORK/flatpak.log"; exit 1; }
-(cd "$WORK/flatpak-build/files" && find . -type f) | no_game_data
-fi
+}
+flatpak_local() {  # <arch> <repository dir>: this machine's architecture
+  local a="$1" R="$2" SRC="$WORK/flatpak-src"
+  echo "    $a built here"
+  rm -rf "$SRC" "$R" && mkdir -p "$SRC"
+  # Not copied: build output (also ReplayNES's download cache in third_party/replaynes/build) and FBNeo's
+  # Windows SDK archive (src/dep/mingw), which the Flatpak does not use.
+  rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
+    --exclude='/third_party/replaynes/build/' --exclude='/third_party/fbneo/src/dep/mingw/' \
+    --exclude='*.o' --exclude='*.a' --exclude='*.d' "$ROOT/" "$SRC/"
+  (cd "$SRC" && find . -type f) | no_game_data
+  flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$WORK/flatpak-state" \
+    --repo="$R" "$WORK/flatpak-build-$a" "$SRC/packaging/linux/$APP_ID.yml" >"$WORK/flatpak-$a.log" 2>&1 ||
+    { tail -30 "$WORK/flatpak-$a.log"; exit 1; }
+  (cd "$WORK/flatpak-build-$a/files" && find . -type f) | no_game_data
+}
+for a in $ARCHES; do
+  if [ "$a" = "$(uname -m)" ] && ! { [ "$a" = x86_64 ] && [ "${FLATPAK_FROM:-}" = actions ]; }; then
+    flatpak_local "$a" "$WORK/flatpak-build-repo-$a"
+  else
+    flatpak_from_actions "$WORK/flatpak-build-repo-$a"
+  fi
+done
 gpg --homedir "$GPG_HOME" --export "$GPG_KEY" > "$ROOT/packaging/linux/replayarcade-repo.gpg.new"
 cmp -s "$ROOT/packaging/linux/replayarcade-repo.gpg.new" "$ROOT/packaging/linux/replayarcade-repo.gpg" 2>/dev/null ||
   { echo "packaging/linux/replayarcade-repo.gpg is not the signing key's public key: commit it first"; rm -f "$ROOT/packaging/linux/replayarcade-repo.gpg.new"; exit 1; }
@@ -196,8 +215,10 @@ DEST="$PAGES/flatpak"
 mkdir -p "$DEST"
 [ -f "$DEST/config" ] || ostree init --mode=archive-z2 --repo="$DEST"
 mkdir -p "$DEST/refs/heads" "$DEST/refs/remotes" "$DEST/refs/mirrors"
-flatpak build-commit-from --src-repo="$WORK/flatpak-build-repo" --gpg-sign="$GPG_KEY" --gpg-homedir="$GPG_HOME" \
-  --no-update-summary --subject="ReplayArcade $VERSION" "$DEST" "app/$APP_ID/x86_64/master"
+for a in $ARCHES; do
+  flatpak build-commit-from --src-repo="$WORK/flatpak-build-repo-$a" --gpg-sign="$GPG_KEY" --gpg-homedir="$GPG_HOME" \
+    --no-update-summary --subject="ReplayArcade $VERSION" "$DEST" "app/$APP_ID/$a/master"
+done
 flatpak build-update-repo --title=ReplayArcade --homepage="https://github.com/$REPO" --default-branch=master \
   --gpg-sign="$GPG_KEY" --gpg-homedir="$GPG_HOME" --generate-static-deltas --static-delta-ignore-ref='*.Debug' \
   --prune --prune-depth=2 "$DEST"
@@ -221,17 +242,20 @@ SuggestRemoteName=replayarcade
 Homepage=https://github.com/$REPO
 GPGKey=$GPGKEY_B64
 EOF
-flatpak build-bundle --arch=x86_64 --repo-url="$PAGES_URL" --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-  --gpg-keys="$ROOT/packaging/linux/replayarcade-repo.gpg" "$DEST" "$DIST/$BUNDLE" "$APP_ID" master
+for a in $ARCHES; do
+  flatpak build-bundle --arch="$a" --repo-url="$PAGES_URL" --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+    --gpg-keys="$ROOT/packaging/linux/replayarcade-repo.gpg" "$DEST" "$DIST/$APP_ID-$VERSION-$a.flatpak" "$APP_ID" master
+done
 cp "$DEST/$APP_ID.flatpakref" "$DIST/"
 touch "$PAGES/.nojekyll"
 cat > "$PAGES/index.html" <<EOF
 <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ReplayArcade Flatpak repository</title>
-<p><a href="https://github.com/$REPO">ReplayArcade</a> $VERSION: Flatpak repository for Linux / Steam Deck. No ROMs are included.</p>
+<p><a href="https://github.com/$REPO">ReplayArcade</a> $VERSION: Flatpak repository for Linux / Steam Deck (x86_64) and ARM Linux handhelds (aarch64). No ROMs are included.</p>
 <ul><li><a href="flatpak/$APP_ID.flatpakref">$APP_ID.flatpakref</a>: <code>flatpak install --user ${PAGES_URL}$APP_ID.flatpakref</code></li>
 <li><a href="flatpak/ReplayArcade.flatpakrepo">ReplayArcade.flatpakrepo</a>: <code>flatpak remote-add --user replayarcade ${PAGES_URL}ReplayArcade.flatpakrepo</code></li></ul>
 EOF
-echo "    dist/$BUNDLE ($(du -h "$DIST/$BUNDLE" | cut -f1)), repository $(du -sh "$DEST" | cut -f1)"
+for b in "${BUNDLES[@]}"; do echo "    dist/$(basename "$b") ($(du -h "$b" | cut -f1))"; done
+echo "    repository $(du -sh "$DEST" | cut -f1)"
 
 if [ "${NO_PUBLISH:-0}" = "1" ]; then
   echo "==> NO_PUBLISH=1: not published (dist/, build/gh-pages)"
@@ -268,8 +292,9 @@ NOTES="$WORK/notes.md"
   if [ -n "${CHANGES:-}" ]; then cat "$CHANGES"; echo; fi; } > "$NOTES"
 cat >> "$NOTES" <<EOF
 - **Windows x64**: \`$NAME.zip\` (unzip, run \`ReplayArcade.exe\`; in-app updates use the signed \`appcast-windows.xml\`).
-- **Steam Deck / Linux**: \`flatpak install --user ${PAGES_URL}$APP_ID.flatpakref\` (signed repository, updates with
-  \`flatpak update\`), or the bundle \`$BUNDLE\`.
+- **Steam Deck / Linux (x86_64), ARM Linux handhelds (aarch64)**: \`flatpak install --user ${PAGES_URL}$APP_ID.flatpakref\`
+  (signed repository, updates with \`flatpak update\`), or the bundle for the machine
+  (\`$APP_ID-$VERSION-x86_64.flatpak\` / \`-aarch64.flatpak\`).
 EOF
 if [ ${#ANDROID_ASSET[@]} -gt 0 ]; then cat >> "$NOTES" <<EOF
 - **Android (arm64, Android 10 or later with Vulkan)**: \`ReplayArcade-$VERSION-android-arm64.apk\` (install the APK; the
@@ -284,5 +309,5 @@ Licences: GPL-2.0-or-later with an additional permission for FinalBurn Neo, whic
 licence (COPYING.md, LICENSE-FBNeo.txt).
 EOF
 gh release create "$TAG" --repo "$REPO" --title "ReplayArcade $VERSION" --notes-file "$NOTES" --latest \
-  "$DIST/$NAME.zip" "$DIST/appcast-windows.xml" "$DIST/$BUNDLE" "$DIST/$APP_ID.flatpakref" "${ANDROID_ASSET[@]}"
+  "$DIST/$NAME.zip" "$DIST/appcast-windows.xml" "${BUNDLES[@]}" "$DIST/$APP_ID.flatpakref" "${ANDROID_ASSET[@]}"
 echo "==> done: https://github.com/$REPO/releases/tag/$TAG"
