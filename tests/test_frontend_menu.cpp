@@ -1,6 +1,8 @@
 // Frontend core: the L+R chord detector, the Quick Menu binding (hk.menu, layout 4 -> 5) and the
 // quick menu model (docs/design/UI_REDESIGN.md): tree, features, navigation, no-scroll invariant.
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -481,49 +483,76 @@ TEST_CASE("menu: the Quick Menu is six tiles in one row, Resume first") {
   CHECK(rnf_menu_page_find(m, "takes") < 0);  // docs/design/VTR_UX.md: takes are never shown
   CHECK((itemIds(m, "share") == std::vector<std::string>{"share.export"}));
   CHECK((itemIds(m, "game") == std::vector<std::string>{"game.library", "game.save", "game.save_as", "game.open", "game.reset"}));
-  CHECK((itemIds(m, "settings.display") == std::vector<std::string>{"display.size", "display.crt", "display.flash", "display.vtr",
-                                                                   "display.shape", "display.crt_detail"}));
-  CHECK((itemIds(m, "display.shape") == std::vector<std::string>{"display.par87", "display.overscan"}));
+  CHECK((itemIds(m, "settings.display") == std::vector<std::string>{"display.size", "system.fullscreen", "display.shape",
+                                                                   "display.crt_detail",
+#if RN_PRODUCT_FLASH_FILTER
+                                                                   "display.flash",
+#endif
+                                                                   "system.ui_scale"}));
+  CHECK((itemIds(m, "display.shape") == std::vector<std::string>{"display.par87",
+#if RN_PRODUCT_OVERSCAN_CROP
+                                                                 "display.overscan",
+#endif
+                                                                 "display.backdrop"}));
   CHECK((itemIds(m, "settings.sound") == std::vector<std::string>{"sound.volume"}));
   rnf_menu_free(m);
   // Features: no CRT -> no CRT row / details page; no export and no stream -> no Share tile.
+  // Settings by purpose (docs/design/UI_REDESIGN.md "Settings", 2026-11-03): Display, Controls, Sound, Play, App.
   m = rnf_menu_new(0);
   CHECK((itemIds(m, "quick") == std::vector<std::string>{"resume", "retry", "practice", "settings", "game"}));
   CHECK(rnf_menu_page_find(m, "display.crt") < 0);
+  CHECK(rnf_menu_page_find(m, "system.detail") < 0);
   CHECK((itemIds(m, "settings.display") ==
-        std::vector<std::string>{"display.size", "display.flash", "display.vtr", "display.shape"}));
-  CHECK((itemIds(m, "settings.system") == std::vector<std::string>{"system.language", "system.about", "system.detail"}));
-  CHECK((itemIds(m, "system.about") == std::vector<std::string>{"about.version", "about.folders"}));
+        std::vector<std::string>{"display.size", "display.shape",
+#if RN_PRODUCT_FLASH_FILTER
+                                 "display.flash",
+#endif
+                                 }));
+  CHECK((itemIds(m, "settings.system") ==
+         std::vector<std::string>{"system.language", "system.screensaver", "system.about", "about.folders"}));
+  CHECK((itemIds(m, "system.about") == std::vector<std::string>{"about.version"}));
+  CHECK((itemIds(m, "about.folders") == std::vector<std::string>{"about.roms", "about.projects", "about.license"}));
   rnf_menu_free(m);
-  // Settings > System > ReplayNES Version: the version and the updates in one page (no Updates page).
+  // App > Updates: the version and the updates in one page; App > Folders and License without the developer rows.
   m = rnf_menu_new(kAll);
   CHECK(rnf_menu_page_find(m, "system.updates") < 0);
-  CHECK((itemIds(m, "settings.system") ==
-         std::vector<std::string>{"system.core", "system.language", "system.steam", "system.about", "system.detail", "system.quit"}));
+  // Screen Orientation where the app turns the screen itself (Android); absent above (no feature bit).
+  std::vector<std::string> systemItems{"system.language", "system.screensaver", "system.about", "about.folders",
+                                       "system.orientation", "system.quit"};
+  if (rnf_product_core_count() > 1) systemItems.insert(systemItems.begin() + 1, "system.core");
+  CHECK(itemIds(m, "settings.system") == systemItems);
   CHECK((itemIds(m, "system.about") == std::vector<std::string>{"about.version", "updates.status", "updates.check",
-                                                                "updates.apply", "updates.auto", "about.folders"}));
-  CHECK((itemIds(m, "about.folders") ==
-         std::vector<std::string>{"about.roms", "about.projects", "about.settings", "about.license"}));
+                                                                "updates.apply", "updates.auto", "system.steam"}));
+  // Add ROMs and Share Log only where the system has a file picker / a share sheet (Android).
+  CHECK((itemIds(m, "about.folders") == std::vector<std::string>{"about.add_roms", "about.roms", "about.projects",
+                                                                  "about.share_log", "about.license"}));
+  CHECK((itemIds(m, "display.crt") == std::vector<std::string>{"display.crt", "crt.lines", "crt.antenna", "crt.beam",
+                                                                "crt.persistence", "crt.supply"}));
   {
     int sys = rnf_menu_page_find(m, "settings.system"), about = rnf_menu_page_find(m, "system.about");
     REQUIRE(sys >= 0);
     REQUIRE(about >= 0);
     rnf_menu_item_info it{};
     REQUIRE(rnf_menu_item_get(m, size_t(sys), size_t(rnf_menu_item_find(m, size_t(sys), "system.about")), &it));
-    CHECK_EQ(std::string(rnf_menu_text(it.label)), "ReplayNES Version");
-    rnf_menu_page_info pi{};
-    REQUIRE(rnf_menu_page_get(m, size_t(about), &pi));
-    CHECK_EQ(std::string(rnf_menu_text(pi.title)), "ReplayNES Version");
+    CHECK_EQ(std::string(rnf_menu_text(it.label)), std::string("Updates"));
   }
   rnf_menu_free(m);
-  // Resume Countdown: System > More (Controls and Controls > More are full on Linux).
+  // Play: pausing, rewinding, resuming and saving together, on every platform.
   for (uint32_t f : {0u, kDesktopLinux, kAll}) {
     rnf_menu* d = rnf_menu_new(f);
-    std::vector<std::string> ids = itemIds(d, "system.detail");
-    CHECK(std::count(ids.begin(), ids.end(), std::string("system.resume_countdown")) == 1);
+    std::vector<std::string> ids = itemIds(d, "settings.play");
+    for (const char* id : {"controls.rewind_pause", "controls.dpad_paused", "system.resume_countdown", "display.vtr", "system.autosave"})
+      CHECK_EQ(std::count(ids.begin(), ids.end(), std::string(id)), 1);
     CHECK(ids.size() <= size_t(RNF_MENU_MAX_ITEMS));
-    std::vector<std::string> controls = itemIds(d, "settings.controls");
-    CHECK(std::count(controls.begin(), controls.end(), std::string("system.resume_countdown")) == 0);
+    rnf_menu_free(d);
+  }
+  // Play in the Background: Play, for the frontends that pause when another window is in front.
+  for (uint32_t f : {0u, uint32_t(RNF_MENU_FEATURE_BACKGROUND), kAll | RNF_MENU_FEATURE_BACKGROUND}) {
+    rnf_menu* d = rnf_menu_new(f);
+    std::vector<std::string> ids = itemIds(d, "settings.play");
+    CHECK_EQ(std::count(ids.begin(), ids.end(), std::string("system.background")),
+             RN_PRODUCT_FOCUS_PAUSE && (f & RNF_MENU_FEATURE_BACKGROUND) ? 1 : 0);
+    CHECK(ids.size() <= size_t(RNF_MENU_MAX_ITEMS));
     rnf_menu_free(d);
   }
   m = rnf_menu_new(RNF_MENU_FEATURE_STREAM | RNF_MENU_FEATURE_SLOW_AUDIO | RNF_MENU_FEATURE_LOW_LATENCY);
@@ -539,7 +568,7 @@ TEST_CASE("menu: breadcrumb segments navigate back (pointer)") {
   REQUIRE_EQ(rnf_menu_push(m, "settings.controls"), RNF_MENU_EVENT_PUSHED);
   rnf_menu_set_focus(m, 2);
   REQUIRE_EQ(rnf_menu_push(m, "controls.detail"), RNF_MENU_EVENT_PUSHED);
-  CHECK_EQ(crumbs(m), "Settings > Controls > More Controls");
+  CHECK_EQ(crumbs(m), "Settings > Controls > Input Details");
   CHECK_EQ(rnf_menu_crumb_select(m, 2), RNF_MENU_EVENT_NONE);  // the current page
   CHECK_EQ(rnf_menu_crumb_select(m, 9), RNF_MENU_EVENT_NONE);
   CHECK_EQ(rnf_menu_depth(m), size_t(3));
@@ -591,18 +620,20 @@ TEST_CASE("menu: navigation, back stack with focus, L / R, breadcrumb") {
   CHECK_EQ(rnf_menu_switch(m, -1), RNF_MENU_EVENT_SWITCHED);  // wraps: System
   CHECK_EQ(pageId(m), "settings.system");
   CHECK_EQ(rnf_menu_switch(m, 1), RNF_MENU_EVENT_SWITCHED);
-  // Display > CRT details: depth 3 below the Quick Menu.
-  for (int i = 0; i < 5; ++i) rnf_menu_move(m, 0, 1, nullptr);
-  CHECK_EQ(rnf_menu_focus(m), size_t(5));
-  CHECK_EQ(rnf_menu_move(m, 0, 1, nullptr), RNF_MENU_EVENT_NONE);
+  // Display > CRT: depth 3 below the Quick Menu.
+  const size_t crtDetailsRow = 3;
+  for (size_t i = 0; i < crtDetailsRow; ++i) rnf_menu_move(m, 0, 1, nullptr);
+  CHECK_EQ(rnf_menu_focus(m), crtDetailsRow);
+  CHECK_EQ(rnf_menu_move(m, 0, 1, nullptr), RNF_MENU_EVENT_MOVED);  // and back
+  CHECK_EQ(rnf_menu_move(m, 0, -1, nullptr), RNF_MENU_EVENT_MOVED);
   CHECK_EQ(rnf_menu_move(m, 1, 0, nullptr), RNF_MENU_EVENT_NONE);  // a page row: nothing to adjust
   CHECK_EQ(rnf_menu_confirm(m), RNF_MENU_EVENT_PUSHED);
   CHECK_EQ(rnf_menu_depth(m), size_t(3));
-  CHECK_EQ(crumbs(m), "Settings > Display > CRT Details");
+  CHECK_EQ(crumbs(m), "Settings > Display > CRT");
   CHECK(rnf_menu_depth(m) <= size_t(RNF_MENU_MAX_DEPTH));
   CHECK_EQ(rnf_menu_switch(m, 1), RNF_MENU_EVENT_NONE);  // not a group page
   CHECK_EQ(rnf_menu_back(m), RNF_MENU_EVENT_POPPED);
-  CHECK_EQ(rnf_menu_focus(m), size_t(5));  // focus restored
+  CHECK_EQ(rnf_menu_focus(m), crtDetailsRow);  // focus restored
   CHECK_EQ(rnf_menu_back(m), RNF_MENU_EVENT_POPPED);
   CHECK_EQ(pageId(m), "quick");
   CHECK_EQ(rnf_menu_focus(m), size_t(4));  // the Settings tile
@@ -677,5 +708,52 @@ TEST_CASE("menu: toggles flip with A, info rows do nothing, literal choices") {
   REQUIRE(lang >= 0);
   CHECK_EQ(std::string(rnf_menu_text(rnf_menu_item_choice(m, size_t(sys), size_t(lang), 2))), "English");
   CHECK_EQ(std::string(rnf_menu_text(rnf_menu_item_choice(m, size_t(sys), size_t(lang), 0))), "Automatic");
+  rnf_menu_free(m);
+}
+
+TEST_CASE("product flags: complete desktop menu matches the pre-change enumeration") {
+  std::ifstream file(RN_MENU_BASELINE);
+  REQUIRE(file.good());
+  std::ostringstream expected;
+  expected << file.rdbuf();
+  std::string baseline = expected.str();
+#if !RN_PRODUCT_FLASH_FILTER
+  for (const char* id : {",display.flash"}) {
+    auto at = baseline.find(id);
+    REQUIRE(at != std::string::npos);
+    baseline.erase(at, std::strlen(id));
+  }
+#endif
+#if !RN_PRODUCT_OVERSCAN_CROP
+  const auto cropAt = baseline.find(",display.overscan");
+  REQUIRE(cropAt != std::string::npos);
+  baseline.erase(cropAt, std::strlen(",display.overscan"));
+#endif
+  rnf_menu* m = rnf_menu_new(kDesktopLinux);
+  REQUIRE(m);
+  std::string actual;
+  for (size_t p = 0; p < rnf_menu_page_count(m); ++p) {
+    rnf_menu_page_info page{};
+    REQUIRE(rnf_menu_page_get(m, p, &page));
+    actual += std::string(page.id) + ":";
+    auto ids = itemIds(m, page.id);
+    for (size_t i = 0; i < ids.size(); ++i) actual += (i ? "," : "") + ids[i];
+    actual += "\n";
+  }
+  CHECK_EQ(actual, baseline);
+  rnf_menu_free(m);
+}
+
+TEST_CASE("product overscan flag: picture shape explanation matches available controls") {
+  rnf_menu* m = rnf_menu_new(kDesktopLinux);
+  REQUIRE(m);
+  const int page = rnf_menu_page_find(m, "settings.display");
+  REQUIRE(page >= 0);
+  const int row = rnf_menu_item_find(m, size_t(page), "display.shape");
+  REQUIRE(row >= 0);
+  rnf_menu_item_info item{};
+  REQUIRE(rnf_menu_item_get(m, size_t(page), size_t(row), &item));
+  CHECK_EQ(std::string(rnf_menu_text(item.description)),
+           RN_PRODUCT_OVERSCAN_CROP ? "8:7 pixels, hide the edges, blurred sides" : "8:7 pixels, blurred sides");
   rnf_menu_free(m);
 }

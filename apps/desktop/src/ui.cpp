@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <system_error>
@@ -18,6 +20,7 @@
 #include "library_thumbs.h"
 #include "pad_nav.h"
 #include "paths.h"
+#include "platform/platform.h"
 #include "settings.h"
 #include "thumbnails.h"
 #include "ui_theme.h"
@@ -98,17 +101,45 @@ float keycap(ImDrawList* dl, ImVec2 p, float h, const std::string& label, bool r
 // ------------------------------------------------------------------ setup
 
 UI::UI(Deps d) : d_(d) {
-  menuFeatures_ = RNF_MENU_FEATURE_QUIT | RNF_MENU_FEATURE_FULLSCREEN | RNF_MENU_FEATURE_UI_SCALE;
+  menuFeatures_ = RNF_MENU_FEATURE_QUIT | RNF_MENU_FEATURE_FULLSCREEN | RNF_MENU_FEATURE_UI_SCALE | RNF_MENU_FEATURE_BACKGROUND;
   if (RNL_HAVE_MP4_EXPORT) menuFeatures_ |= RNF_MENU_FEATURE_EXPORT;
   if (RNL_HAVE_CRT) menuFeatures_ |= RNF_MENU_FEATURE_CRT;
   if (RNL_HAVE_STEAM) menuFeatures_ |= RNF_MENU_FEATURE_STEAM | RNF_MENU_FEATURE_OSK;
+  // Under Steam Input (a Steam Deck, Big Picture) Steam orders the players: no Player Order of its own.
+  playerOrderOffered_ = std::getenv("SteamVirtualGamepadInfo") == nullptr;
   if (d_.updates) menuFeatures_ |= RNF_MENU_FEATURE_UPDATES;
-  // Only a build with a second core offers the choice; a stale non-default setting stays visible so it can be fixed.
-  if (rn_core_available(RN_CORE_REPLAYNESCORE) || d_.settings->core != "nestopia") menuFeatures_ |= RNF_MENU_FEATURE_CORE;
+  if (d_.touchControls) menuFeatures_ |= RNF_MENU_FEATURE_TOUCH;
+  if (canImportFiles()) menuFeatures_ |= RNF_MENU_FEATURE_IMPORT;
+  if (canShareLog()) menuFeatures_ |= RNF_MENU_FEATURE_SHARE_LOG;
+  if (canSetScreenOrientation()) menuFeatures_ |= RNF_MENU_FEATURE_ORIENTATION;
+  // Offer a choice only when multiple product cores are available.
+  if (rnf_product_core_count() > 1) menuFeatures_ |= RNF_MENU_FEATURE_CORE;
   menu_ = rnf_menu_new(menuFeatures_);
+  inputLayoutChanged();
   markers_ = rnf_markers_new();
   markerRepeat_ = rnf_step_repeater_new();
   coach_ = rnf_coach_new(d_.settings ? d_.settings->coachShown : 0);
+}
+
+void UI::inputLayoutChanged() {
+  menuFeatures_ &= ~uint32_t(RNF_MENU_FEATURE_LAYOUT_TURBO | RNF_MENU_FEATURE_MOUSE);
+  if (std::strcmp(rnf_input_layout_name(), "nes") != 0) menuFeatures_ |= RNF_MENU_FEATURE_LAYOUT_TURBO | RNF_MENU_FEATURE_MOUSE;
+  std::string catalog = rnf_input_layout_name();
+  for (size_t i = 0; i < rnf_input_action_count(); ++i) {
+    rnf_action_info action{};
+    rnf_input_action_get(i, &action);
+    catalog += "\n";
+    catalog += action.id;
+    char* label = rnf_input_action_label(action.id);
+    catalog += label ? label : "";
+    rnf_string_free(label);
+  }
+  if (catalog == inputCatalog_) return;
+  inputCatalog_ = std::move(catalog);
+  const std::string page = menuPageId();
+  rnf_menu_free(menu_);
+  menu_ = rnf_menu_new(menuFeatures_);
+  if (menuOpen_) openPage(page.empty() ? "quick" : page);
 }
 
 UI::~UI() {
@@ -133,13 +164,30 @@ bool UI::loadFonts(bool japanese) {
   else order = {latin, jp, sym};
   font_ = nullptr;
   std::string used;
+  bool jpLoaded = false;  // found is not enough: a font stb_truetype cannot read (CFF2) is skipped below
   for (const FontFile& f : order) {
     if (!f.found()) continue;
     ImFontConfig c;
     c.MergeMode = font_ != nullptr;
     c.FontNo = f.index;
-    ImFont* r = io.Fonts->AddFontFromFileTTF(f.path.c_str(), 0.0f, &c);
-    if (!r) continue;
+    ImFont* r = nullptr;
+    if (f.asset) {  // inside the app package: read with SDL, handed to the atlas (it frees the copy)
+      size_t n = 0;
+      void* data = SDL_LoadFile(f.path.c_str(), &n);
+      if (data && n > 0) {
+        void* copy = IM_ALLOC(n);
+        std::memcpy(copy, data, n);
+        r = io.Fonts->AddFontFromMemoryTTF(copy, int(n), 0.0f, &c);
+      }
+      SDL_free(data);
+    } else {
+      r = io.Fonts->AddFontFromFileTTF(f.path.c_str(), 0.0f, &c);
+    }
+    if (!r) {
+      std::fprintf(stderr, "fonts: cannot read %s\n", f.path.c_str());
+      continue;
+    }
+    if (jp.found() && f.path == jp.path) jpLoaded = true;
     if (!font_) {
       font_ = r;
       icons::addToAtlas(io.Fonts);
@@ -151,12 +199,13 @@ bool UI::loadFonts(bool japanese) {
     icons::addToAtlas(io.Fonts);
   }
   std::fprintf(stderr, "fonts: %s + icons\n", used.empty() ? "(ImGui default)" : used.c_str());
-  textScale_ = japanese && jp.found() ? 1.18f : 1.0f;  // CJK primary font: smaller glyphs per pixel size
-  return !japanese || jp.found();
+  textScale_ = japanese && jpLoaded ? 1.18f : 1.0f;  // CJK primary font: smaller glyphs per pixel size
+  return !japanese || jpLoaded;
 }
 
 void UI::updateScale(int windowWidth, int windowHeight) {
   metrics_ = UiMetrics::make(float(windowWidth), float(windowHeight), d_.settings->uiScale, textScale_);
+  metrics_.overlay = overlay_;
   float s = metrics_.s;
   ImGuiStyle& style = ImGui::GetStyle();
   style = ImGuiStyle();
@@ -212,10 +261,44 @@ void UI::updateScale(int windowWidth, int windowHeight) {
 
 bool UI::interactive() const {
   return menuOpen_ || !hasSession() || !dialogs_.empty() || chooser_.has_value() || rename_.has_value() ||
-         exportDialog_;
+         exportDialog_ || faceCheckActive();
+}
+
+// A controller whose face layout is not checked, and nothing else wants the controls: the library, or a
+// paused game (never in play), no dialog, no player order.
+bool UI::faceCheckActive() const {
+  if (d_.input->faceCheckSlot() < 0 || d_.input->playerOrderActive()) return false;
+  if (!dialogs_.empty() || chooser_ || rename_ || exportDialog_) return false;
+  if (d_.app && d_.app->screensaverActive()) return false;
+  return !hasSession() || d_.emu->paused();
+}
+
+void UI::faceCheckReset(int slot) {
+  faceSlot_ = slot;
+  faceStep_ = 0;
+  faceAtSouth_ = faceHeld_ = -1;
+}
+
+// A face button down / up on the checked controller; held a second (buildFaceCheck counts) it answers.
+void UI::faceCheckButton(int sdlButton, bool down, double now) {
+  const int slot = d_.input->faceCheckSlot();
+  if (slot != faceSlot_) {
+    faceCheckReset(slot);
+    faceMismatch_ = false;
+  }
+  std::fprintf(stderr, "input: face check: button %d %s (asked: %s)\n", sdlButton, down ? "down" : "up",
+               faceStep_ ? "east" : "south");
+  if (down) {
+    faceHeld_ = sdlButton;
+    faceHeldSince_ = now;
+  } else if (sdlButton == faceHeld_) {
+    faceHeld_ = -1;
+  }
 }
 
 bool UI::wantsKeyboard() const { return ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput; }
+
+bool UI::screensaverBlocked() const { return popupOpen() || exportJob_.running(); }
 
 bool UI::popupOpen() const {
   return !dialogs_.empty() || chooser_ || rename_ || exportDialog_ ||
@@ -233,6 +316,7 @@ void UI::setMenu(bool open) {
   double now = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0;
   (void)now;
   if (open) {
+    controlsEditingSelected_ = false;
     // Nothing reaches the game while the menu is up; the emulation waits paused.
     d_.emu->setRewindHeld(false);
     d_.emu->setFastForwardHeld(false);
@@ -341,12 +425,27 @@ void UI::changed() {
 GameRect UI::gameRect(int w, int h) const {
   if (!hasSession()) return GameRect{};
   const Settings& st = *d_.settings;
-  return computeGameRect(w, h, st.integerScale, st.par87, st.hideOverscan);
+  // The touch controller's layout leaves the picture an area of its own (docs/design/TOUCH_ANDROID.md).
+  float ax = 0, ay = 0;
+  if (pictureArea_) {
+    ax = pictureArea_->x;
+    ay = pictureArea_->y;
+    w = int(pictureArea_->z);
+    h = int(pictureArea_->w);
+  }
+  GameRect r = computeGameRect(w, h, d_.emu->media(), d_.emu->videoFrame(), st.integerScale, gamePixelAspect(st),
+                               RN_PRODUCT_OVERSCAN_CROP && st.hideOverscan);
+  r.x += ax;
+  r.y += ay;
+  r.crt.x += ax;
+  r.crt.y += ay;
+  return r;
 }
 
 void UI::slack(double now) {
   // Off the input -> screen path: the frame loop calls this in the slack before the next sample.
   if (!hasSession()) return;
+  if (d_.app && d_.app->screensaverActive()) return;  // a demo is no game of the library: its card keeps its picture
   bool playing = !d_.emu->status().paused;
   // Periodic pictures only once the game shows something (not the blank first frames).
   if (thumbSaveWanted_ || (playing && now - lastThumbSave_ >= 30 && d_.emu->status().frame >= 180)) saveLibraryThumb(now);
@@ -358,7 +457,7 @@ void UI::saveLibraryThumb(double now) {
   const EmuStatus& st = d_.emu->status();
   if (st.frame == 0 && st.takeLength == 0) return;  // nothing shown yet
   lastThumbSave_ = now;
-  d_.libraryThumbs->save(d_.app->isTempSession() ? std::string() : st.projectPath, st.romPath, d_.emu->picture());
+  d_.libraryThumbs->save(d_.app->isTempSession() ? std::string() : st.projectPath, st.romPath, d_.emu->videoFrame(), d_.emu->media(), rn_session_core_kind(d_.emu->session()) != RN_CORE_EXTERNAL);
 }
 
 void UI::showResetChoices() {
@@ -393,6 +492,9 @@ void UI::showResetChoices() {
 // ------------------------------------------------------------------ frame
 
 void UI::build(double now) {
+  pollChosenFolder();  // a system folder picker's answer (Settings > Folders & License > Change…)
+  pollRomFinder(now);  // Add ROMs > Search the Device
+  pollRomFolderVisit(now);  // back from Open Folder with the ROM folder empty
   if (noticeTime_ < 0) noticeTime_ = now;
   if (menuOpenedAt_ < 0) menuOpenedAt_ = now;
   if (pageChangedAt_ < 0) pageChangedAt_ = now;
@@ -431,10 +533,18 @@ void UI::build(double now) {
 
   updateMarkers(now);
   tickCoach(now);
+  if (d_.libraryThumbs) d_.libraryThumbs->setPicturesPaused(hasSession());  // a game has the machine to itself
+  if (d_.app && d_.app->screensaverActive()) {  // the demo alone: no menus, bars or pills
+    buildScreensaver();
+    layoutCheckEndFrame();
+    return;
+  }
   if (!hasSession()) buildLibrary(now);
   else if (!menuOpen_ && seekBarShown()) buildSeekBar(now);
   if (menuOpen_) buildMenu(now);
   buildOverlays(now);
+  if (d_.input->playerOrderActive()) buildPlayerOrder();
+  if (faceCheckActive()) buildFaceCheck();
   pollAddToSteam();
   buildDialogs();
   buildChooser();
@@ -449,16 +559,26 @@ void UI::build(double now) {
 
 // ------------------------------------------------------------------ overlays
 
+void UI::buildScreensaver() {
+  const ImVec2 size = ImGui::GetIO().DisplaySize;
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();  // over the game picture, under nothing
+  // Half the brightness, and nothing else: a fixed line of text would burn into the screen over the
+  // hours a screensaver runs (user decisions 2026-11-01).
+  dl->AddRectFilled(ImVec2(0, 0), size, IM_COL32(0, 0, 0, 128));
+}
+
 void UI::buildOverlays(double now) {
   bool session = hasSession();
+  playersW_ = 0;
   if (session && !menuOpen_) {
+    buildPlayers(now);
     buildBadges();
     if (d_.emu->status().practicing && !d_.emu->status().paused) buildPracticePill();
     if (!seekBarShown()) buildPlayOverlay(now);
     if (d_.emu->status().countdown > 0) buildCountdown();
   }
   buildNotice(now);
-  buildMenuPill(now);
+  if (!touchControlsShown_) buildMenuPill(now);
   if (d_.settings->showStats && stats) buildStats();
 }
 
@@ -483,7 +603,10 @@ void UI::buildMenuPill(double now) {
   ImGuiIO& io = ImGui::GetIO();
   const UiMetrics& m = metrics_;
   rnf_controller_family fam = promptFamily();
-  std::string chord = menuChordGlyph(fam, controllerConnected());
+  std::string chord = d_.input->usesDeviceKinds() && controllerConnected() &&
+                              d_.input->deviceKind(std::max(0, d_.input->lastSlot())) == DeviceKind::stick
+      ? padGlyph(fam, "leftShoulder") + "+" + padGlyph(fam, "leftTrigger")
+      : menuChordGlyph(fam, controllerConnected());
   std::string icon = icons::glyph("menu-2");
   std::string label = TR("Menu");
   float fs = m.label(), hs = m.hint();

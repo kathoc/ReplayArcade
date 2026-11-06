@@ -22,6 +22,9 @@ rn_session* newSession(std::string& tmp) {
   std::string rom = rntest::writeTestRom(tmp);
   rn_session_options o;
   rn_session_options_init(&o);
+#if !RN_PRODUCT_NES
+  o.core = RN_CORE_MOCK;
+#endif
   rn_session* s = nullptr;
   rn_session_new(rom.c_str(), nullptr, &o, &s);
   return s;
@@ -282,4 +285,13 @@ TEST_CASE("make video: ranges, quality presets, summary") {
   Lang en("en");
   CHECK_EQ(take(rnf_video_summary(600, 1500000000)), "0:09 · approx. 1.5 GB");
   CHECK_EQ(std::string(rnf_menu_text(rnf_video_quality_label(1))), "High");
+}
+
+TEST_CASE("tape time follows the content frame rate") {
+  Lang en("en");
+  CHECK_EQ(take(rnf_video_summary_for_period(5963, 1500000000, 100.0 / 5963)), "1:40 · approx. 1.5 GB");
+  CHECK_EQ(take(rnf_video_summary_for_period(600, 1500000000, 0)), take(rnf_video_summary(600, 1500000000)));
+  CHECK_EQ(take(rnf_tape_time_label_for_period(5963, 100.0 / 5963)), "1:40");
+  CHECK_EQ(take(rnf_tape_time_label_for_period(3600, 1.0 / 30)), "2:00");
+  CHECK_EQ(take(rnf_tape_time_label_for_period(3600, 0)), take(rnf_tape_time_label(3600)));
 }

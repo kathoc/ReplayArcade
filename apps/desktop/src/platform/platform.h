@@ -7,6 +7,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace rnl {
 
@@ -23,6 +24,34 @@ bool copyTree(const std::string& from, const std::string& to, std::string* error
 bool openFolder(const std::string& dir);
 /// Opens a file with its default application (a made video). App library only (platform/shell.cpp).
 bool openFile(const std::string& path);
+/// Add ROMs: the system file picker, the chosen files copied into `dir` (Android: RomImport, which says how
+/// it went). false where there is no such picker; canImportFiles() says so before (platform/shell.cpp).
+bool canImportFiles();
+bool importFiles(const std::string& dir);
+/// Share Log: the app's log file to another app (Android: the system's share sheet). false elsewhere.
+bool canShareLog();
+bool shareLog();
+/// Where Share and Open with put ROMs (Android: RomImport); the library's ROM folder, also after a change.
+void setImportFolder(const std::string& dir);
+/// Change… for the ROM / Projects folder: the system's folder picker (Windows; Android after asking for
+/// all-files access), its answer later through takeChosenFolder. false where the app's own chooser picks
+/// (Linux, the Steam Deck's Gaming Mode: a gamepad drives it).
+bool chooseFolder(const std::string& start);
+/// The picker's answer, once: true with *path (empty when cancelled; *error says why when it failed).
+bool takeChosenFolder(std::string* path, std::string* error);
+
+/// Search the Device (Add ROMs, rom_finder.h): the storage the app may walk (Android: the device's own and
+/// every card / USB drive under /storage), and the folders in them it can never read (*skip: Android/data,
+/// Android/obb). Empty where there is no such search.
+std::vector<std::string> deviceStorageRoots(std::vector<std::string>* skip);
+/// Whether the whole storage may be read now (Android: all-files access; Android 10: the storage permission).
+/// The screen's orientation (Settings > App > Screen Orientation): "auto", "landscape", "portrait" (Android).
+bool canSetScreenOrientation();
+void setScreenOrientation(const std::string& orientation);
+bool storageAccessGranted();
+/// Asks for it; the answer later through takeStorageAccessAnswer (Android: the system's page for the app).
+void requestStorageAccess();
+bool takeStorageAccessAnswer(bool* granted);
 
 /// Running inside Steam's Gaming Mode (gamescope session, Steam Deck): full screen by default,
 /// Steam's on-screen keyboard. Always false on Windows.

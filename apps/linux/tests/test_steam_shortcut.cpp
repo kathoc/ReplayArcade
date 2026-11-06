@@ -254,6 +254,29 @@ TEST_CASE("steam: updates the entry the user added through Steam in place") {
   CHECK(readFile(env.vdf + ".replaynes-backup") == original);
 }
 
+TEST_CASE("steam: an entry with app id 0 gets the derived id, and its artwork that id") {
+  // A tool wrote the entry with appid 0 (Steam had not saved it yet): Steam takes 0 for invalid and picks another
+  // id at each start, so artwork named "0..." never showed (AYN Thor, 2026-11-06).
+  Env env("appid-zero");
+  const std::string exe = "\"/usr/bin/flatpak\"";
+  std::string mine = entry("3", 0u, "ReplayNES", exe,
+                           "/usr/libexec/armada/armada-game-launch %command% run io.github.replaynes.ReplayNES", "", 0, "");
+  writeFile(env.vdf, fileOf(otherEntries() + mine));
+  steam::Report r;
+  REQUIRE(steam::addToSteam(env.opts(), r));
+  const uint32_t id = steam::shortcutAppId(exe, "ReplayNES");
+  CHECK_EQ(r.users[0].appId, id);
+  steam::ShortcutsFile f;
+  std::string err;
+  REQUIRE(steam::ShortcutsFile::parse(readFile(env.vdf), &f, &err));
+  const auto* ours = findEntryNamed(f, "ReplayNES");
+  REQUIRE(ours != nullptr);
+  CHECK_EQ(ours->find("appid")->u32(), id);
+  CHECK(ours->find("LaunchOptions")->str.find("armada-game-launch") != std::string::npos);  // its launch kept
+  CHECK(readFile(env.grid + "/" + std::to_string(id) + "p.png") == fakePng("capsule"));
+  CHECK_FALSE(fs::exists(env.grid + "/0p.png"));
+}
+
 TEST_CASE("steam: dry run, missing file, several accounts") {
   Env env("dry");
   fs::create_directories(env.userdata + "/0/config");       // anonymous: skipped
@@ -366,4 +389,37 @@ TEST_CASE("steam: unreadable shortcuts.vdf is never overwritten; no Steam found"
   auto roots = steam::findUserdataRoots(home);
   REQUIRE_EQ(roots.size(), size_t(1));
   CHECK_EQ(roots[0], home + "/.local/share/Steam/userdata");
+}
+
+TEST_CASE("steam: at start-up, an update's artwork replaces ours, never the user's own") {
+  Env env("refresh");
+  writeFile(env.vdf, fileOf(otherEntries()));
+  steam::Report r;
+  REQUIRE(steam::addToSteam(env.opts(), r));
+  const std::string id = std::to_string(r.users[0].appId);
+  const std::string record = env.grid + "/" + id + ".replaynes-artwork";
+  REQUIRE(fs::exists(record));
+  // Nothing changed: nothing written.
+  CHECK_EQ(steam::refreshArtwork(env.opts()), size_t(0));
+  // A new version's artwork; the user put their own hero in Steam meanwhile.
+  for (const char* n : {"capsule", "wide", "hero", "logo", "icon"}) writeFile(env.art + "/" + n + ".png", fakePng(std::string("v2 ") + n));
+  writeFile(env.grid + "/" + id + "_hero.png", "the user's own hero");
+  const std::string vdfBefore = readFile(env.vdf);
+  CHECK_EQ(steam::refreshArtwork(env.opts()), size_t(4));
+  CHECK(readFile(env.grid + "/" + id + "p.png") == fakePng("v2 capsule"));
+  CHECK(readFile(env.grid + "/" + id + "_icon.png") == fakePng("v2 icon"));
+  CHECK(readFile(env.grid + "/" + id + "_hero.png") == std::string("the user's own hero"));
+  CHECK_FALSE(fs::exists(env.grid + "/" + id + "_hero.png.replaynes-backup"));
+  CHECK(readFile(env.vdf) == vdfBefore);  // shortcuts.vdf untouched
+  CHECK_EQ(steam::refreshArtwork(env.opts()), size_t(0));  // up to date now
+  // An entry from before the record existed (or one we never wrote): left alone.
+  fs::remove(record);
+  writeFile(env.art + "/icon.png", fakePng("v3 icon"));
+  CHECK_EQ(steam::refreshArtwork(env.opts()), size_t(0));
+  CHECK(readFile(env.grid + "/" + id + "_icon.png") == fakePng("v2 icon"));
+  // No entry of ours in Steam: nothing.
+  Env none("refresh-none");
+  writeFile(none.vdf, fileOf(otherEntries()));
+  CHECK_EQ(steam::refreshArtwork(none.opts()), size_t(0));
+  CHECK_FALSE(fs::exists(none.grid));
 }

@@ -1,8 +1,10 @@
 // Modal popups: dialogs (DialogHost), the file chooser and the rename field. ImGui navigation
 // (A / B); styled like the menus (UI::updateScale sets the style).
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <system_error>
 
@@ -21,6 +23,7 @@ void UI::buildDialogs() {
   if (!dialogOpened_) {
     ImGui::OpenPopup("##dialog");
     dialogOpened_ = true;
+    std::fprintf(stderr, "dialog: %s\n", dialogs_.front().title.c_str());  // the log's trail (and the emulator test's cue)
   }
   ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
   ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(S(520), io.DisplaySize.x * 0.9f), 0),
@@ -75,6 +78,7 @@ void UI::buildDialogs() {
     Dialog d = std::move(dialogs_.front());
     dialogs_.pop_front();
     dialogOpened_ = false;
+    std::fprintf(stderr, "dialog: %s -> %s\n", d.title.c_str(), d.buttons[size_t(result)].c_str());
     if (d.onResult) d.onResult(result, checked);
   }
 }
@@ -91,8 +95,21 @@ void UI::chooserList() {
     bool dir = it->is_directory(ec);
     std::string lower = n;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
-    bool nesrec = lower.size() > 7 && lower.compare(lower.size() - 7, 7, ".nesrec") == 0;
-    bool nes = lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".nes") == 0;
+    auto hasExtension = [&lower](std::string extension) {
+      std::transform(extension.begin(), extension.end(), extension.begin(),
+                     [](unsigned char ch) { return char(std::tolower(ch)); });
+      return lower.size() > extension.size() &&
+             lower.compare(lower.size() - extension.size(), extension.size(), extension) == 0;
+    };
+    bool nesrec = hasExtension(RN_PRODUCT_PROJECT_EXT);
+    bool nes = false;
+    const std::string extensions = RN_PRODUCT_ROM_EXTS;
+    for (size_t begin = 0; begin < extensions.size();) {
+      size_t end = extensions.find(';', begin);
+      if (end == std::string::npos) end = extensions.size();
+      if (end > begin && hasExtension("." + extensions.substr(begin, end - begin))) nes = true;
+      begin = end + 1;
+    }
     if (c.req.mode == ChooserRequest::Mode::openROM && !dir && !nes) continue;
     if (c.req.mode != ChooserRequest::Mode::openROM && !dir) continue;
     if (c.req.mode == ChooserRequest::Mode::openROM && nesrec) continue;
@@ -165,14 +182,14 @@ void UI::buildChooser() {
       ImGui::AlignTextToFramePadding();
       ImGui::TextUnformatted(TR("Name"));
       ImGui::SameLine();
-      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(".nesrec").x - S(16));
+      ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(RN_PRODUCT_PROJECT_EXT).x - S(16));
       if (appearing || c.focusName) {
         ImGui::SetKeyboardFocusHere();
         c.focusName = false;
       }
       bool enter = ImGui::InputText("##name", c.name, sizeof c.name, ImGuiInputTextFlags_EnterReturnsTrue);
       ImGui::SameLine();
-      ImGui::TextDisabled(".nesrec");
+      ImGui::TextDisabled("%s", RN_PRODUCT_PROJECT_EXT);
       if (!c.confirmReplace.empty()) {
         ImGui::TextColored(ImVec4(1, 0.75f, 0.4f, 1), "%s",
                            (kRecycleBin ? TRF("“%@” already exists. Replace it? (The existing project is moved to the Recycle Bin.)",
@@ -209,6 +226,13 @@ void UI::buildChooser() {
         }
       }
     } else {
+      if (c.req.mode == ChooserRequest::Mode::chooseFolder) {
+        if (ImGui::Button(TR("Use This Folder"))) {
+          chosen = c.dir;
+          done = true;
+        }
+        ImGui::SameLine();
+      }
       if (ImGui::Button(TR("Cancel"))) cancelled = true;
     }
     if (!textEntryOwnsPad()) {  // the on-screen keyboard shows its own buttons

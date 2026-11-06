@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include "app_model.h"
 
+#include <algorithm>
+#include <fstream>
+#include <random>
+#include <set>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -45,11 +50,13 @@ std::string chooserProjectFileName(const std::string& typed) {
     s = s.substr(a, s.find_last_not_of(chars) - a + 1);
   };
   trim(out, " ");
-  const std::string ext = ".nesrec";
+  const std::string ext = RN_PRODUCT_PROJECT_EXT;
   if (out.size() >= ext.size()) {
     std::string tail = out.substr(out.size() - ext.size());
     for (char& ch : tail) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-    if (tail == ext) out.resize(out.size() - ext.size());
+    std::string lowerExt = ext;
+    for (char& ch : lowerExt) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    if (tail == lowerExt) out.resize(out.size() - ext.size());
   }
   trim(out, " .");
   return out.empty() ? std::string() : out + ext;
@@ -221,6 +228,99 @@ void AppModel::continueLast() {
   if (std::optional<ContinueTarget> t = continueTarget()) continueProject(t->projectPath);
 }
 
+bool AppModel::startScreensaver() {
+  if (screensaver_) return true;
+  if (current_) {
+    // As quitting leaves it (requestQuit): saved, its resume record written, closed.
+    if (!persist_ || current_->projectPath.empty()) return false;
+    flushPlay();
+    if (!emu_->flushForResume(current_->isTemp).empty()) return false;
+    updateResumeRecord();
+    flushWrites();
+    playSHA_.clear();
+    emu_->closeSession();
+    current_.reset();
+    pendingResume_ = lastResume_;  // what "Continue" (continueLast) reopens
+    screensaverLeftSession_ = true;
+  }
+  screensaver_ = true;
+  emu_->silent = true;
+  screensaverRom_.clear();
+  nextScreensaverDemo();
+  if (screensaverRom_.empty()) {  // no game to show (an empty library)
+    stopScreensaver();
+    return false;
+  }
+  return true;
+}
+
+// The next game of the round (docs/design/SCREENSAVER.md): the saved remainder of the round, without
+// the games no longer in the library; a new shuffled round when it is used up, which never starts
+// with the game just shown.
+std::string AppModel::takeScreensaverRom(const std::vector<std::string>& library) {
+  const std::string file = paths_.configDir + "/screensaver-order.txt";
+  if (!screensaverBagLoaded_) {
+    screensaverBagLoaded_ = true;
+    std::ifstream in(file);
+    for (std::string line; std::getline(in, line);)
+      if (!line.empty()) screensaverBag_.push_back(line);
+  }
+  const std::set<std::string> present(library.begin(), library.end());
+  screensaverBag_.erase(std::remove_if(screensaverBag_.begin(), screensaverBag_.end(),
+                                       [&](const std::string& r) { return !present.count(r); }),
+                        screensaverBag_.end());
+  if (screensaverBag_.empty()) {
+    static std::mt19937_64 rng(std::random_device{}() ^
+                               uint64_t(std::chrono::steady_clock::now().time_since_epoch().count()));
+    screensaverBag_ = library;
+    std::shuffle(screensaverBag_.begin(), screensaverBag_.end(), rng);
+    if (screensaverBag_.size() > 1 && screensaverBag_.front() == screensaverRom_)
+      std::swap(screensaverBag_.front(), screensaverBag_.back());
+  }
+  std::string rom = screensaverBag_.front();
+  screensaverBag_.erase(screensaverBag_.begin());
+  std::error_code ec;
+  fs::create_directories(paths_.configDir, ec);
+  std::ofstream out(file, std::ios::trunc);
+  for (const std::string& r : screensaverBag_) out << r << "\n";
+  return rom;
+}
+
+void AppModel::nextScreensaverDemo() {
+  if (!screensaver_) return;
+  std::vector<std::string> library;
+  for (const LibraryROM& r : library_->roms()) library.push_back(r.path);
+  if (library.empty()) return;
+  rn_session_options opt;
+  rn_session_options_init(&opt);
+  opt.open_flags = RN_OPEN_LIVE;  // nothing recorded: no take, checkpoints or rewind (memory stays flat)
+  if (selectedCore == "nestopia") opt.core = RN_CORE_NESTOPIA;
+  else if (selectedCore == "replaynescore") opt.core = RN_CORE_REPLAYNESCORE;
+  else opt.core = RN_CORE_EXTERNAL;
+  // The next games of the round, trying another when one does not open.
+  for (size_t tries = 0; tries < library.size() && tries < 8; ++tries) {
+    const std::string rom = takeScreensaverRom(library);
+    rn_session* s = nullptr;
+    if (rn_session_new(rom.c_str(), nullptr, &opt, &s) != RN_OK) continue;
+    emu_->install(s);  // not install(): no resume record, play history or project
+    emu_->setPaused(false);
+    screensaverRom_ = rom;
+    return;
+  }
+}
+
+void AppModel::stopScreensaver() {
+  if (!screensaver_) return;
+  screensaver_ = false;
+  emu_->closeSession();
+  emu_->silent = false;
+  screensaverRom_.clear();
+  if (screensaverLeftSession_) {
+    screensaverLeftSession_ = false;
+    continueLast();
+  }
+}
+
 void AppModel::settlePendingTemp(std::function<void()> then) {
   // Idle on the library with a temporary session left (resumable by "Continue"): starting
   // something else asks first whether to save it (prepareTempSlot).
@@ -271,7 +371,7 @@ std::string AppModel::romName() const {
 
 std::string AppModel::windowTitle() const {
   const EmuStatus& st = emu_->status();
-  if (!st.hasSession) return "ReplayNES";
+  if (!st.hasSession) return RN_PRODUCT_NAME;
   if (!st.projectPath.empty() && !isTempPath(st.projectPath)) return fileName(st.projectPath) + (st.unsaved ? " •" : "");
   return fileName(st.romPath) + TR(" (Unsaved)");
 }
@@ -414,9 +514,10 @@ void AppModel::prepareTempSlot(std::function<void()> then) {
 // ------------------------------------------------------------------ create / open / install
 
 void AppModel::playFromLibrary(const LibraryROM& rom) {
+  std::fprintf(stderr, "library: play %s\n", rom.name.c_str());
   LibraryROM r = rom;
   confirmDiscardIfNeeded([this, r] {
-    if (selectedCore != "nestopia") return createSession(r.path, "", false);
+    if (selectedCore != "nestopia" && selectedCore != "external") return createSession(r.path, "", false);
     settlePendingTemp([this, r] {
       if (!library_->ensureFolders()) {
         error(TR("The library folder isn’t available"), library_->folderError());
@@ -432,7 +533,7 @@ void AppModel::playFromLibrary(const LibraryROM& rom) {
 
 void AppModel::tryRom(const std::string& romPath) {
   confirmDiscardIfNeeded([this, romPath] {
-    if (selectedCore != "nestopia") return createSession(romPath, "", false);
+    if (selectedCore != "nestopia" && selectedCore != "external") return createSession(romPath, "", false);
     if (!persist_) return createSession(romPath, "", true);
     prepareTempSlot([this, romPath] { createSession(romPath, paths_.tempProject(), true); });
   });
@@ -449,8 +550,8 @@ void AppModel::openProjectChooser() {
     ChooserRequest r;
     r.mode = ChooserRequest::Mode::openProject;
     r.title = TR("Open Project");
-    r.root = library_->root();
     r.startDir = library_->projectsDir();
+    r.root = library_->chooserRoot(r.startDir);
     r.onChosen = [this](const std::string& path) { openProject(path, "", false, false, std::nullopt); };
     host_->showChooser(std::move(r));
   });
@@ -459,8 +560,10 @@ void AppModel::openProjectChooser() {
 void AppModel::createSession(const std::string& rom, const std::string& projectDir, bool isTemp) {
   rn_session_options opt;
   rn_session_options_init(&opt);
+  opt.defer_checkpoints = 1;  // taken in the frame's slack (EmulationController::afterFrame)
   if (selectedCore == "nestopia") opt.core = RN_CORE_NESTOPIA;
   else if (selectedCore == "replaynescore") opt.core = RN_CORE_REPLAYNESCORE;
+  else if (selectedCore == "external") opt.core = RN_CORE_EXTERNAL;
   else { error(TR("Couldn’t create the project"), TR("Unknown core; select a supported core")); return; }
   if (!rn_core_available(opt.core)) { error(TR("Couldn’t create the project"), TR("Selected core is not included in this build")); return; }
   bool dirExisted = projectDir.empty() || exists(projectDir);
@@ -491,6 +594,7 @@ void AppModel::openProject(const std::string& path, const std::string& romOverri
   rn_session_options opt;
   rn_session_options_init(&opt);
   opt.open_flags = (dropCorrupt ? RN_OPEN_DROP_CORRUPT_STATES : 0u) | (dropPractice ? RN_OPEN_DROP_CORRUPT_PRACTICE : 0u);
+  opt.defer_checkpoints = 1;  // taken in the frame's slack (EmulationController::afterFrame)
   rn_session* s = nullptr;
   rn_status st = rn_session_open(path.c_str(), romOverride.empty() ? nullptr : romOverride.c_str(), &opt, &s);
   if (st != RN_OK) {
@@ -544,8 +648,8 @@ void AppModel::handleOpenError(rn_status st, const std::string& message, const s
         ChooserRequest r;
         r.mode = ChooserRequest::Mode::openROM;
         r.title = TRF("Locate “%@”", {m.romName});
-        r.root = library_->root();
         r.startDir = library_->romDir();
+        r.root = library_->chooserRoot(r.startDir);
         r.onChosen = [=](const std::string& rom) { openProject(path, rom, dropCorrupt, dropPractice, resume); };
         r.onCancel = failed;
         host_->showChooser(std::move(r));
@@ -696,7 +800,10 @@ void AppModel::saveTempAs(std::function<void()> then) {
     if (!moveTempProject(dest, &moveError)) target = paths_.tempProject();
     // The full save above wrote the cursor and take mode: the project reopens where it was.
     rn_session* reopened = nullptr;
-    if (rn_session_open(target.c_str(), nullptr, nullptr, &reopened) == RN_OK) {
+    rn_session_options opt;
+    rn_session_options_init(&opt);
+    opt.defer_checkpoints = 1;  // as every session the app opens
+    if (rn_session_open(target.c_str(), nullptr, &opt, &reopened) == RN_OK) {
       ResumeRec r;
       r.projectPath = target;
       r.isTemp = !moveError.empty();
@@ -761,7 +868,7 @@ void AppModel::performProjectReset(bool keepSlots, bool backup) {
       if (!copyTree(dir, copy, &err)) {
         // The project's folder is not writable: copy into the temporary folder instead.
         std::error_code ec;
-        std::string tmp = fs::temp_directory_path(ec).string() + "/replaynes-backup-" +
+        std::string tmp = fs::temp_directory_path(ec).string() + "/" RN_PRODUCT_TEMP_PREFIX "-backup-" +
                           std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         fs::create_directories(tmp, ec);
         copy = tmp + "/" + fileName(copy);

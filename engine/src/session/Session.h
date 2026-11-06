@@ -24,10 +24,14 @@ enum class Mode : int { Record = 0, Replay = 1, Practice = 2, Live = 3 };
 constexpr int kPracticeSlots = 8;
 
 struct SessionOptions {
-  CoreKind core = CoreKind::Nestopia;
+  CoreKind core = defaultCoreKind();
   CheckpointPolicy checkpoints;
   bool dropCorruptStates = false;  // open(): discard corrupt state files instead of failing
   bool dropCorruptPractice = false;  // open(): discard corrupt practice slots instead of failing
+  bool live = false;  // create(): Mode::Live from the start (nothing recorded), any core
+  // The checkpoint of a stepped frame is taken by checkpointWork() (the frontend's slack after the
+  // picture), or before anything else changes the machine: not between the input and the picture.
+  bool deferCheckpoints = false;
 };
 
 struct StepInfo {
@@ -92,21 +96,33 @@ class Session {
   // Entering Practice keeps the current machine state; leaving it (Record/Replay) restores the
   // take state at the return frame (== frame(), which never moves during practice).
   Status setMode(Mode m);
-  Status step(uint8_t p1, uint8_t p2, uint8_t events, StepInfo* info = nullptr);
+  Status step(uint8_t p1, uint8_t p2, uint8_t events, StepInfo* info = nullptr);  // NES pads
+  // One frame of any core's input: bytes beyond inputLayout().recordBytes must be zero.
+  Status stepInput(const InputRecord& in, StepInfo* info = nullptr);
+  const InputLayout& inputLayout() const { return layout_; }
   uint64_t frame() const { return frame_; }  // take cursor (the return frame while practicing)
   uint64_t takeLength() const { return tl_.length(); }
   Status seek(uint64_t frame);  // WrongMode in practice
   // Record/Replay: seek back on the take. Practice: rewind the practice run (bounded ring),
   // never before the current anchor (A or practice start).
   Status rewind(uint64_t n);
+  // Optional paused/idle maintenance. No presentation, cursor or continuity changes.
+  // At most budgetFrames core steps; Practice/Live and budget zero are no-ops.
+  Status idleWork(uint32_t budgetFrames);
+  /// SessionOptions::deferCheckpoints: the checkpoint (or practice snapshot) of the last stepped frame,
+  /// and a buffer for the next one (a large state written into fresh memory paid for its allocation).
+  void checkpointWork();
 
   const uint32_t* video() const { return core_->video(); }
+  MediaInfo mediaInfo() const { return core_->mediaInfo(); }
+  VideoFrame videoFrame() const { return core_->videoFrame(); }
+  uint64_t samplesBefore(uint64_t frame) const { return core_->samplesBefore(frame); }
   const uint16_t* videoCodes(uint32_t* burstPhase, uint64_t* frame) const { return core_->videoCodes(burstPhase, frame); }
   const int16_t* audio(size_t* count) const;
   uint64_t stateHash() { return core_->machineHash(); }
   uint64_t videoHash() const { return core_->videoHash(); }
-  uint64_t audioHash() const { size_t n; const int16_t* a = audio(&n); return audioHashOf(a, n); }
-  static uint64_t audioHashOf(const int16_t* a, size_t n);
+  uint64_t audioHash() const { size_t n; const int16_t* a = audio(&n); return audioHashOf(a, n, core_->mediaInfo().audioChannels); }
+  static uint64_t audioHashOf(const int16_t* a, size_t n, uint32_t channels = 1);
 
   // --- bookmarks
   Status bookmarkAdd(const std::string& name, uint64_t* id);
@@ -152,7 +168,9 @@ class Session {
 
   // --- persistence
   Status save();
-  Status autosave();
+  /// waitForStates false (rn_session_autosave_background, every few seconds while playing): new sparse
+  /// state files are written on another thread and referenced by a later autosave; true: by this one.
+  Status autosave(bool waitForStates = true);
   Status saveAs(const std::string& dir);
   // "Reset Project": the project starts over from power-on (frame 0, record mode, empty
   // timeline: every take, bookmark, checkpoint and the take undo history are dropped). Same ROM
@@ -163,6 +181,8 @@ class Session {
   // practice.
   Status reset(bool keepPracticeSlots);
   bool hasProject() const { return store_ != nullptr; }
+  /// A checkpoint's bytes: in memory, or read back from the project into `scratch` (offloaded).
+  Status checkpointData(const Checkpoint& c, std::vector<uint8_t>& scratch, const std::vector<uint8_t>*& out) const;
   bool recovered() const { return recovered_; }
   bool unsavedChanges() const { return mode_ != Mode::Live && changeSeq_ != savedSeq_; }
   std::string projectDir() const;
@@ -174,16 +194,59 @@ class Session {
   const std::string& romPath() const { return romPath_; }
   const std::string& romSha256() const { return romSha_; }
   CoreKind coreKind() const { return core_->kind(); }
-  ICore& core() { return *core_; }
+  ICore& core() { clearRewindCache(); return *core_; }
   const SessionOptions& options() const { return opt_; }
 
  private:
   friend class ProjectStore;
   Session() = default;
   void touch() { ++changeSeq_; }
-  Status resync(uint64_t target, bool forceReload);
+  // Pre-frame states, collected only during rewind; at most two dense-sized ranges.
+  // No media is cached: the last frame is always rendered by the core.
+  struct RewindBlock {
+    uint64_t first = 0;
+    std::vector<std::vector<uint8_t>> states;
+  };
+  std::deque<RewindBlock> rewindBlocks_;
+  struct RewindPrefetch {
+    RewindBlock block;
+    uint64_t next = 0, end = 0;  // end == 0: no pending work
+    bool fresh = false;
+    std::vector<uint8_t> resume;
+  } rewindPrefetch_;
+  void clearRewindCache();
+  uint64_t advanceRewindPrefetch(uint64_t budget);
+  uint64_t prefetchOlderRewindBlock(uint64_t target, uint64_t budget = 5, uint64_t rewound = 0);
+  uint64_t finishRewindPrefetch(uint64_t target);
+  const std::vector<uint8_t>* rewindState(uint64_t frame) const;
+  void cacheRewindState(RewindBlock& block, uint64_t frame);
+  void retainRewindBlock(RewindBlock block);
+  Status resync(uint64_t target, bool forceReload, RewindBlock* block = nullptr);
   Status powerOnFresh();
-  void maybeCheckpoint();
+  void maybeCheckpoint(uint64_t frame, ICore* source = nullptr);
+  bool wantsCheckpoint(uint64_t frame) const;
+  void takePracticeSnap();
+  // What a deferred step left (SessionOptions::deferCheckpoints): done before the machine changes.
+  void commitPending();
+  Status coreStep(const InputRecord& r, bool render) { commitPending(); return core_->stepRecord(r, render); }
+  Status coreLoadState(const uint8_t* p, size_t n) { commitPending(); return core_->loadState(p, n); }
+  Status coreLoadContent() { commitPending(); return core_->loadContent(romPath_, rom_.data(), rom_.size()); }
+  struct PendingCapture {
+    bool take = false;      // the checkpoint of frame `at` (frame_)
+    bool practice = false;  // the practice snapshot of emulated frame `at` (emuCount_)
+    uint64_t at = 0;
+    uint64_t owner = 0;  // take: the frame's state owner then (another one later: dropped)
+  } pending_;
+  // One independent logical machine, not another per-frame state cache. Shared
+  // physical cores arbitrate instances exactly as they do for OfflineRenderer.
+  std::unique_ptr<ICore> warmCore_;
+  uint64_t warmNext_ = 0, warmEnd_ = 0;
+  bool idleWarmComplete_ = false;
+  // A fully checkpointed search window can be reused until checkpoint insertion
+  // (which can evict dense entries) or any ordinary cache-invalidating operation.
+  bool warmChecked_ = false;
+  uint64_t warmCheckedFloor_ = 0, warmCheckedTop_ = 0, warmCheckedId_ = 0;
+  Status warmRewindGap(uint64_t target, uint32_t budgetFrames, bool idle);
   Status captureState(std::vector<uint8_t>& out) { return core_->saveState(out); }
   // Take state at the cursor (the saved return state while practicing).
   Status cursorState(std::vector<uint8_t>& out);
@@ -200,6 +263,7 @@ class Session {
 
   SessionOptions opt_;
   std::unique_ptr<ICore> core_;
+  InputLayout layout_ = InputLayout::nes();  // core_->inputLayout() of the loaded content
   std::vector<uint8_t> rom_;
   std::string romPath_, romSha_;
   Timeline tl_;
@@ -231,6 +295,8 @@ class Session {
     std::vector<uint8_t> state;
   };
   std::deque<PracticeSnap> pSnaps_;      // every denseInterval frames, front = oldest
+  size_t pSnapBytes_ = 0;                // their states' bytes (CheckpointPolicy::denseBytes)
+  std::vector<uint8_t> pSpare_;          // the last dropped one's state, for the next
   std::vector<InputRecord> pInputs_;     // inputs applied since pSnaps_.front().count
 };
 

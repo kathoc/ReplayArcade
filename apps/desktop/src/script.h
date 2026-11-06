@@ -9,10 +9,19 @@
 //                           confirm / cancel: east / south by default), up down left right,
 //                           l1 r1 l2 r2, menu (= start, ≡), view (= back, ⧉), l3 r3, home (guide)
 //   padhold <button> <s>    the same, held for <s> seconds (the script goes on meanwhile)
+//   padplug <name> <vid> <pid>   a controller connected (virtual; vid / pid in hex: 28de 1205 = Steam Deck)
+//   padunplug <name>        that controller disconnected      padpress <name> <button>   a press on it
 //   chord [<ms>]            L1, then R1 <ms> later (default 30), both held 0.2 s: the Quick Menu chord
 //   clickpill               a mouse click on the Menu pill (SDL mouse events at its center)
 //   clickcrumb <i>          a mouse click on breadcrumb segment <i> (an ancestor; 0 = leftmost)
-//   key <scancode name>     a key press (SDL_GetScancodeFromName: "Escape", "Return", "Space", ...)
+//   key <scancode name> [<s>]  a key press (SDL_GetScancodeFromName: "Escape", "Return", "Space", ...),
+//                           held <s> seconds (default: released at once)
+//   wheel <y> [<x>]         mouse wheel notches (+y = up / away from the user, +x = right)
+//   focus lost|gained       the window loses / gets the input focus (another window in front)
+//   overlay on|off          the system's UI in front without a focus change (the Steam menu in gamescope)
+//   screensaver             the game demos now, as after the idle time
+//   mousemove <dx> <dy> [<frames>]   relative mouse motion (a captured mouse), spread over frames
+//   mousebutton left|right|middle [<s>]  a mouse button press held <s> seconds (default 0.05)
 //   osktype <text>          types <text> on the built-in on-screen keyboard
 //   pause | play | record | bookmark | seta <slot> | setb <slot> | practice <slot> | stoppractice
 //   seek <frame> | advance <n> | dialog <button> | shot <file.png> (shotdir <dir>: relative to it) | quit
@@ -30,6 +39,7 @@
 #include <SDL3/SDL.h>
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -50,8 +60,12 @@ class Script {
   std::function<void(bool)> onCrt;
   /// The joystick id the injected gamepad events carry (slot 0's pad).
   std::function<SDL_JoystickID()> padId;
+  std::function<std::string()> players;  // "status": players= (each player's controller, | between)
   /// The window injected mouse events go to.
   std::function<SDL_WindowID()> windowId;
+  std::function<bool()> mouseCaptured;  // "status": mouse= (the game has the mouse)
+  /// "overlay on|off": stands in for PlatformHooks::systemOverlay (-1: not scripted).
+  int overlay = -1;
   /// Layout check failures so far (the exit code of a scripted run).
   int failures = 0;
 
@@ -59,7 +73,9 @@ class Script {
   std::vector<std::vector<std::string>> cmds_;
   size_t next_ = 0;
   double waitUntil_ = 0;
-  std::function<bool()> waitCond_;  // updatewait / layoutcheck: until this holds (or waitUntil_)
+  std::function<bool()> waitCond_;
+  std::map<std::string, SDL_JoystickID> plugged_;  // padplug: name -> virtual joystick
+  SDL_JoystickID pressPad_ = 0;                    // padpress: the pad pushPad sends from (0: player 1's)  // updatewait / layoutcheck: until this holds (or waitUntil_)
   struct Pending {
     double at;
     std::string button;

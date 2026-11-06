@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include "settings.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -36,7 +38,11 @@ Settings Settings::parse(const std::string& text) {
   Settings s;
   std::istringstream in(text);
   std::string line;
+  bool backdrop2 = false;  // the newer key wins over the older one wherever they are
   while (std::getline(in, line)) {
+#if !RN_PRODUCT_FLASH_FILTER || !RN_PRODUCT_OVERSCAN_CROP
+    const std::string rawLine = line;
+#endif
     line = trim(line);
     if (line.empty() || line[0] == '#') continue;
     size_t eq = line.find('=');
@@ -46,12 +52,29 @@ Settings Settings::parse(const std::string& text) {
     bool num = parseNumber(v, &d);
     if (k == "integerScale") s.integerScale = parseBool(v, s.integerScale);
     else if (k == "par87") s.par87 = parseBool(v, s.par87);
+#if RN_PRODUCT_OVERSCAN_CROP
     else if (k == "hideOverscan") s.hideOverscan = parseBool(v, s.hideOverscan);
+#else
+    else if (k == "hideOverscan") s.preservedOverscanLines += rawLine + "\n";
+#endif
     else if (k == "vtrEffect") s.vtrEffect = parseBool(v, s.vtrEffect);
+    else if (k == "backdrop2" && num) {
+      s.backdrop = std::clamp(int(d), 0, 4);
+      backdrop2 = true;
+    } else if (k == "backdrop" && num && !backdrop2) s.backdrop = d == 0 ? 0 : 2;  // the older levels: none or the default
     else if (k == "practiceCountdown") s.practiceCountdown = parseBool(v, s.practiceCountdown);
     else if (k == "resumeCountdown") s.resumeCountdown = parseBool(v, s.resumeCountdown);
+    else if (k == "countdownSeconds") {
+      const int n = std::atoi(v.c_str());
+      s.countdownSeconds = n >= 3 ? 3 : n >= 1 ? 1 : 0;
+    }
+    else if (k == "playInBackground") s.playInBackground = parseBool(v, s.playInBackground);
     else if (k == "showStats") s.showStats = parseBool(v, s.showStats);
+#if RN_PRODUCT_FLASH_FILTER
     else if (k == "flash" && num && d >= 0 && d <= 3 && d == std::floor(d)) s.flash = int(d);
+#else
+    else if (k == "flash") s.preservedFlashLines += rawLine + "\n";
+#endif
     else if (k == "showFlashIndicator") s.showFlashIndicator = parseBool(v, s.showFlashIndicator);
     else if (k == "uiScale" && num && d >= 0.5 && d <= 2.5) s.uiScale = float(d);
     else if (k == "volume" && num && d >= 0 && d <= 1) s.volume = float(d);
@@ -63,12 +86,26 @@ Settings Settings::parse(const std::string& text) {
     else if (k == "crtAntenna" && num && d >= 20 && d <= 90) s.crtAntenna = d;
     else if (k == "pauseAfterRewind2") s.pauseAfterRewind = parseBool(v, s.pauseAfterRewind);  // "pauseAfterRewind" (<= 0.5.0): ignored, settings.h
     else if (k == "autosaveInterval" && num && d >= 1 && d <= 600) s.autosaveInterval = d;
+    else if (k == "screensaverMinutes" && num && d >= 0 && d <= 600) s.screensaverMinutes = int(d);
     else if (k == "dpadStepWhenPaused") s.dpadStepWhenPaused = parseBool(v, s.dpadStepWhenPaused);
+    else if (k == "mouseControls") s.mouseControls = parseBool(v, s.mouseControls);
     else if (k == "southConfirm") s.southConfirm = parseBool(v, s.southConfirm);
+    else if (k == "touchOpacity" && num && d >= 15 && d <= 100) s.touchOpacity = int(d);
+    else if (k == "touchDpadSize" && num && d >= 130 && d <= 210) s.touchDpadSize = int(d);
+    else if (k == "touchFollowY" && num && d >= 0 && d <= 2) s.touchFollowY = d;
+    else if (k == "touchFollowX" && num && d >= 0 && d <= 2) s.touchFollowX = d;
+    else if (k == "touchWays" && num && (d == 4 || d == 8)) s.touchWays = int(d);
+    else if (k == "touchTurbo") s.touchTurbo = parseBool(v, s.touchTurbo);
+    else if (k == "touchVibration") s.touchVibration = parseBool(v, s.touchVibration);
+    else if (k == "touchHideWithPad") s.touchHideWithPad = parseBool(v, s.touchHideWithPad);
+    else if (k == "touchWaysPerRom") s.touchWaysPerRom = v;
     else if (k == "onScreenKeyboard" && (v == "auto" || v == "builtin" || v == "steam")) s.onScreenKeyboard = v;
     else if (k == "checkForUpdates") s.checkForUpdates = parseBool(v, s.checkForUpdates);
     else if (k == "core") s.core = v;  // preserve unknown IDs: creation reports an error, never silently substitutes
     else if (k == "language" && (v == "auto" || v == "ja" || v == "en")) s.language = v;
+    else if (k == "orientation" && (v == "auto" || v == "landscape" || v == "portrait")) s.orientation = v;
+    else if (k == "romFolder") s.romFolder = v;
+    else if (k == "projectsFolder") s.projectsFolder = v;
     else if (k == "menuHintShown") s.menuHintShown = parseBool(v, s.menuHintShown);
     else if (k == "coachShown" && num && d >= 0 && d <= 0xFFFF) s.coachShown = uint32_t(d);
     else if (k == "controllerLayoutVersion" && num && d >= 0 && d <= 1000) s.controllerLayoutVersion = int(d);
@@ -81,15 +118,26 @@ Settings Settings::parse(const std::string& text) {
 
 std::string Settings::serialize() const {
   std::ostringstream o;
-  o << "# ReplayNES (Linux) settings\n";
+  o << "# " RN_PRODUCT_NAME " (Linux) settings\n";
   o << "integerScale=" << int(integerScale) << "\n";
   o << "par87=" << int(par87) << "\n";
+#if RN_PRODUCT_OVERSCAN_CROP
   o << "hideOverscan=" << int(hideOverscan) << "\n";
+#else
+  o << preservedOverscanLines;
+#endif
   o << "vtrEffect=" << int(vtrEffect) << "\n";
+  o << "backdrop2=" << int(backdrop) << "\n";
   o << "practiceCountdown=" << int(practiceCountdown) << "\n";
   o << "resumeCountdown=" << int(resumeCountdown) << "\n";
+  o << "countdownSeconds=" << countdownSeconds << "\n";
+  o << "playInBackground=" << int(playInBackground) << "\n";
   o << "showStats=" << int(showStats) << "\n";
+#if RN_PRODUCT_FLASH_FILTER
   o << "flash=" << flash << "\n";
+#else
+  o << preservedFlashLines;
+#endif
   o << "showFlashIndicator=" << int(showFlashIndicator) << "\n";
   char buf[64];
   std::snprintf(buf, sizeof buf, "%.2f", double(uiScale));
@@ -106,12 +154,22 @@ std::string Settings::serialize() const {
   o << "pauseAfterRewind2=" << int(pauseAfterRewind) << "\n";
   std::snprintf(buf, sizeof buf, "%g", autosaveInterval);
   o << "autosaveInterval=" << buf << "\n";
+  o << "screensaverMinutes=" << screensaverMinutes << "\n";
   o << "dpadStepWhenPaused=" << int(dpadStepWhenPaused) << "\n";
+  o << "mouseControls=" << int(mouseControls) << "\n";
   o << "southConfirm=" << int(southConfirm) << "\n";
+  o << "touchOpacity=" << touchOpacity << "\n" << "touchDpadSize=" << touchDpadSize << "\n";
+  o << "touchFollowY=" << touchFollowY << "\n" << "touchFollowX=" << touchFollowX << "\n";
+  o << "touchWays=" << touchWays << "\n" << "touchTurbo=" << int(touchTurbo) << "\n";
+  o << "touchVibration=" << int(touchVibration) << "\n" << "touchHideWithPad=" << int(touchHideWithPad) << "\n";
+  o << "touchWaysPerRom=" << touchWaysPerRom << "\n";
   o << "onScreenKeyboard=" << onScreenKeyboard << "\n";
   o << "checkForUpdates=" << int(checkForUpdates) << "\n";
   o << "core=" << core << "\n";
   o << "language=" << language << "\n";
+  o << "orientation=" << orientation << "\n";
+  o << "romFolder=" << romFolder << "\n";
+  o << "projectsFolder=" << projectsFolder << "\n";
   o << "menuHintShown=" << int(menuHintShown) << "\n";
   o << "coachShown=" << coachShown << "\n";
   o << "controllerLayoutVersion=" << controllerLayoutVersion << "\n";

@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <restartmanager.h>
 #include <shlobj.h>
 
 #include <SDL3/SDL.h>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "replaynes/frontend.h"
+#include "replaynes/product.h"
 #include "update_winsparkle.h"
 
 namespace fs = std::filesystem;
@@ -34,7 +36,7 @@ namespace fs = std::filesystem;
 #define RNW_UPDATE_PUBLIC_KEY ""
 #endif
 #ifndef RNW_APPCAST_URL
-#define RNW_APPCAST_URL "https://github.com/kathoc/ReplayNES/releases/latest/download/appcast-windows.xml"
+#define RNW_APPCAST_URL ""
 #endif
 
 namespace rnl {
@@ -62,16 +64,16 @@ fs::path exePath() {
   return fs::path(p);
 }
 
-/// %LOCALAPPDATA%\ReplayNES\Update
+/// %LOCALAPPDATA%\<DATA_DIR>\Update
 fs::path updateRoot() {
   PWSTR p = nullptr;
   fs::path root;
-  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p))) root = fs::path(p) / L"ReplayNES" / L"Update";
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p))) root = fs::path(p) / fs::u8path(RN_PRODUCT_DATA_DIR) / L"Update";
   CoTaskMemFree(p);
   return root;
 }
 
-/// One line to %LOCALAPPDATA%\ReplayNES\Update\update.log (and stderr).
+/// One line to %LOCALAPPDATA%\<DATA_DIR>\Update\update.log (and stderr).
 void logLine(const std::string& s) {
   std::fprintf(stderr, "update: %s\n", s.c_str());
   std::error_code ec;
@@ -213,13 +215,13 @@ int __cdecl runInstaller(const wchar_t* file) {
   fs::path newExe;
   for (auto it = fs::recursive_directory_iterator(stage, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
     if (ec) break;
-    if (it->path().filename() == L"ReplayNES.exe") {
+    if (it->path().filename() == fs::u8path(RN_PRODUCT_EXECUTABLE ".exe")) {
       newExe = it->path();
       break;
     }
   }
   if (newExe.empty()) {
-    logLine("the update has no ReplayNES.exe");
+    logLine("the update has no " RN_PRODUCT_EXECUTABLE ".exe");
     return -1;
   }
   const fs::path installDir = exePath().parent_path();
@@ -243,14 +245,14 @@ class WinSparkleUpdates : public UpdateService {
 
   void start(bool) override {
     if (started_) return;
-    const char* url = std::getenv("REPLAYNES_APPCAST_URL");  // testing; signatures still checked
-    api_.set_registry_path("Software\\ReplayNES\\WinSparkle");
+    const char* url = std::getenv(productEnvName("APPCAST_URL").c_str());  // testing; signatures still checked
+    api_.set_registry_path("Software\\" RN_PRODUCT_DATA_DIR "\\WinSparkle");
     api_.set_appcast_url(url && *url ? url : RNW_APPCAST_URL);
     if (!api_.set_eddsa_public_key(RNW_UPDATE_PUBLIC_KEY)) {
       std::fprintf(stderr, "update: invalid EdDSA public key - updates disabled\n");
       return;
     }
-    api_.set_app_details(L"ReplayNES", L"ReplayNES", widen(RNL_APP_VERSION).c_str());
+    api_.set_app_details(widen(RN_PRODUCT_NAME).c_str(), widen(RN_PRODUCT_NAME).c_str(), widen(RNL_APP_VERSION).c_str());
     api_.set_lang(std::strcmp(rnf_l10n_language(), "ja") == 0 ? "ja" : "en");
     // Automatic checks: WinSparkle's own setting (registry), which it asks for on the second launch
     // (like Sparkle on macOS); Settings -> System shows and changes it.
@@ -292,12 +294,37 @@ class WinSparkleUpdates : public UpdateService {
 };
 
 // ------------------------------------------------------------------ the finishing helper
+/// The processes that have `file` open (Windows' Restart Manager), "name (pid)" each; "" when none or unknown.
+/// 2026-11-03: an update failed with error 32 on ReplayArcade.exe and the log could not tell what held it.
+std::string lockers(const fs::path& file) {
+  DWORD session = 0;
+  WCHAR key[CCH_RM_SESSION_KEY + 1] = {};
+  if (RmStartSession(&session, 0, key) != ERROR_SUCCESS) return {};
+  std::string out;
+  PCWSTR name = file.c_str();
+  if (RmRegisterResources(session, 1, &name, 0, nullptr, 0, nullptr) == ERROR_SUCCESS) {
+    UINT need = 0, have = 16;
+    RM_PROCESS_INFO info[16];
+    DWORD reasons = 0;
+    if (RmGetList(session, &need, &have, info, &reasons) == ERROR_SUCCESS)
+      for (UINT i = 0; i < have; ++i)
+        out += (out.empty() ? "" : ", ") + narrow(info[i].strAppName) + " (" + std::to_string(info[i].Process.dwProcessId) + ")";
+  }
+  RmEndSession(session);
+  return out;
+}
+
 bool copyWithRetry(const fs::path& from, const fs::path& to, std::string* why) {
-  for (int i = 0; i < 50; ++i) {  // antivirus scanners / a slow exit can hold the files briefly
+  for (int i = 0; i < 50; ++i) {  // antivirus scanners can hold the files briefly
     if (CopyFileW(from.c_str(), to.c_str(), FALSE)) return true;
     Sleep(200);
   }
-  *why = "cannot write " + narrow(to.wstring()) + " (error " + std::to_string(GetLastError()) + ")";
+  const DWORD err = GetLastError();
+  *why = "cannot write " + narrow(to.wstring()) + " (error " + std::to_string(err) + ")";
+  if (err == ERROR_SHARING_VIOLATION) {
+    const std::string held = lockers(to);
+    *why += held.empty() ? std::string(", held by an unknown process") : ", held by " + held;
+  }
   return false;
 }
 
@@ -307,7 +334,7 @@ std::unique_ptr<UpdateService> makeWinSparkleUpdates(const std::vector<std::stri
   if (std::strlen(RNW_UPDATE_PUBLIC_KEY) == 0) return nullptr;
   WinSparkleApi api;
   if (!api.load(exePath().parent_path() / L"WinSparkle.dll")) {
-    std::fprintf(stderr, "update: WinSparkle.dll not found next to ReplayNES.exe - no in-app updates\n");
+    std::fprintf(stderr, "update: WinSparkle.dll not found next to " RN_PRODUCT_EXECUTABLE ".exe - no in-app updates\n");
     return nullptr;
   }
   gRestartArgs = restartArguments(argv);
@@ -323,15 +350,23 @@ int finishUpdate(int argc, char** argv) {
   for (int i = 4; i < argc; ++i)
     if (std::strcmp(argv[i], "--") != 0 || i != 4) appArgs.push_back(widen(argv[i]));
   const fs::path stage = exePath().parent_path();
-  // 1. The old instance quits (WinSparkle asked it to): wait for it.
+  // 1. The old instance quits (WinSparkle asked it to): wait for it. Logged, so a failed update shows whether
+  // it was waited for (2026-11-03: error 32 eleven seconds after the start, the log could not tell).
+  const DWORD t0 = GetTickCount();
   if (HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, pid)) {
-    if (WaitForSingleObject(h, 120000) != WAIT_OBJECT_0) {
-      CloseHandle(h);
-      logLine("the running ReplayNES did not quit: update cancelled");
-      MessageBoxW(nullptr, L"ReplayNES did not quit, so the update was not installed.", L"ReplayNES", MB_ICONWARNING);
+    const DWORD w = WaitForSingleObject(h, 120000);
+    CloseHandle(h);
+    if (w != WAIT_OBJECT_0) {
+      logLine("the running " RN_PRODUCT_NAME " (pid " + std::to_string(pid) + ") did not quit: update cancelled");
+      MessageBoxW(nullptr, widen(RN_PRODUCT_NAME " did not quit, so the update was not installed.").c_str(), widen(RN_PRODUCT_NAME).c_str(), MB_ICONWARNING);
       return 1;
     }
-    CloseHandle(h);
+    logLine("waited " + std::to_string(GetTickCount() - t0) + " ms for " RN_PRODUCT_NAME " (pid " + std::to_string(pid) + ") to quit");
+  } else {
+    // Gone already (no such process: ERROR_INVALID_PARAMETER); anything else is logged.
+    const DWORD err = GetLastError();
+    logLine(err == ERROR_INVALID_PARAMETER ? "pid " + std::to_string(pid) + " had quit already"
+                                           : "cannot wait for pid " + std::to_string(pid) + " (OpenProcess error " + std::to_string(err) + ")");
   }
   // 2. Copy the new files over the installation, keeping a backup of the ones replaced.
   std::error_code ec;
@@ -362,13 +397,13 @@ int finishUpdate(int argc, char** argv) {
     for (const auto& n : replaced) CopyFileW((backup / n).c_str(), (installDir / n).c_str(), FALSE);
     for (const auto& n : added) DeleteFileW((installDir / n).c_str());
     logLine("update failed, previous version restored: " + why);
-    MessageBoxW(nullptr, widen("The update could not be installed:\n" + why).c_str(), L"ReplayNES", MB_ICONWARNING);
+    MessageBoxW(nullptr, widen("The update could not be installed:\n" + why).c_str(), widen(RN_PRODUCT_NAME).c_str(), MB_ICONWARNING);
   } else {
     logLine("updated " + narrow(installDir.wstring()));
   }
   fs::remove_all(backup, ec);
   // 3. Start ReplayNES (the new version, or the old one again) with the same arguments.
-  if (run(installDir / L"ReplayNES.exe", appArgs, false, installDir) < 0) logLine("could not start ReplayNES again");
+  if (run(installDir / fs::u8path(RN_PRODUCT_EXECUTABLE ".exe"), appArgs, false, installDir) < 0) logLine("could not start " RN_PRODUCT_NAME " again");
   return ok ? 0 : 1;
 }
 

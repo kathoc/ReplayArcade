@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "replaynes/product.h"
 #include <SDL3/SDL.h>
 
 #include <functional>
@@ -35,13 +36,13 @@ struct AppOptions {
   /// Windows: present without vsync with tearing allowed in full screen (variable refresh
   /// displays) and pace emulation on the host clock at the NES rate. Ignored elsewhere.
   bool vrr = false;
-  std::string lang;               // --lang ja|en (else REPLAYNES_LANG, else the system's)
+  std::string lang;               // --lang ja|en (else the product's LANG environment variable, else the system's)
   std::vector<std::string> argv;  // as started (restart into an update)
 };
 
 struct PlatformHooks {
   const char* version = "";
-  const char* executable = "replaynes";  // for --help
+  const char* executable = RN_PRODUCT_TEMP_PREFIX;  // for --help
   /// Extra SDL_CreateWindow flags (SDL_WINDOW_VULKAN on Linux).
   SDL_WindowFlags windowFlags = 0;
   std::function<std::unique_ptr<Renderer>(const AppOptions&)> makeRenderer;
@@ -51,6 +52,13 @@ struct PlatformHooks {
   std::function<void()> setupFrameThread;
   /// "mode" of the --perf-seconds summary (gamescope / the desktop).
   std::function<std::string()> sessionMode;
+  /// The system's own UI is in front of the window without taking its focus (gamescope: the Steam
+  /// menu, docs/design/STEAM_OVERLAY_PAUSE.md). Cheap: called from the frame loop. Empty: none.
+  std::function<bool()> systemOverlay;
+  /// A touch screen to play on (Android): the on-screen controller (docs/design/TOUCH_ANDROID.md).
+  bool touchControls = false;
+  /// A short vibration for a touch control's press (Settings: Vibration). Empty: none.
+  std::function<void()> haptic;
 };
 
 /// Parses the shared command line (unknown options: usage + false).

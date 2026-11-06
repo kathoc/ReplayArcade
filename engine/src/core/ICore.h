@@ -3,15 +3,18 @@
 //  * One instance = one machine. No shared mutable state between instances that can
 //    influence emulation results (see docs/ARCHITECTURE_DECISION.md for Nestopia statics).
 //  * frameIndex() = logical frames emulated since loadROM (NOT reset by power cycle).
-//  * Full-capability cores: stepFrame emits exactly audioSamplesForFrame(frameIndex) mono int16 samples @48 kHz,
-//    so audio sample positions are a pure function of the frame index.
+//  * Full-capability cores: stepFrame emits exactly samplesForFrame(frameIndex) sample frames
+//    (mediaInfo().audioChannels interleaved int16 values each; the NES cores: mono 48 kHz), so
+//    audio sample positions are a pure function of the frame index.
 //  * CapState cores: saveState/loadState round-trip the complete machine state including frameIndex.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "input/InputLayout.h"
 #include "util/Status.h"
 
 namespace rn {
@@ -29,23 +32,60 @@ inline uint32_t audioSamplesForFrame(uint64_t frame) {
   return uint32_t(audioSamplesBefore(frame + 1) - audioSamplesBefore(frame));
 }
 
+// What a core produces for the loaded content. The defaults are the NES values above; a core for
+// another system overrides ICore::mediaInfo / videoFrame / samplesBefore.
+struct MediaInfo {
+  uint32_t maxWidth = kVideoWidth, maxHeight = kVideoHeight;  // capacity of video(); fixed per content
+  uint64_t fpsNum = kFpsNum, fpsDen = kFpsDen;                // exact emulated frame rate
+  uint32_t audioChannels = 1;                                 // interleaved int16 values per sample frame
+  uint32_t pixelAspectNum = 8, pixelAspectDen = 7;            // display width / height of one pixel
+  uint32_t rotation = 0;                                      // display rotation, quarter turns clockwise
+};
+// The picture of the last emulated frame: width x height pixels, rows `stride` pixels apart.
+struct VideoFrame {
+  const uint32_t* pixels = nullptr;
+  uint32_t width = 0, height = 0, stride = 0;
+};
+
 // System event flags (applied before emulating the frame they are recorded on).
 enum : uint8_t { kEvSoftReset = 0x01, kEvPowerCycle = 0x02, kEvMask = 0x03 };
 
-enum class CoreKind : int { Nestopia = 0, Mock = 1, ReplayNEScore = 2 };
+// External: a core the product registers at start-up (registerExternalCore), for example an arcade
+// core in another product built from these sources.
+enum class CoreKind : int { Nestopia = 0, Mock = 1, ReplayNEScore = 2, External = 3 };
 
 // Cores without CapAudio return nullptr/count=0; absent state/reset return UnsupportedFormat.
 class ICore {
  public:
   virtual ~ICore() = default;
   virtual Status loadROM(const uint8_t* data, size_t size) = 0;  // loads + powers on, frame=0
+  // Loads content: `data` is the file at `path`. Default: loadROM(data, size). A core that reads its
+  // content itself (an arcade set and the parent sets next to it) uses the path.
+  virtual Status loadContent(const std::string& path, const uint8_t* data, size_t size) {
+    (void)path;
+    return loadROM(data, size);
+  }
+  // Identity of the loaded content when the file's bytes are not it (a zip set repacked with other
+  // compression is the same game). Empty: the file's SHA-256 is the identity (the NES cores).
+  virtual std::string contentId() const { return {}; }
   virtual Status powerCycle() = 0;
   virtual Status softReset() = 0;
   // renderVideo=false skips only the final pixel conversion; emulation is identical.
   virtual Status stepFrame(uint8_t p1, uint8_t p2, bool renderVideo = true) = 0;
+  // One frame with the game input of `r` (the bytes inputLayout() declares; events are applied by
+  // stepRecord). Default: the NES pads. A core with another layout overrides both.
+  virtual Status stepInput(const InputRecord& r, bool renderVideo = true) { return stepFrame(r.p1, r.p2, renderVideo); }
+  virtual InputLayout inputLayout() const { return InputLayout::nes(); }
   virtual uint64_t frameIndex() const = 0;
   virtual const uint32_t* video() const = 0;  // kVideoWidth*kVideoHeight BGRA8 (0xAARRGGBB LE), alpha=255
-  virtual const int16_t* audio(size_t* count) const = 0;  // samples of the last stepFrame
+  // Sample frames of the last stepFrame: *count frames of mediaInfo().audioChannels int16 values.
+  virtual const int16_t* audio(size_t* count) const = 0;
+  virtual MediaInfo mediaInfo() const { return MediaInfo{}; }
+  virtual VideoFrame videoFrame() const { return VideoFrame{video(), kVideoWidth, kVideoHeight, kVideoWidth}; }
+  // Sample frames emitted before logical frame `frame`: a pure function of the frame index, so
+  // audio positions follow from frame numbers alone. Default: the NTSC formula above.
+  virtual uint64_t samplesBefore(uint64_t frame) const { return audioSamplesBefore(frame); }
+  uint32_t samplesForFrame(uint64_t frame) const { return uint32_t(samplesBefore(frame + 1) - samplesBefore(frame)); }
   // Display-only side channel for the CRT signal model: the raw PPU output codes of the frame in
   // video() (kVideoWidth*kVideoHeight, bits 0-5 = palette index after greyscale, bits 6-8 =
   // $2001 emphasis bits 5-7), the colour-burst phase of that frame (0..2, a function of the
@@ -67,6 +107,11 @@ class ICore {
   virtual CoreKind kind() const = 0;
 
   // Convenience: apply event flags then step. Power cycle wins over soft reset.
+  Status stepRecord(const InputRecord& r, bool renderVideo = true) {
+    if (r.events & kEvPowerCycle) RN_TRY(powerCycle());
+    else if (r.events & kEvSoftReset) RN_TRY(softReset());
+    return stepInput(r, renderVideo);
+  }
   Status stepRecord(uint8_t p1, uint8_t p2, uint8_t events, bool renderVideo = true) {
     if (events & kEvPowerCycle) RN_TRY(powerCycle());
     else if (events & kEvSoftReset) RN_TRY(softReset());
@@ -77,7 +122,28 @@ class ICore {
   uint64_t audioHash() const;
 };
 
-enum CoreCapability : uint32_t { CapAudio = 1, CapState = 2, CapSoftReset = 4, CapRecording = 8 };
+// The product's own core (CoreKind::External). Register once at start-up, before any session or
+// renderer exists; not thread-safe against concurrent core creation.
+struct ExternalCore {
+  std::string name;      // stable name (coreName)
+  std::string compatId;  // changes whenever replay results could change (coreCompatId)
+  uint32_t capabilities = 0;
+  std::function<std::unique_ptr<ICore>()> create;
+};
+void registerExternalCore(ExternalCore core);
+void unregisterExternalCore();
+
+// Hashes used for verification: the visible picture, and sample frames of `channels` values.
+uint64_t videoFrameHash(const VideoFrame& v);
+uint64_t audioFramesHash(const int16_t* a, size_t frames, uint32_t channels);
+
+enum CoreCapability : uint32_t {
+  CapAudio = 1, CapState = 2, CapSoftReset = 4, CapRecording = 8,
+  // Instances share one machine: background rendering must yield to foreground emulation.
+  CapSharesMachine = 16
+};
+// Configured product default; independent of external-core registration.
+CoreKind defaultCoreKind();
 const char* coreName(CoreKind kind);
 bool coreAvailable(CoreKind kind);
 uint32_t coreCapabilities(CoreKind kind);
@@ -89,6 +155,9 @@ std::string coreCompatId(CoreKind kind);
 // Wrapper state envelope shared by implementations.
 namespace stateenv {
 void write(std::vector<uint8_t>& out, const std::string& compat, uint64_t frame, const uint8_t* payload, size_t n);
+/// The same envelope with room for an `n`-byte payload the caller writes at the returned pointer (a large
+/// state serialized in place instead of into a buffer copied over).
+uint8_t* begin(std::vector<uint8_t>& out, const std::string& compat, uint64_t frame, size_t n);
 Status read(const uint8_t* data, size_t n, const std::string& expectCompat, uint64_t& frame, const uint8_t*& payload,
             size_t& payloadLen);
 }  // namespace stateenv

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include "steam_shortcut.h"
 
 #include <fcntl.h>
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -221,7 +223,7 @@ bool readFile(const std::string& p, std::string* out) {
 
 /// Writes via a temporary file in the same folder + rename (atomic replace), keeping `mode`.
 bool writeFileAtomic(const std::string& path, const std::string& data, mode_t mode, std::string* err) {
-  std::string tmp = path + ".replaynes-tmp";
+  std::string tmp = path + "." RN_PRODUCT_TEMP_PREFIX "-tmp";
   int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
   if (fd < 0) {
     *err = tmp + ": " + std::strerror(errno);
@@ -311,14 +313,36 @@ const Art kArt[] = {{"capsule.png", "p.png"}, {"wide.png", ".png"}, {"hero.png",
 const char* kLogoJson =
     "{\"nVersion\":1,\"logoPosition\":{\"pinnedPosition\":\"BottomLeft\",\"nWidthPct\":50,\"nHeightPct\":50}}";
 
+uint64_t fnv64(const std::string& data) {
+  uint64_t h = 1469598103934665603ull;
+  for (unsigned char c : data) h = (h ^ c) * 1099511628211ull;
+  return h;
+}
+
+/// What we wrote into each grid slot last time: <app id>.<prefix>-artwork, "<suffix> <hash>" lines.
+/// A slot whose file still has that content is ours (the user did not put their own art there).
+std::map<std::string, uint64_t> readArtworkRecord(const std::string& path) {
+  std::map<std::string, uint64_t> r;
+  std::string text;
+  if (!readFile(path, &text)) return r;
+  std::istringstream in(text);
+  std::string suffix, hash;
+  while (in >> suffix >> hash) r[suffix] = std::strtoull(hash.c_str(), nullptr, 16);
+  return r;
+}
+
 /// Installs the grid artwork for `appId`. Files with identical content are left alone; a
 /// different file (the user's own art) is kept once as <name>.replaynes-backup; a JPEG the user
-/// put in the same slot wins (ours is not written).
+/// put in the same slot wins (ours is not written). `onlyOurs` (refreshArtwork): only slots that
+/// still hold what we wrote last time get the new art; nothing else is touched, no backups.
 void installArtwork(const std::string& gridDir, uint32_t appId, const AddOptions& o, const std::string& artDir,
-                    UserResult& u, bool* failed) {
+                    UserResult& u, bool* failed, bool onlyOurs = false) {
   std::error_code ec;
-  if (!o.dryRun) fs::create_directories(gridDir, ec);
+  if (!o.dryRun && !onlyOurs) fs::create_directories(gridDir, ec);
   std::string id = std::to_string(appId);
+  const std::string recordPath = gridDir + "/" + id + "." RN_PRODUCT_TEMP_PREFIX "-artwork";
+  std::map<std::string, uint64_t> record = readArtworkRecord(recordPath);
+  const std::map<std::string, uint64_t> recordBefore = record;
   for (const Art& a : kArt) {
     std::string src = artDir + "/" + a.src;
     std::string dst = gridDir + "/" + id + a.suffix;
@@ -334,9 +358,17 @@ void installArtwork(const std::string& gridDir, uint32_t appId, const AddOptions
       continue;
     }
     std::string cur;
-    if (readFile(dst, &cur)) {
-      if (cur == data) continue;
-      std::string bak = dst + ".replaynes-backup";
+    const bool present = readFile(dst, &cur);
+    if (onlyOurs) {
+      auto rec = record.find(a.suffix);
+      if (!present || rec == record.end() || rec->second != fnv64(cur)) continue;  // not ours (or none)
+    }
+    if (present) {
+      if (cur == data) {
+        record[a.suffix] = fnv64(data);
+        continue;
+      }
+      std::string bak = dst + "." RN_PRODUCT_TEMP_PREFIX "-backup";
       if (!fs::exists(bak, ec) && !o.dryRun) {
         fs::copy_file(dst, bak, fs::copy_options::overwrite_existing, ec);
         if (!ec) u.notes.push_back("previous " + fs::path(dst).filename().string() + " kept as " +
@@ -349,8 +381,21 @@ void installArtwork(const std::string& gridDir, uint32_t appId, const AddOptions
     if (!writeFileAtomic(dst, data, 0644, &err)) {
       u.notes.push_back("could not write " + err);
       *failed = true;
+    } else {
+      record[a.suffix] = fnv64(data);
     }
   }
+  if (!o.dryRun && record != recordBefore) {
+    std::string text;
+    for (const auto& [suffix, hash] : record) {
+      char line[64];
+      std::snprintf(line, sizeof line, "%s %016llx\n", suffix.c_str(), static_cast<unsigned long long>(hash));
+      text += line;
+    }
+    std::string err;
+    if (!writeFileAtomic(recordPath, text, 0644, &err)) u.notes.push_back("could not write " + err);
+  }
+  if (onlyOurs) return;
   std::string json = gridDir + "/" + id + ".json";
   if (!fs::exists(json, ec)) {
     u.artworkWritten.push_back(json);
@@ -387,7 +432,7 @@ void processUser(const std::string& userDir, const std::string& accountId, const
     if (s > best) best = s, idx = i;
   }
   if (strongCount > 1)
-    u.notes.push_back(std::to_string(strongCount) + " ReplayNES entries in Steam; updating the first one");
+    u.notes.push_back(std::to_string(strongCount) + " " RN_PRODUCT_NAME " entries in Steam; updating the first one");
 
   bool steamBlocks = steam == SteamState::Running && !o.force;
   std::string before = file.serialize();
@@ -395,10 +440,20 @@ void processUser(const std::string& userDir, const std::string& accountId, const
     ShortcutsFile::Entry& e = file.entries[idx];
     u.existingEntry = true;
     u.entryKey = e.node.key;
-    const vdf::Node* aid = e.node.find("appid");
-    u.appId = aid && aid->type == vdf::Type::Int32
-                  ? aid->u32()
-                  : shortcutAppId(getStr(e.node, "Exe"), getStr(e.node, "AppName"));
+    vdf::Node* aid = e.node.find("appid");
+    if (aid && aid->type == vdf::Type::Int32 && aid->u32() != 0) {
+      u.appId = aid->u32();
+    } else {
+      // No id, or 0 (a tool that writes the file, Steam not yet saved it): Steam takes 0 for invalid and picks
+      // another id at each start ("sanitize shortcut app id ... replacing 0" in its console log), so artwork
+      // named by any id of ours never showed (AYN Thor, 2026-11-06). The id Steam derives for shortcuts goes
+      // into the entry; Steam keeps a valid one.
+      u.appId = shortcutAppId(getStr(e.node, "Exe"), getStr(e.node, "AppName"));
+      if (aid && aid->type == vdf::Type::Int32) aid->setU32(u.appId);
+      else e.node.children.insert(e.node.children.begin(), vdf::Node::int32("appid", u.appId));
+      e.dirty = true;
+      u.notes.push_back("the entry had no valid app id: " + std::to_string(u.appId) + " written");
+    }
     std::string iconPath = gridDir + "/" + std::to_string(u.appId) + "_icon.png";
     vdf::Node* icon = e.node.find("icon");
     std::error_code ec;
@@ -438,7 +493,7 @@ void processUser(const std::string& userDir, const std::string& accountId, const
     struct stat st{};
     if (exists && ::stat(u.shortcutsPath.c_str(), &st) == 0) mode = st.st_mode & 07777;
     if (exists) {
-      u.backupPath = u.shortcutsPath + ".replaynes-backup";
+      u.backupPath = u.shortcutsPath + "." RN_PRODUCT_TEMP_PREFIX "-backup";
       if (!writeFileAtomic(u.backupPath, bytes, mode, &err)) {
         u.action = UserAction::Failed;
         u.error = "backup failed: " + err;
@@ -454,7 +509,7 @@ void processUser(const std::string& userDir, const std::string& accountId, const
     u.shortcutsWritten = true;
   } else if (vdfChanges) {
     u.shortcutsWritten = true;  // dry run: would be written
-    if (exists) u.backupPath = u.shortcutsPath + ".replaynes-backup";
+    if (exists) u.backupPath = u.shortcutsPath + "." RN_PRODUCT_TEMP_PREFIX "-backup";
   }
   if (artFailed) {
     u.action = UserAction::Failed;
@@ -531,14 +586,14 @@ SteamState detectSteamRunning(const std::string& steamRoot, const std::string& h
 }
 
 std::string defaultArtworkDir() {
-  if (const char* e = std::getenv("REPLAYNES_STEAM_ARTWORK"); e && *e) return e;
+  if (const char* e = std::getenv(productEnvName("STEAM_ARTWORK").c_str()); e && *e) return e;
   std::error_code ec;
   fs::path exe = fs::read_symlink("/proc/self/exe", ec);
   if (!ec) {
-    fs::path d = exe.parent_path().parent_path() / "share/replaynes/steam-artwork";
+    fs::path d = exe.parent_path().parent_path() / "share/" RN_PRODUCT_TEMP_PREFIX "/steam-artwork";
     if (fs::is_directory(d, ec)) return d.string();
   }
-  return "/app/share/replaynes/steam-artwork";
+  return "/app/share/" RN_PRODUCT_TEMP_PREFIX "/steam-artwork";
 }
 
 // ------------------------------------------------------------------ add
@@ -552,7 +607,7 @@ bool addToSteam(const AddOptions& optIn, Report& r) {
   }
   r.artworkDir = o.artworkDir.empty() ? defaultArtworkDir() : o.artworkDir;
   if (o.userdataRoots.empty()) {
-    if (const char* e = std::getenv("REPLAYNES_STEAM_USERDATA"); e && *e) o.userdataRoots.push_back(e);
+    if (const char* e = std::getenv(productEnvName("STEAM_USERDATA").c_str()); e && *e) o.userdataRoots.push_back(e);
     else o.userdataRoots = findUserdataRoots(o.home);
   }
   r.roots = o.userdataRoots;
@@ -599,17 +654,61 @@ bool addToSteam(const AddOptions& optIn, Report& r) {
 
   bool dry = o.dryRun;
   std::string pre = dry ? "[dry run] " : "";
-  std::string did = added ? (dry ? "Would add ReplayNES to Steam" : "Added to Steam")
+  std::string did = added ? (dry ? "Would add " RN_PRODUCT_NAME " to Steam" : "Added to Steam")
                           : (dry ? "Would update the Steam entry" : "Steam entry updated");
   if (r.users.empty()) r.summary = "No Steam account found. Start Steam and sign in once, then try again.";
   else if (failed) r.summary = pre + "Add to Steam failed - see details.";
   else if (waiting)
     r.summary = pre + std::string(artOnly ? (dry ? "Artwork would be installed. " : "Artwork installed. ") : "") +
                 "Close Steam first (Desktop Mode: Steam menu > Exit), then try again.";
-  else if (added + updated == 0) r.summary = pre + "ReplayNES is already in Steam with its artwork.";
+  else if (added + updated == 0) r.summary = pre + RN_PRODUCT_NAME " is already in Steam with its artwork.";
   else if (r.steam == SteamState::Running) r.summary = pre + did + " - restart Steam to see the changes.";
   else r.summary = pre + did + " - start (or restart) Steam to see it.";
   return ok;
+}
+
+// ------------------------------------------------------------------ refresh
+size_t refreshArtwork(const AddOptions& optIn) {
+  AddOptions o = optIn;
+  if (o.home.empty()) {
+    const char* h = std::getenv("HOME");
+    o.home = h ? h : "";
+  }
+  const std::string artDir = o.artworkDir.empty() ? defaultArtworkDir() : o.artworkDir;
+  if (o.userdataRoots.empty()) {
+    if (const char* e = std::getenv(productEnvName("STEAM_USERDATA").c_str()); e && *e) o.userdataRoots.push_back(e);
+    else o.userdataRoots = findUserdataRoots(o.home);
+  }
+  size_t written = 0;
+  for (const std::string& root : o.userdataRoots) {
+    std::error_code ec;
+    for (const auto& de : fs::directory_iterator(root, ec)) {
+      const std::string id = de.path().filename().string();
+      if (!isDigits(id) || id == "0" || !de.is_directory(ec)) continue;
+      const std::string configDir = de.path().string() + "/config";
+      std::string bytes;
+      ShortcutsFile file;
+      std::string err;
+      if (!readFile(configDir + "/shortcuts.vdf", &bytes) || !ShortcutsFile::parse(bytes, &file, &err)) continue;
+      int best = 0;
+      size_t idx = 0;
+      for (size_t i = 0; i < file.entries.size(); ++i) {
+        const int s = matchScore(file.entries[i].node, o);
+        if (s > best) best = s, idx = i;
+      }
+      if (best == 0) continue;  // not in this account's Steam: nothing of ours to refresh
+      const vdf::Node& e = file.entries[idx].node;
+      const vdf::Node* aid = e.find("appid");
+      UserResult u;
+      // An id of 0 is Steam's "invalid" (see addToSteam): the derived one, which addToSteam writes in.
+      u.appId = aid && aid->type == vdf::Type::Int32 && aid->u32() != 0 ? aid->u32()
+                                                                        : shortcutAppId(getStr(e, "Exe"), getStr(e, "AppName"));
+      bool failed = false;
+      installArtwork(configDir + "/grid", u.appId, o, artDir, u, &failed, true);
+      written += u.artworkWritten.size();
+    }
+  }
+  return written;
 }
 
 std::string formatReport(const Report& r) {

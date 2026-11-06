@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "common.hpp"
+#include "picture.hpp"
+#include "input_layout.hpp"
 
 using namespace rnf;
 
@@ -34,12 +36,13 @@ struct rnf_resume_countdown {
   uint16_t prev = 0;          // the previous counting sample
   uint16_t latched = 0;       // pressed after the baseline (taps typed ahead)
   uint16_t pending = 0;       // the latch of a countdown that ended: for the first live frame
+  rn_input_record recordPrev{}, recordLatched{}, recordPending{};
 };
 
 struct rnf_frame_history {
-  static constexpr size_t pixels = size_t(RN_VIDEO_WIDTH) * RN_VIDEO_HEIGHT;
+  uint32_t maxWidth = RN_VIDEO_WIDTH, maxHeight = RN_VIDEO_HEIGHT;
   int capacity = 1;
-  std::vector<uint32_t> storage;
+  std::vector<rnf::Picture> storage;
   int head = 0;  // next write slot
   int count = 0;
 };
@@ -53,6 +56,19 @@ template <typename T>
 static T* cloneOf(const T* p) {
   if (!p) return nullptr;
   try { return new T(*p); } catch (...) { return nullptr; }
+}
+
+// The preview and fast-forward paths have no live buttons, but still use the core's record API.
+static rn_status stepWithoutInput(rn_session* s, rn_step_info* info) {
+  char* json = rn_session_input_layout_json(s);
+  if (!json) return fail(RN_ERR_INTERNAL, "input layout unavailable");
+  rn::InputLayout layout;
+  const auto status = rn::InputLayout::fromJson(json, layout);
+  rn_string_free(json);
+  if (!status.ok()) return fail(RN_ERR_INVALID_ARG, status.message);
+  if (layout.isNes()) return rn_step(s, 0, 0, 0, info);
+  const rn_input_record empty{};
+  return rn_step_record(s, &empty, info);
 }
 
 extern "C" {
@@ -94,6 +110,25 @@ rn_status rnf_transport_step(rn_session* s, uint8_t p1, uint8_t p2, uint8_t even
   si.mode = RN_MODE_RECORD;
   si.branched = 0;
   si.end_of_take = 0;  // in record mode the take end is where the next step records
+  if (info) *info = si;
+  return RN_OK;
+}
+
+rn_status rnf_transport_step_record(rn_session* s, const rn_input_record* record, rn_step_info* info) {
+  if (!s || !record) return fail(RN_ERR_INVALID_ARG, "null argument");
+  if (rn_get_mode(s) != RN_MODE_RECORD || record->bytes[2] != 0 || rn_frame(s) >= rn_take_length(s))
+    return rn_step_record(s, record, info);
+  rn_status st = rn_set_mode(s, RN_MODE_REPLAY);
+  if (st != RN_OK) return st;
+  rn_step_info si{};
+  const rn_input_record empty{};
+  st = rn_step_record(s, &empty, &si);
+  rn_status back = rn_set_mode(s, RN_MODE_RECORD);
+  if (st == RN_OK) st = back;
+  if (st != RN_OK) return st;
+  si.mode = RN_MODE_RECORD;
+  si.branched = 0;
+  si.end_of_take = 0;
   if (info) *info = si;
   return RN_OK;
 }
@@ -143,15 +178,20 @@ rnf_practice_action act(rnf_practice_action_kind k, double back = 0) {
   return a;
 }
 
+int gCountdownSeconds = int(RNF_PRACTICE_COUNTDOWN_SECONDS);
+
 rnf_practice_action countdownAction(double elapsed) {
   rnf_practice_action a = act(RNF_PRACTICE_COUNTDOWN);
   double e = std::max(0.0, elapsed);
   int whole = int(std::floor(e));
-  a.count = std::max(1, int(RNF_PRACTICE_COUNTDOWN_SECONDS) - whole);
+  a.count = std::max(1, gCountdownSeconds - whole);
   a.fraction = std::min(1.0, std::max(0.0, e - double(whole)));
   return a;
 }
 }  // namespace
+
+void rnf_countdown_set_seconds(int seconds) { gCountdownSeconds = std::max(1, std::min(3, seconds)); }
+int rnf_countdown_seconds(void) { return gCountdownSeconds; }
 
 rnf_practice_action rnf_practice_loop_tick(rnf_practice_loop* l, double now, uint64_t counter, int has_length,
                                            uint64_t length) {
@@ -192,7 +232,7 @@ rnf_practice_action rnf_practice_loop_tick(rnf_practice_loop* l, double now, uin
     }
     case RNF_PHASE_COUNTDOWN: {
       double e = now - l->since;
-      if (e >= RNF_PRACTICE_COUNTDOWN_SECONDS) {
+      if (e >= double(gCountdownSeconds)) {
         l->phase = RNF_PHASE_PLAYING;
         l->since = 0;
         // Play on in this same tick: the countdown's "1" is followed by the first frame at once.
@@ -265,7 +305,7 @@ int rnf_practice_loop_loops(const rnf_practice_loop* l) { return l ? l->loops : 
 rn_status rnf_practice_preview_a(rn_session* s) {
   if (!s) return fail(RN_ERR_INVALID_ARG, "null argument");
   if (rn_get_mode(s) != RN_MODE_PRACTICE) return fail(RN_ERR_WRONG_MODE, "not practicing");
-  rn_status st = rn_step(s, 0, 0, 0, nullptr);
+  rn_status st = stepWithoutInput(s, nullptr);
   if (st != RN_OK) return st;
   return rn_rewind(s, 1);
 }
@@ -307,13 +347,18 @@ void clearTypeAhead(rnf_resume_countdown* c) {
   c->prev = 0;
   c->latched = 0;
   c->pending = 0;
+  c->recordPrev = {};
+  c->recordLatched = {};
+  c->recordPending = {};
 }
 // The countdown is over (done, or switched off while counting): its taps wait for the first frame.
 void finishCountdown(rnf_resume_countdown* c) {
   c->active = false;
   uint16_t taps = c->latched;
+  const rn_input_record recordTaps = c->recordLatched;
   clearTypeAhead(c);
   c->pending = taps;
+  c->recordPending = recordTaps;
 }
 }  // namespace
 
@@ -342,7 +387,7 @@ rnf_resume_countdown_state rnf_resume_countdown_tick(rnf_resume_countdown* c, do
   rnf_resume_countdown_state st{};
   if (!c || !c->active) return st;
   double e = now - c->since;
-  if (e >= RNF_PRACTICE_COUNTDOWN_SECONDS) {
+  if (e >= double(gCountdownSeconds)) {
     finishCountdown(c);
     st.done = 1;
     return st;
@@ -396,7 +441,53 @@ int rnf_resume_countdown_apply(rnf_resume_countdown* c, uint8_t* p1, uint8_t* p2
   return 1;
 }
 
-int rnf_resume_countdown_pending(const rnf_resume_countdown* c) { return c && c->pending ? 1 : 0; }
+void rnf_resume_countdown_input_record(rnf_resume_countdown* c, const rn_input_record* record) {
+  if (!c || !record || !c->active) return;
+  // Only buttons are typed ahead; analog values and system events are never latched.
+  for (const auto& b : rnf::activeInputLayout().buttons) {
+    const uint8_t mask = uint8_t(1u << b.bit);
+    if (c->haveBaseline && (record->bytes[b.byte] & mask) && !(c->recordPrev.bytes[b.byte] & mask))
+      c->recordLatched.bytes[b.byte] |= mask;
+  }
+  c->haveBaseline = true;
+  c->recordPrev = *record;
+}
+
+int rnf_resume_countdown_apply_record(rnf_resume_countdown* c, rn_input_record* record) {
+  if (!c || !record) return 0;
+  const auto& layout = rnf::activeInputLayout();
+  rn_input_record add{}, drop{};
+  for (const auto& b : layout.buttons)
+    add.bytes[b.byte] |= uint8_t(c->recordPending.bytes[b.byte] & ~record->bytes[b.byte] & (1u << b.bit));
+  c->recordPending = {};
+  for (const auto& pair : layout.opposite) {
+    const rn::InputLayout::Button *a = nullptr, *b = nullptr;
+    for (const auto& button : layout.buttons) {
+      if (button.id == pair.first) a = &button;
+      if (button.id == pair.second) b = &button;
+    }
+    if (!a || !b) continue;
+    const uint8_t am = uint8_t(1u << a->bit), bm = uint8_t(1u << b->bit);
+    if ((add.bytes[a->byte] & am) && ((record->bytes[b->byte] | add.bytes[b->byte]) & bm))
+      drop.bytes[a->byte] |= am;
+    if ((add.bytes[b->byte] & bm) && ((record->bytes[a->byte] | add.bytes[a->byte]) & am))
+      drop.bytes[b->byte] |= bm;
+  }
+  bool changed = false;
+  for (size_t i = 0; i < RN_INPUT_RECORD_BYTES; ++i) {
+    const uint8_t bits = uint8_t(add.bytes[i] & ~drop.bytes[i]);
+    record->bytes[i] |= bits;
+    changed |= bits != 0;
+  }
+  return changed ? 1 : 0;
+}
+
+int rnf_resume_countdown_pending(const rnf_resume_countdown* c) {
+  if (!c) return 0;
+  if (c->pending) return 1;
+  for (uint8_t b : c->recordPending.bytes) if (b) return 1;
+  return 0;
+}
 
 int rnf_practice_history_index(double back, int count) {
   if (count <= 0) return 0;
@@ -414,21 +505,36 @@ rnf_frame_history* rnf_frame_history_new(int capacity) {
   } catch (...) { return nullptr; }
 }
 void rnf_frame_history_free(rnf_frame_history* h) { delete h; }
-void rnf_frame_history_append(rnf_frame_history* h, const uint32_t* frame) {
-  if (!h || !frame) return;
+rnf_frame_history* rnf_frame_history_new_media(int capacity, const rn_media_info* media) {
+  if (!media || !media->max_width || !media->max_height) return nullptr;
+  auto* h = rnf_frame_history_new(capacity);
+  if (h) { h->maxWidth = media->max_width; h->maxHeight = media->max_height; }
+  return h;
+}
+int rnf_frame_history_append_frame(rnf_frame_history* h, const rn_video_frame_info* frame) {
+  if (!h || !rnf::validPicture(frame, h->maxWidth, h->maxHeight)) return 0;
   try {
-    if (h->storage.empty()) h->storage.assign(size_t(h->capacity) * rnf_frame_history::pixels, 0);
-  } catch (...) {
-    return;
-  }
-  std::copy(frame, frame + rnf_frame_history::pixels, h->storage.begin() + ptrdiff_t(size_t(h->head) * rnf_frame_history::pixels));
+    if (h->storage.empty()) h->storage.resize(size_t(h->capacity));
+    h->storage[size_t(h->head)].assign(*frame);
+  } catch (...) { return 0; }
   h->head = (h->head + 1) % h->capacity;
   h->count = std::min(h->count + 1, h->capacity);
+  return 1;
+}
+void rnf_frame_history_append(rnf_frame_history* h, const uint32_t* frame) {
+  const rn_video_frame_info f{frame, RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_VIDEO_WIDTH};
+  rnf_frame_history_append_frame(h, &f);
+}
+int rnf_frame_history_video_frame(const rnf_frame_history* h, int back, rn_video_frame_info* out) {
+  if (out) *out = {};
+  if (!h || !out || back < 0 || back >= h->count) return 0;
+  const int slot = int((int64_t(h->head) - 1 - back + h->capacity) % h->capacity);
+  *out = h->storage[size_t(slot)].view();
+  return 1;
 }
 const uint32_t* rnf_frame_history_frame(const rnf_frame_history* h, int back) {
-  if (!h || back < 0 || back >= h->count) return nullptr;
-  int slot = (h->head - 1 - back + h->capacity * 2) % h->capacity;
-  return h->storage.data() + size_t(slot) * rnf_frame_history::pixels;
+  rn_video_frame_info f{};
+  return rnf_frame_history_video_frame(h, back, &f) ? f.pixels : nullptr;
 }
 int rnf_frame_history_count(const rnf_frame_history* h) { return h ? h->count : 0; }
 int rnf_frame_history_capacity(const rnf_frame_history* h) { return h ? h->capacity : 0; }
@@ -438,18 +544,25 @@ void rnf_frame_history_clear(rnf_frame_history* h) {
 void rnf_frame_history_release(rnf_frame_history* h) {
   if (!h) return;
   rnf_frame_history_clear(h);
-  std::vector<uint32_t>().swap(h->storage);
+  std::vector<rnf::Picture>().swap(h->storage);
 }
 
 // ------------------------------------------------------------------ audio fade
 size_t rnf_audio_fade_tail(const int16_t* last, size_t n, int repeats, int16_t* out, size_t cap) {
-  if (!last || n == 0 || repeats <= 0) return 0;
+  return rnf_audio_fade_tail_with_channels(last, n, repeats, 1, out, cap);
+}
+size_t rnf_audio_fade_tail_with_channels(const int16_t* last, size_t n, int repeats, uint32_t channels,
+                                         int16_t* out, size_t cap) {
+  if (!last || n == 0 || repeats <= 0 || channels < 1 || channels > 2 ||
+      n > SIZE_MAX / size_t(repeats) / channels) return 0;
   size_t total = n * size_t(repeats);
   if (!out) return total;
   for (size_t i = 0; i < total && i < cap; ++i) {
     double g = 1.0 - double(i + 1) / double(total);  // linear to exactly 0
-    double v = std::round(double(last[i % n]) * g * g);
-    out[i] = int16_t(std::max(-32768.0, std::min(32767.0, v)));
+    for (uint32_t ch = 0; ch < channels; ++ch) {
+      double v = std::round(double(last[(i % n) * channels + ch]) * g * g);
+      out[i * channels + ch] = int16_t(std::max(-32768.0, std::min(32767.0, v)));
+    }
   }
   return total;
 }
@@ -483,7 +596,7 @@ rn_status rnf_fast_forward_step(const rnf_fast_forward* f, rn_session* s, int n,
     }
     uint64_t before = rn_frame(s);
     rn_step_info info{};
-    rn_status st = rn_step(s, 0, 0, 0, &info);
+    rn_status st = stepWithoutInput(s, &info);
     if (st != RN_OK) {
       if (done) *done = d;
       return st;

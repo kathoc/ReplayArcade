@@ -1,4 +1,4 @@
-// Minimal Vulkan presenter: FIFO swapchain, the 256x240 BGRA frame drawn nearest-neighbour into a
+// Minimal Vulkan presenter: FIFO swapchain, the current BGRA frame drawn nearest-neighbour into a
 // destination rectangle (integer / FILL scale, 8:7 pixel aspect and the overscan crop are computed
 // by the caller), Dear ImGui on top, and present ids + VK_KHR_present_wait so the frame loop knows
 // when each picture reached the screen (docs/FRAME_PACING.md, "Linux X11 / Vulkan").
@@ -24,6 +24,8 @@
 #include "render/crt_display.h"
 #include "render/post_process.h"
 #include "renderer.h"
+#include "vk_backdrop.h"
+#include "render/surface_plan.h"
 
 struct ImDrawData;
 
@@ -46,6 +48,17 @@ class VkRenderer final : public Renderer {
 
   uint64_t drawAndPresent(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui,
                           const FrameSignal* signal = nullptr) override;
+
+  /// The window's surface is going (Android: SurfaceHolder.Callback.surfaceDestroyed, on the UI thread): no
+  /// frame draws to it after this returns. Waits for a frame in progress (at most `timeoutSeconds`); the next
+  /// frame releases the swapchain and the Vulkan surface, and frames draw nothing until surfaceBack().
+  void surfaceGoing(double timeoutSeconds);
+  /// A new surface is there (surfaceCreated): the next frame creates its Vulkan surface and swapchain.
+  void surfaceBack();
+
+  void configureMedia(const rn_media_info& media, bool nesPicture = true) override;
+  uint64_t drawFrameAndPresent(const rn_video_frame_info* frame, const GameRect& rect, ImDrawData* ui,
+                              const FrameSignal* signal = nullptr) override;
 
   /// Display post-process (CRT on/off + parameters). Takes effect with the next draw; switching
   /// the CRT off frees its GPU resources.
@@ -78,9 +91,19 @@ class VkRenderer final : public Renderer {
   // ---- UI resources (vk_ui_resources.cpp) ----
   void beginUIFrame() override { uiFrame_ += 1; }
   bool thumbTexture(uint64_t key, const uint32_t* px128x120, uint64_t* texId, float uv[4]) override;
+  bool thumbTextureSized(uint64_t key, const uint32_t* pixels, uint32_t width, uint32_t height,
+                         uint64_t* texId, float uv[4]) override;
   void requestScreenshot(const std::string& path) override;
 
  private:
+  uint64_t drawFrame(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui, const FrameSignal* signal);
+  void releaseSurfaceNow();
+  // surfaceGoing / surfaceBack (another thread) against the frames (docs/design/ANDROID.md, "Black screen").
+  std::mutex gateMutex_;
+  std::condition_variable gateCv_;
+  // surfaceGone_: the window's surface went and no frame has released ours yet (SDL may have paused the loop
+  // at once: then the first frame after surfaceBack() releases it before drawing).
+  bool gateClosed_ = false, inFrame_ = false, surfaceGone_ = false;
   void waiterLoop();
   /// Everything on the logical device (init(): after the instance and surface).
   bool initDevice(std::string* error);
@@ -100,6 +123,7 @@ class VkRenderer final : public Renderer {
   void destroySwapchain();
   bool createPipeline();
   bool createGameTexture();
+  void createStaging();
   uint32_t findMemory(uint32_t typeBits, VkMemoryPropertyFlags props);
   // vk_ui_resources.cpp
   bool createAtlas();
@@ -144,7 +168,7 @@ class VkRenderer final : public Renderer {
   static constexpr int kSlots = 2;
   static constexpr int kAtlasCell = 128, kAtlasSize = 1024, kAtlasCells = (kAtlasSize / kAtlasCell) * (kAtlasSize / kAtlasCell);
   static constexpr int kAtlasUploadsPerFrame = 12;
-  static constexpr VkDeviceSize kThumbBytes = VkDeviceSize(128) * 120 * 4;
+  static constexpr VkDeviceSize kThumbBytes = VkDeviceSize(128) * kAtlasSize * 4;
   struct Slot {
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
@@ -165,6 +189,10 @@ class VkRenderer final : public Renderer {
   int slot_ = 0;
   VkCommandPool pool_ = VK_NULL_HANDLE;
 
+  rn_media_info media_{RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_FPS_NUM, RN_FPS_DEN, 1, 8, 7, 0};
+  rn_video_frame_info frame_{nullptr, RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_VIDEO_WIDTH};
+  bool mediaCrt_ = true;
+  VkDeviceSize pictureBytes() const { return VkDeviceSize(media_.max_width) * media_.max_height * 4; }
   VkImage gameImage_ = VK_NULL_HANDLE;
   VkDeviceMemory gameMem_ = VK_NULL_HANDLE;
   VkImageView gameView_ = VK_NULL_HANDLE;
@@ -175,6 +203,9 @@ class VkRenderer final : public Renderer {
   VkDescriptorSet set_ = VK_NULL_HANDLE;
   VkPipelineLayout pipeLayout_ = VK_NULL_HANDLE;
   VkPipeline pipeline_ = VK_NULL_HANDLE;
+  VkBackdrop backdrop_;  // the blurred backdrop (DisplayPostProcess::backdrop)
+  SurfacePlan surfaceLogged_;  // the last swapchain plan logged (render/surface_plan.h)
+  uint64_t backdropPictures_ = 0;
   bool imguiReady_ = false;
   bool imguiWanted_ = false;  // initImGui() was called (the backend comes back with a new device)
   double lastAcquireWait_ = 0;
@@ -199,6 +230,7 @@ class VkRenderer final : public Renderer {
   std::unordered_map<uint64_t, int> keyCell_;
   struct PendingThumb {
     int cell;
+    uint32_t width, height;
     std::vector<uint32_t> px;
   };
   std::vector<PendingThumb> pendingThumbs_;
@@ -211,5 +243,12 @@ class VkRenderer final : public Renderer {
   VkDeviceSize shotBytes_ = 0;
   VkExtent2D shotExtent_{0, 0};
 };
+
+#ifdef __ANDROID__
+/// The running VkRenderer's surfaceGoing / surfaceBack, for MainActivity's surface callbacks (JNI in
+/// main_android.cpp); nothing when there is none.
+void androidSurfaceGoing();
+void androidSurfaceBack();
+#endif
 
 }  // namespace rnl

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -21,11 +22,13 @@
 
 #include "crt_d3d11.h"
 #include "d3d11_renderer.h"
+#include "d3d11_media.h"
 #include "host_clock.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_sdl3.h"
 #include "png_writer.h"
+#include "render/backdrop.h"
 #include "replaynes/replaynes.h"
 
 namespace rnl {
@@ -53,18 +56,34 @@ std::string hr(const char* what, HRESULT h) {
 
 // Game picture: one quad over the viewport (the GameRect); uv = visible source rectangle.
 const char kShaders[] = R"(
-cbuffer Params : register(b0) { float4 uvRect; };
+cbuffer Params : register(b0) { float4 uvTop; float4 uvBottom; };
 struct VsOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 VsOut vs_main(uint id : SV_VertexID) {
   float2 p = float2(float(id & 1), float((id >> 1) & 1));
   VsOut o;
-  o.uv = lerp(uvRect.xy, uvRect.zw, p);
+  float4 row = (id & 2) ? uvBottom : uvTop;
+  o.uv = (id & 1) ? row.zw : row.xy;
   o.pos = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
   return o;
 }
 Texture2D picture : register(t0);
 SamplerState nearest : register(s0);
 float4 ps_main(VsOut i) : SV_Target { return float4(picture.Sample(nearest, i.uv).rgb, 1.0); }
+// The blurred backdrop (render/backdrop.h): the picture's mip chain at a coarse level, a 3x3 tent, dimmed.
+cbuffer Backdrop : register(b1) { float4 bd; };  // lod, dim, texel u, texel v
+SamplerState trilinear : register(s1);
+float4 ps_backdrop(VsOut i) : SV_Target {
+  float3 c = 0;
+  float w = 0;
+  for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x) {
+      float k = (2.0 - abs(float(x))) * (2.0 - abs(float(y)));
+      c += k * picture.SampleLevel(trilinear, i.uv + float2(x, y) * bd.zw, bd.x).rgb;
+      w += k;
+    }
+  float3 mean = picture.SampleLevel(trilinear, float2(0.5, 0.5), 64.0).rgb;  // kBackdropContrast 0.6
+  return float4(lerp(mean, c / w, 0.6) * bd.y, 1.0);
+}
 )";
 
 const char* featureLevelName(D3D_FEATURE_LEVEL l) {
@@ -97,7 +116,7 @@ bool D3D11Renderer::init(SDL_Window* window, std::string* error) {
   }
   std::string crtWhy;
   crtSupported_ = CrtRendererD3D11::supported(device_, &crtWhy);
-  status_.crtAvailable = crtSupported_;
+  status_.crtAvailable = crtSupported_ && mediaCrt_;
   status_.crtError = crtWhy;
   startWaiter();
   return true;
@@ -192,10 +211,15 @@ void D3D11Renderer::releaseDevice() {
   release(atlas_);
   release(gameSrv_);
   release(gameTex_);
+  releaseBackdrop();
   release(point_);
+  release(linear_);
   release(vs_);
   release(ps_);
+  release(backdropPs_);
   release(cb_);
+  release(backdropCb_);
+  release(backdropUvCb_);
   release(raster_);
   release(opaque_);
   {
@@ -211,10 +235,7 @@ void D3D11Renderer::releaseDevice() {
   release(device_);
   hasPicture_ = false;
   // Thumbnails are uploaded again into the new atlas.
-  cellKey_.fill(0);
-  cellUsed_.fill(0);
-  keyCell_.clear();
-  pendingThumbs_.clear();
+  thumbs_.clear();
 }
 
 bool D3D11Renderer::recreateDevice() {
@@ -236,7 +257,7 @@ bool D3D11Renderer::recreateDevice() {
   }
   std::string crtWhy;
   crtSupported_ = CrtRendererD3D11::supported(device_, &crtWhy);
-  status_.crtAvailable = crtSupported_;
+  status_.crtAvailable = crtSupported_ && mediaCrt_;
   status_.crtError = crtWhy;
   if (imguiWanted_) {
     imguiReady_ = ImGui_ImplDX11_Init(device_, ctx_);
@@ -413,6 +434,8 @@ bool D3D11Renderer::createPipeline(std::string* error) {
   ID3DBlob* err = nullptr;
   HRESULT r = D3DCompile(kShaders, sizeof kShaders - 1, "blit", nullptr, nullptr, "vs_main", "vs_4_0", 0, 0, &vsb, &err);
   if (SUCCEEDED(r)) r = D3DCompile(kShaders, sizeof kShaders - 1, "blit", nullptr, nullptr, "ps_main", "ps_4_0", 0, 0, &psb, &err);
+  ID3DBlob* bdb = nullptr;
+  if (SUCCEEDED(r)) r = D3DCompile(kShaders, sizeof kShaders - 1, "blit", nullptr, nullptr, "ps_backdrop", "ps_4_0", 0, 0, &bdb, &err);
   if (FAILED(r)) {
     *error = hr("D3DCompile", r) + (err ? std::string(": ") + static_cast<const char*>(err->GetBufferPointer()) : "");
     release(err);
@@ -422,19 +445,26 @@ bool D3D11Renderer::createPipeline(std::string* error) {
   release(err);
   device_->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(), nullptr, &vs_);
   device_->CreatePixelShader(psb->GetBufferPointer(), psb->GetBufferSize(), nullptr, &ps_);
+  device_->CreatePixelShader(bdb->GetBufferPointer(), bdb->GetBufferSize(), nullptr, &backdropPs_);
   release(vsb);
   release(psb);
+  release(bdb);
   D3D11_BUFFER_DESC bd{};
-  bd.ByteWidth = 16;
+  bd.ByteWidth = 32;
   bd.Usage = D3D11_USAGE_DYNAMIC;
   bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
   bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
   device_->CreateBuffer(&bd, nullptr, &cb_);
+  device_->CreateBuffer(&bd, nullptr, &backdropUvCb_);
+  bd.ByteWidth = 16;
+  device_->CreateBuffer(&bd, nullptr, &backdropCb_);
   D3D11_SAMPLER_DESC smp{};
   smp.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
   smp.AddressU = smp.AddressV = smp.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
   smp.MaxLOD = D3D11_FLOAT32_MAX;
   device_->CreateSamplerState(&smp, &point_);
+  smp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+  device_->CreateSamplerState(&smp, &linear_);
   D3D11_RASTERIZER_DESC rd{};
   rd.FillMode = D3D11_FILL_SOLID;
   rd.CullMode = D3D11_CULL_NONE;
@@ -444,17 +474,17 @@ bool D3D11Renderer::createPipeline(std::string* error) {
   D3D11_BLEND_DESC bl{};
   bl.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
   device_->CreateBlendState(&bl, &opaque_);
-  if (!vs_ || !ps_ || !cb_ || !point_ || !raster_ || !opaque_) {
+  if (!vs_ || !ps_ || !cb_ || !point_ || !raster_ || !opaque_ || !backdropPs_ || !backdropCb_ || !backdropUvCb_ || !linear_) {
     *error = "pipeline state creation failed";
     return false;
   }
   return true;
 }
 
-bool D3D11Renderer::createTextures() {
+bool D3D11Renderer::createGameTexture() {
   D3D11_TEXTURE2D_DESC td{};
-  td.Width = RN_VIDEO_WIDTH;
-  td.Height = RN_VIDEO_HEIGHT;
+  td.Width = media_.max_width;
+  td.Height = media_.max_height;
   td.MipLevels = 1;
   td.ArraySize = 1;
   td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;  // rn_video pixels are BGRA
@@ -465,6 +495,90 @@ bool D3D11Renderer::createTextures() {
   if (FAILED(device_->CreateTexture2D(&td, nullptr, &gameTex_)) ||
       FAILED(device_->CreateShaderResourceView(gameTex_, nullptr, &gameSrv_)))
     return false;
+  return true;
+}
+
+void D3D11Renderer::releaseBackdrop() {
+  release(backdropSrv_);
+  release(backdropTex_);
+  backdropW_ = backdropH_ = 0;
+}
+
+// The blurred backdrop's copy of a new picture and its mip chain (render/backdrop.h).
+void D3D11Renderer::updateBackdrop(const uint32_t* picture) {
+  if (backdropW_ != frame_.width || backdropH_ != frame_.height) {
+    releaseBackdrop();
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = frame_.width;
+    td.Height = frame_.height;
+    td.MipLevels = 0;  // the full chain
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+    if (FAILED(device_->CreateTexture2D(&td, nullptr, &backdropTex_)) ||
+        FAILED(device_->CreateShaderResourceView(backdropTex_, nullptr, &backdropSrv_))) {
+      releaseBackdrop();
+      return;
+    }
+    backdropTex_->GetDesc(&td);
+    backdropW_ = frame_.width;
+    backdropH_ = frame_.height;
+    backdropLevels_ = td.MipLevels;
+  }
+  D3D11_BOX box{0, 0, 0, frame_.width, frame_.height, 1};
+  ctx_->UpdateSubresource(backdropTex_, 0, &box, picture, frame_.stride * 4, 0);
+  ctx_->GenerateMips(backdropSrv_);
+}
+
+void D3D11Renderer::drawBackdrop(const GameRect& rect, bool crt) {
+  const CrtRect pic = crt ? rect.crt : CrtRect{rect.x, rect.y, rect.w, rect.h};
+  BackdropPlan plan = planBackdrop(pic.x, pic.y, pic.w, pic.h, width_, height_, int(backdropW_), int(backdropH_), post_.backdrop);
+  float uv[4] = {float(rect.crop) / backdropW_, float(rect.crop) / backdropH_, float(backdropW_ - rect.crop) / backdropW_,
+                 float(backdropH_ - rect.crop) / backdropH_};
+  cropBackdrop(plan, width_, height_, int(media_.rotation), uv);
+  if (!plan.show || plan.w < 1 || plan.h < 1) return;
+  D3D11_MAPPED_SUBRESOURCE m{};
+  if (SUCCEEDED(ctx_->Map(backdropUvCb_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+    const auto corners = d3d11RectUV(uv, media_.rotation);
+    std::memcpy(m.pData, corners.data(), sizeof corners);
+    ctx_->Unmap(backdropUvCb_, 0);
+  }
+  const float level = std::min(plan.lod, float(backdropLevels_ - 1)), texel = std::exp2(level);
+  const float bd[4] = {level, plan.dim, texel * plan.spread / backdropW_, texel * plan.spread / backdropH_};
+  if (SUCCEEDED(ctx_->Map(backdropCb_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+    std::memcpy(m.pData, bd, sizeof bd);
+    ctx_->Unmap(backdropCb_, 0);
+  }
+  D3D11_VIEWPORT vp{plan.x, plan.y, plan.w, plan.h, 0.f, 1.f};
+  ctx_->RSSetViewports(1, &vp);
+  D3D11_RECT sc{0, 0, LONG(width_), LONG(height_)};
+  ctx_->RSSetScissorRects(1, &sc);
+  ctx_->RSSetState(raster_);
+  const float blendFactor[4] = {0, 0, 0, 0};
+  ctx_->OMSetBlendState(opaque_, blendFactor, 0xffffffffu);
+  ctx_->OMSetDepthStencilState(nullptr, 0);
+  ctx_->IASetInputLayout(nullptr);
+  ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+  ctx_->VSSetShader(vs_, nullptr, 0);
+  ctx_->VSSetConstantBuffers(0, 1, &backdropUvCb_);
+  ctx_->PSSetShader(backdropPs_, nullptr, 0);
+  ctx_->PSSetConstantBuffers(1, 1, &backdropCb_);
+  ctx_->PSSetShaderResources(0, 1, &backdropSrv_);
+  ctx_->PSSetSamplers(1, 1, &linear_);
+  ctx_->GSSetShader(nullptr, nullptr, 0);
+  ctx_->Draw(4, 0);
+  ID3D11ShaderResourceView* none = nullptr;
+  ctx_->PSSetShaderResources(0, 1, &none);
+}
+
+bool D3D11Renderer::createTextures() {
+  if (!createGameTexture()) return false;
+  D3D11_TEXTURE2D_DESC td{};
+  gameTex_->GetDesc(&td);
+  constexpr int kAtlasSize = D3D11ThumbAtlas::size;
   // Thumbnail atlas, cleared to black once (cells never show garbage).
   std::vector<uint32_t> black(size_t(kAtlasSize) * kAtlasSize, 0xFF000000u);
   D3D11_SUBRESOURCE_DATA init{black.data(), UINT(kAtlasSize * 4), 0};
@@ -493,6 +607,36 @@ bool D3D11Renderer::presentTiming() const {
   return waitable_ != nullptr;
 }
 
+void D3D11Renderer::configureMedia(const rn_media_info& media, bool nesPicture) {
+  if (!media.max_width || !media.max_height) return;
+  const bool resize = media_.max_width != media.max_width || media_.max_height != media.max_height;
+  media_ = media;
+  mediaCrt_ = nesPicture && media.rotation == 0;
+  status_.crtAvailable = crtSupported_ && mediaCrt_;
+  if (!mediaCrt_ && (crt_ || crtInit_.valid())) dropCrt();
+  // The app configures on every present, including paused frames. Retain the picture
+  // and its actual dimensions until either the capacity changes or a new frame arrives.
+  if (!resize) return;
+  hasPicture_ = false;
+  frame_ = {nullptr, media.max_width, media.max_height, media.max_width};
+  if (!device_) return;
+  release(gameSrv_);
+  release(gameTex_);
+  if (!createGameTexture()) {
+    fail("media game texture", E_FAIL);
+    deviceRemoved_ = true;  // recovery recreates all resources with the new capacity
+  }
+}
+
+uint64_t D3D11Renderer::drawFrameAndPresent(const rn_video_frame_info* frame, const GameRect& rect,
+                                           ImDrawData* ui, const FrameSignal* signal) {
+  if (frame) {
+    if (!d3d11FrameFits(media_, *frame)) return 0;
+    frame_ = *frame;
+  }
+  return drawAndPresent(frame ? frame->pixels : nullptr, rect, ui, signal);
+}
+
 uint64_t D3D11Renderer::drawAndPresent(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui, const FrameSignal* signal) {
   lastHealthy_ = false;
   occluded_ = false;
@@ -509,7 +653,9 @@ uint64_t D3D11Renderer::drawAndPresent(const uint32_t* newPicture, const GameRec
   }
   // CRT Display on / off (created on first use - compiled on a worker thread, the device is
   // free-threaded - and freed when switched off).
-  bool crtOn = post_.crt && crtSupported_ && !crtGaveUp_;
+  const bool crtFrame = mediaCrt_ && frame_.width == RN_VIDEO_WIDTH && frame_.height == RN_VIDEO_HEIGHT;
+  status_.crtAvailable = crtSupported_ && crtFrame;
+  bool crtOn = post_.crt && crtFrame && crtSupported_ && !crtGaveUp_;
   if (crtInit_.valid() && crtInit_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
     CrtInit r = crtInit_.get();
     if (r.crt) {
@@ -557,12 +703,15 @@ uint64_t D3D11Renderer::drawAndPresent(const uint32_t* newPicture, const GameRec
   if (newPicture) {
     D3D11_MAPPED_SUBRESOURCE m{};
     if (SUCCEEDED(ctx_->Map(gameTex_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-      for (int y = 0; y < RN_VIDEO_HEIGHT; ++y)
-        std::memcpy(static_cast<uint8_t*>(m.pData) + size_t(y) * m.RowPitch, newPicture + size_t(y) * RN_VIDEO_WIDTH,
-                    size_t(RN_VIDEO_WIDTH) * 4);
+      auto upload = frame_;
+      upload.pixels = newPicture;
+      d3d11CopyPicture(upload, m.pData, m.RowPitch);
       ctx_->Unmap(gameTex_, 0);
       hasPicture_ = true;
     }
+    // Also while off (turned on in a paused menu, it shows at once); with the CRT on (the GPU's heavy
+    // load) every other picture: the blur at 30 fps is enough.
+    if (!crtOn || (++backdropPictures_ & 1) == 0 || !backdropSrv_) updateBackdrop(newPicture);
   }
   uploadThumbs();
   lastAcquireWait_ = nowSeconds() - t0;  // Map may wait for the GPU (the picture in use)
@@ -575,7 +724,17 @@ uint64_t D3D11Renderer::drawAndPresent(const uint32_t* newPicture, const GameRec
   plainNext_ = false;
   if (crtOn) {
     crtPolicy_.update(crt_->takeGpuTimes(), gpuBudget_, post_.allowBuildAhead, post_.adaptiveResolution, crt_->outputWidth());
-    if (newPicture) crtPolicy_.store(newPicture, signal);
+    if (newPicture) {
+      const uint32_t* packed = newPicture;
+      if (frame_.stride != RN_VIDEO_WIDTH) {
+        crtPicture_.resize(size_t(RN_VIDEO_WIDTH) * RN_VIDEO_HEIGHT);
+        auto upload = frame_;
+        upload.pixels = newPicture;
+        d3d11CopyPicture(upload, crtPicture_.data(), RN_VIDEO_WIDTH * 4);
+        packed = crtPicture_.data();
+      }
+      crtPolicy_.store(packed, signal);
+    }
     if (rect.visible) {
       int tw = 0, th = 0;
       crtPolicy_.tubeSize(post_, rect.crt, rect.crtCrop, &tw, &th);
@@ -594,15 +753,16 @@ uint64_t D3D11Renderer::drawAndPresent(const uint32_t* newPicture, const GameRec
   ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
   const float black[4] = {0, 0, 0, 1};
   ctx_->ClearRenderTargetView(rtv_, black);
-  if (crtOn && rect.visible && crt_->hasOutput() && !plain) {
+  const bool crtShows = crtOn && rect.visible && crt_->hasOutput() && !plain;
+  if (post_.backdrop > 0 && rect.visible && hasPicture_ && backdropSrv_) drawBackdrop(rect, crtShows);
+  if (crtShows) {
     crt_->drawShow(width_, height_, rect.crt, rect.crtCrop);
     status_.crtShown = true;
   } else if (rect.visible && hasPicture_) {
     D3D11_MAPPED_SUBRESOURCE m{};
     if (SUCCEEDED(ctx_->Map(cb_, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-      float uv[4] = {float(rect.crop) / RN_VIDEO_WIDTH, float(rect.crop) / RN_VIDEO_HEIGHT,
-                     float(RN_VIDEO_WIDTH - rect.crop) / RN_VIDEO_WIDTH, float(RN_VIDEO_HEIGHT - rect.crop) / RN_VIDEO_HEIGHT};
-      std::memcpy(m.pData, uv, sizeof uv);
+      const auto uv = d3d11PictureUV(media_, frame_, rect.crop);
+      std::memcpy(m.pData, uv.data(), sizeof uv);
       ctx_->Unmap(cb_, 0);
     }
     D3D11_VIEWPORT vp{rect.x, rect.y, rect.w, rect.h, 0.f, 1.f};
@@ -787,54 +947,25 @@ std::vector<PresentDone> D3D11Renderer::takeCompleted() {
 }
 
 bool D3D11Renderer::thumbTexture(uint64_t key, const uint32_t* px, uint64_t* texId, float uv[4]) {
-  if (!atlasSrv_) return false;
-  int cell = -1;
-  auto it = keyCell_.find(key);
-  if (it != keyCell_.end()) {
-    cell = it->second;
-  } else {
-    if (int(pendingThumbs_.size()) >= kAtlasUploadsPerFrame) return false;
-    // A free cell, else the least recently used one not drawn this frame.
-    uint64_t best = ~uint64_t(0);
-    for (int i = 0; i < kAtlasCells; ++i) {
-      if (cellKey_[size_t(i)] == 0) {
-        cell = i;
-        break;
-      }
-      if (cellUsed_[size_t(i)] < uiFrame_ && cellUsed_[size_t(i)] < best) {
-        best = cellUsed_[size_t(i)];
-        cell = i;
-      }
-    }
-    if (cell < 0) return false;
-    if (cellKey_[size_t(cell)] != 0) keyCell_.erase(cellKey_[size_t(cell)]);
-    cellKey_[size_t(cell)] = key;
-    keyCell_[key] = cell;
-    pendingThumbs_.erase(std::remove_if(pendingThumbs_.begin(), pendingThumbs_.end(),
-                                        [&](const PendingThumb& p) { return p.cell == cell; }),
-                         pendingThumbs_.end());
-    pendingThumbs_.push_back(PendingThumb{cell, std::vector<uint32_t>(px, px + 128 * 120)});
-  }
-  cellUsed_[size_t(cell)] = uiFrame_;
-  const int perRow = kAtlasSize / kAtlasCell;
-  float x0 = float((cell % perRow) * kAtlasCell), y0 = float((cell / perRow) * kAtlasCell);
-  uv[0] = x0 / kAtlasSize;
-  uv[1] = y0 / kAtlasSize;
-  uv[2] = (x0 + 128) / kAtlasSize;
-  uv[3] = (y0 + 120) / kAtlasSize;
-  *texId = uint64_t(reinterpret_cast<uintptr_t>(atlasSrv_));  // imgui_impl_dx11: ImTextureID = SRV*
+  return thumbTextureSized(key, px, 128, 120, texId, uv);
+}
+
+bool D3D11Renderer::thumbTextureSized(uint64_t key, const uint32_t* px, uint32_t width, uint32_t height,
+                                      uint64_t* texId, float uv[4]) {
+  if (!atlasSrv_ || !texId || !thumbs_.get(key, px, width, height, uv)) return false;
+  *texId = uint64_t(reinterpret_cast<uintptr_t>(atlasSrv_));
   return true;
 }
 
 void D3D11Renderer::uploadThumbs() {
-  const int perRow = kAtlasSize / kAtlasCell;
-  for (const PendingThumb& p : pendingThumbs_) {
-    D3D11_BOX box{UINT((p.cell % perRow) * kAtlasCell), UINT((p.cell / perRow) * kAtlasCell), 0, 0, 0, 1};
-    box.right = box.left + 128;
-    box.bottom = box.top + 120;
-    ctx_->UpdateSubresource(atlas_, 0, &box, p.px.data(), 128 * 4, 0);
+  for (const auto& p : thumbs_.pending) {
+    D3D11_BOX box{UINT((p.cell % D3D11ThumbAtlas::perRow) * D3D11ThumbAtlas::cellSize),
+                  UINT((p.cell / D3D11ThumbAtlas::perRow) * D3D11ThumbAtlas::cellSize), 0, 0, 0, 1};
+    box.right = box.left + p.width;
+    box.bottom = box.top + p.height;
+    ctx_->UpdateSubresource(atlas_, 0, &box, p.pixels.data(), p.width * 4, 0);
   }
-  pendingThumbs_.clear();
+  thumbs_.pending.clear();
 }
 
 void D3D11Renderer::saveScreenshot() {
@@ -853,16 +984,7 @@ void D3D11Renderer::saveScreenshot() {
   if (SUCCEEDED(ctx_->Map(staging, 0, D3D11_MAP_READ, 0, &m))) {
     int w = int(td.Width), h = int(td.Height);
     std::vector<uint8_t> rgba(size_t(w) * h * 4);
-    for (int y = 0; y < h; ++y) {
-      const uint8_t* src = static_cast<const uint8_t*>(m.pData) + size_t(y) * m.RowPitch;
-      uint8_t* dst = rgba.data() + size_t(y) * w * 4;
-      for (int x = 0; x < w; ++x) {  // BGRA -> RGBA, opaque
-        dst[x * 4 + 0] = src[x * 4 + 2];
-        dst[x * 4 + 1] = src[x * 4 + 1];
-        dst[x * 4 + 2] = src[x * 4 + 0];
-        dst[x * 4 + 3] = 255;
-      }
-    }
+    d3d11ScreenshotRGBA(m.pData, m.RowPitch, uint32_t(w), uint32_t(h), rgba.data());
     ctx_->Unmap(staging, 0);
     if (writePNG(path, w, h, rgba.data())) std::fprintf(stderr, "screenshot: %s (%dx%d)\n", path.c_str(), w, h);
     else std::fprintf(stderr, "screenshot FAILED: %s\n", path.c_str());

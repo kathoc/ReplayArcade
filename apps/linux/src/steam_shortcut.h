@@ -23,6 +23,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "replaynes/product.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -95,11 +96,11 @@ uint32_t crc32(const std::string& data);
 enum class SteamState { NotRunning, Running, Unknown };
 
 struct AddOptions {
-  std::string appName = "ReplayNES";
+  std::string appName = RN_PRODUCT_NAME;
   std::string exe = "\"/usr/bin/flatpak\"";  ///< Steam's own format for Flatpak shortcuts
   std::string startDir = "/usr/bin/";
-  std::string launchOptions = "run io.github.replaynes.ReplayNES";
-  std::string flatpakId = "io.github.replaynes.ReplayNES";  ///< matches existing entries
+  std::string launchOptions = "run " RN_PRODUCT_APP_ID;
+  std::string flatpakId = RN_PRODUCT_APP_ID;  ///< matches existing entries
   std::vector<std::string> tags = {"Emulator"};             ///< new entries only
   /// capsule.png, wide.png, hero.png, logo.png, icon.png. Empty: defaultArtworkDir().
   std::string artworkDir;
@@ -148,6 +149,12 @@ struct Report {
 /// Adds / updates the shortcut + artwork for every Steam account found. True when every
 /// account succeeded (SteamRunning counts as not done). Never throws.
 bool addToSteam(const AddOptions& opt, Report& report);
+/// At start-up: the grid artwork of an existing entry brought up to date with this version's, in the
+/// slots that still hold what we wrote last time (<app id>.<prefix>-artwork records it); the user's
+/// own art and entries we never wrote stay as they are, shortcuts.vdf is not touched. Without it an
+/// update kept the old artwork (Steam's grid holds copies) until "Add to Steam" was pressed again.
+/// Returns the number of files written (Steam shows them after a restart).
+size_t refreshArtwork(const AddOptions& opt = AddOptions());
 /// Multi-line, human-readable report (CLI, logs).
 std::string formatReport(const Report& r);
 

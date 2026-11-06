@@ -86,9 +86,9 @@ typedef enum rn_status {
 } rn_status;
 
 /* ------------------------------------------------------------------ library */
-const char* rn_version(void);          /* engine version string */
-const char* rn_core_compat_id(void);   /* compatibility ID of the bundled Nestopia core */
-const char* rn_core_build_id(void);    /* exact core revision + compiler (informational) */
+const char* rn_version(void);          /* product release version string */
+const char* rn_core_compat_id(void);   /* bundled Nestopia compatibility ID; empty if not bundled */
+const char* rn_core_build_id(void);    /* bundled Nestopia revision + compiler; empty if not bundled */
 const char* rn_last_error(void);       /* thread-local; never NULL */
 const char* rn_status_name(rn_status s);
 rn_status rn_sha256_file(const char* path, char out_hex[65]);
@@ -105,13 +105,24 @@ void rn_string_free(char* s); /* frees strings returned by rn_*_json functions *
 /* ------------------------------------------------------------------ session */
 typedef struct rn_session rn_session;
 
-typedef enum rn_core_kind { RN_CORE_NESTOPIA = 0, RN_CORE_MOCK = 1, RN_CORE_REPLAYNESCORE = 2 } rn_core_kind;
+/* RN_CORE_EXTERNAL: the core a product built from these sources registers at start-up (C++:
+ * rn::registerExternalCore); unavailable otherwise. */
+typedef enum rn_core_kind {
+  RN_CORE_NESTOPIA = 0,
+  RN_CORE_MOCK = 1,
+  RN_CORE_REPLAYNESCORE = 2,
+  RN_CORE_EXTERNAL = 3
+} rn_core_kind;
 /* PRACTICE: non-recording play (see "practice" section below). */
 /* Live cores expose video/input/power without recording or fabricated PCM/state. */
 #define RN_CORE_CAP_AUDIO 1u
 #define RN_CORE_CAP_STATE 2u
 #define RN_CORE_CAP_SOFT_RESET 4u
 #define RN_CORE_CAP_RECORDING 8u
+/* Instances share one machine. Use a single background thumbnail worker and start renders
+ * only while foreground emulation is paused and idle (an in-flight render may finish).
+ * Query a session with rn_core_capabilities(rn_session_core_kind(session)). */
+#define RN_CORE_CAP_SHARES_MACHINE 16u
 const char* rn_core_name(rn_core_kind kind); /* stable name; NULL for unknown */
 int rn_core_available(rn_core_kind kind);
 uint32_t rn_core_capabilities(rn_core_kind kind);
@@ -123,6 +134,9 @@ typedef enum rn_mode { RN_MODE_RECORD = 0, RN_MODE_REPLAY = 1, RN_MODE_PRACTICE 
 #define RN_OPEN_DROP_CORRUPT_STATES 0x1u   /* discard corrupt checkpoint files (they are a cache) */
 #define RN_OPEN_DROP_CORRUPT_PRACTICE 0x2u /* discard A/B practice slots whose A state is corrupt
                                               (NOT a cache: the slot is lost; see rn_practice_dropped_slots) */
+#define RN_OPEN_LIVE 0x4u                  /* rn_session_new, project_dir NULL: RN_MODE_LIVE from the start - the
+                                              core just runs, nothing is recorded (no take, checkpoints or
+                                              rewind); a demo. A session cannot change to live later. */
 
 typedef struct rn_session_options {
   uint32_t struct_size;     /* set by rn_session_options_init */
@@ -131,6 +145,9 @@ typedef struct rn_session_options {
   uint32_t dense_capacity;  /* max dense checkpoints kept in memory (default 1200) */
   uint32_t sparse_interval; /* frames between permanent checkpoints (default 600) */
   uint32_t open_flags;      /* RN_OPEN_* */
+  uint32_t defer_checkpoints; /* nonzero: rn_step leaves the checkpoint of its frame to
+                                 rn_session_checkpoint_work (or the next call that changes the
+                                 machine), so it is not between the input and the picture */
 } rn_session_options;
 
 void rn_session_options_init(rn_session_options* opt);
@@ -147,6 +164,9 @@ rn_status rn_session_open(const char* project_dir, const char* rom_override, con
 void rn_session_close(rn_session* s);
 rn_status rn_session_save(rn_session* s);      /* full atomic save; resets the journal */
 rn_status rn_session_autosave(rn_session* s);  /* cheap journal append + fsync (call every few s) */
+/* The same without waiting for new sparse state files: they are written on another thread (a large
+ * state took tens of ms on the frame thread) and referenced by a later autosave of either kind. */
+rn_status rn_session_autosave_background(rn_session* s);
 rn_status rn_session_save_as(rn_session* s, const char* project_dir); /* in-memory -> project */
 /* "Reset Project": starts the project over from power-on (frame 0, RECORD, empty timeline: all
  * takes, bookmarks, checkpoints and the take undo history are dropped); same ROM and project
@@ -171,6 +191,14 @@ rn_status rn_project_manifest_json(const char* project_dir, char** out_json);
 rn_status rn_set_mode(rn_session* s, rn_mode mode);
 rn_mode rn_get_mode(const rn_session* s);
 
+/* One frame of game input for any core: bytes 0, 1, 2 are the NES pads p1, p2 and the events
+ * (RN_EV_*); further bytes as the core's input layout (rn_session_input_layout_json) declares.
+ * Bytes beyond the layout's recordBytes must be zero. */
+#define RN_INPUT_RECORD_BYTES 32
+typedef struct rn_input_record {
+  uint8_t bytes[RN_INPUT_RECORD_BYTES];
+} rn_input_record;
+
 typedef struct rn_step_info {
   uint64_t frame;       /* rn_frame() after the call */
   rn_mode mode;
@@ -178,6 +206,7 @@ typedef struct rn_step_info {
   int end_of_take;      /* REPLAY: cursor is at the take end (no frame was emulated if frame unchanged) */
   uint8_t p1, p2, events; /* input actually applied */
   uint64_t take_id;     /* active take after the call */
+  rn_input_record applied_record; /* the whole input actually applied (p1, p2, events are its bytes 0-2) */
 } rn_step_info;
 
 /* RECORD: emulates one frame with (p1,p2,events) and records it at rn_frame(). Recording at a
@@ -188,6 +217,15 @@ typedef struct rn_step_info {
  * takes, checkpoints and the unsaved-changes flag are unchanged); rn_practice_frame() += 1.
  * info may be NULL. */
 rn_status rn_step(rn_session* s, uint8_t p1, uint8_t p2, uint8_t events, rn_step_info* info);
+/* rn_step for any core's input layout (RN_ERR_INVALID_ARG for bytes beyond the layout). */
+rn_status rn_step_record(rn_session* s, const rn_input_record* in, rn_step_info* info);
+/* The core's input layout as JSON (free with rn_string_free): {"name", "recordBytes", "buttons":
+ * [{"id", "label"?, "byte", "bit", "turbo"?}], "axes": [{"id", "label"?, "byte", "relative"?,
+ * "deadzone"?}], "opposite": [[id, id]]}. "relative": the axis is a speed (a dial, a trackball), not
+ * a position; "deadzone": the core ignores smaller magnitudes (0..1). Both are hints for the
+ * frontend, not part of the layout a project stores. Action names are the button ids, their turbo actions ("turbo", else id + ".turbo")
+ * and the axis ids. The NES layout is named "nes". */
+char* rn_session_input_layout_json(const rn_session* s);
 
 const uint32_t* rn_video(const rn_session* s); /* 256x240 BGRA8 (B,G,R,A bytes), alpha 255 */
 /* Display-only side channel for signal-level display models (the CRT / composite path): the raw
@@ -202,17 +240,54 @@ typedef struct rn_video_indices_info {
 } rn_video_indices_info;
 /* RN_ERR_UNSUPPORTED_FORMAT when the core has no raw PPU output (mock core). */
 rn_status rn_video_indices(const rn_session* s, rn_video_indices_info* out);
-/* PCM of the last emulated frame. count = 0 after seek/rewind/take switch (seeking is silent). */
+/* PCM of the last emulated frame: count sample frames of rn_media_info.audio_channels interleaved
+ * int16 values (the NES cores: mono). count = 0 after seek/rewind/take switch (seeking is silent). */
 const int16_t* rn_audio(const rn_session* s, size_t* count);
+
+/* Picture size, frame rate and sound format of the loaded content. rn_video / RN_VIDEO_* /
+ * RN_FPS_* / RN_SAMPLE_RATE / rn_audio_samples_* describe the NES cores; a core for another system
+ * reports its own values here, and frontends that support such cores use these calls instead. */
+typedef struct rn_media_info {
+  uint32_t max_width, max_height;               /* capacity of the picture; fixed for the content */
+  uint64_t fps_num, fps_den;                    /* exact emulated frame rate */
+  uint32_t audio_channels;                      /* 1 = mono, 2 = interleaved stereo */
+  uint32_t pixel_aspect_num, pixel_aspect_den;  /* display width / height of one pixel (NES 8/7) */
+  uint32_t rotation;                            /* display rotation, quarter turns clockwise */
+} rn_media_info;
+/* The picture of the last emulated frame (rn_video for any size): width x height BGRA8 pixels,
+ * rows stride pixels apart; valid like rn_video. */
+typedef struct rn_video_frame_info {
+  const uint32_t* pixels;
+  uint32_t width, height, stride;
+} rn_video_frame_info;
+rn_status rn_session_media_info(const rn_session* s, rn_media_info* out);
+rn_status rn_session_video_frame(const rn_session* s, rn_video_frame_info* out);
+/* Sample frames emitted before logical frame `frame` (a pure function of the frame number; for
+ * the NES cores the same as rn_audio_samples_before). */
+uint64_t rn_session_samples_before(const rn_session* s, uint64_t frame);
 
 uint64_t rn_frame(const rn_session* s);       /* take cursor; frozen at the return frame in PRACTICE */
 uint64_t rn_take_length(const rn_session* s);
+/* For each of `frames` (ascending, each <= rn_take_length): a hash (FNV-1a 64) of the active take's
+ * input records [0, frame) - the take's picture at that frame is the same exactly when this hash is
+ * (the emulation runs deterministically from power-on for one ROM and core). A frontend keys pictures
+ * it keeps across sessions with it (the seek bar's thumbnails). out[i] = 0 for a frame past the take. */
+rn_status rn_take_input_hashes(const rn_session* s, const uint64_t* frames, size_t count, uint64_t* out);
 /* 0 <= frame <= take length. RN_ERR_WRONG_MODE in PRACTICE (leave practice first). */
 rn_status rn_seek(rn_session* s, uint64_t frame);
 /* RECORD/REPLAY: seek back on the take, clamps at 0. PRACTICE: rewinds the practice run (bounded
  * in-memory ring, same policy as dense checkpoints), clamped at the current anchor (last A set /
  * goto A, or the practice start) and at the oldest kept snapshot; never touches the take. */
 rn_status rn_rewind(rn_session* s, uint64_t nframes);
+/* Optional paused/idle work: prepare dense checkpoints below the cursor, at most
+ * budget_frames core steps. Preserves state, video, audio, cursor and continuity.
+ * Call only while paused with no foreground input/transport in progress; the
+ * engine has no pause flag. Zero budget, PRACTICE and LIVE do no work. */
+rn_status rn_session_idle_work(rn_session* s, uint32_t budget_frames);
+/* defer_checkpoints: the checkpoint the last rn_step left, and a buffer for the next one. Call after
+ * the picture is out, in the frame's slack; without it the next rn_step (or any other call that
+ * changes the machine or the take) does it first. No effect on what is recorded. */
+rn_status rn_session_checkpoint_work(rn_session* s);
 
 /* Verification hashes (determinism diagnostics, tests, CLI). */
 uint64_t rn_state_hash(rn_session* s);
@@ -365,6 +440,14 @@ void rn_input_clear_bindings(rn_input* in);
 rn_status rn_input_load_json(rn_input* in, const char* json);
 char* rn_input_save_json(const rn_input* in); /* free with rn_string_free */
 rn_status rn_input_set_turbo(rn_input* in, uint32_t period, uint32_t duty); /* frames; 1<=duty<=period */
+/* The game actions come from an input layout (rn_session_input_layout_json; NULL = the NES pads).
+ * Bindings to actions the layout does not have are dropped. */
+rn_status rn_input_set_layout_json(rn_input* in, const char* layout_json);
+/* Turbo timing of one button (used by its turbo action); period 0 = the global rn_input_set_turbo. */
+rn_status rn_input_set_button_turbo(rn_input* in, const char* button, uint32_t period, uint32_t duty);
+/* An analog source other than a stick (trigger, dial), -1..1, bindable to axis actions. Sticks set
+ * with rn_input_set_axis also provide "<stick>.x", "<stick>.y" and the inverted "<stick>.-x", "<stick>.-y". */
+void rn_input_set_axis_value(rn_input* in, const char* source_id, float value);
 rn_status rn_input_set_socd(rn_input* in, rn_socd policy);
 rn_status rn_input_set_analog_threshold(rn_input* in, float threshold); /* 0..1, default 0.5 */
 void rn_input_set_pressed(rn_input* in, const char* physical_id, int pressed);
@@ -376,6 +459,8 @@ void rn_input_release_all(rn_input* in);
 /* Final game bitfields for logical frame `frame` (pass rn_frame(session)); taps shorter than a
  * frame are latched once. Feed the result to rn_step - that output is what gets recorded. */
 void rn_input_sample_game(rn_input* in, uint64_t frame, uint8_t* p1, uint8_t* p2);
+/* The whole game input for the layout (feed it to rn_step_record). */
+void rn_input_sample_record(rn_input* in, uint64_t frame, rn_input_record* out);
 /* Hotkey press edges since the previous poll + currently held hotkeys (works while paused). */
 void rn_input_poll_hotkeys(rn_input* in, uint32_t* pressed_edges, uint32_t* held);
 
@@ -397,6 +482,10 @@ rn_status rn_renderer_next(rn_renderer* r, const uint32_t** video, const int16_t
 /* rn_video_indices for the frame returned by the last rn_renderer_next. */
 rn_status rn_renderer_video_indices(const rn_renderer* r, rn_video_indices_info* out);
 uint64_t rn_renderer_hash(const rn_renderer* r); /* running hash of output (compare with replay) */
+/* The session's media info at rn_renderer_new, and the picture returned by the last
+ * rn_renderer_next with its size (use instead of the 256x240 video pointer for other systems). */
+rn_status rn_renderer_media_info(const rn_renderer* r, rn_media_info* out);
+rn_status rn_renderer_video_frame(const rn_renderer* r, rn_video_frame_info* out);
 void rn_renderer_free(rn_renderer* r);
 
 /* ------------------------------------------------------------------ photosensitive flash reduction */
@@ -419,19 +508,29 @@ typedef enum rn_flash_level {
 
 typedef struct rn_flash_info {
   int altered;                  /* 1 if the output differs from the input this frame */
-  uint32_t altered_blocks;      /* 16x16 blocks changed (of 240) */
+  uint32_t altered_blocks;      /* 16x16 blocks changed (of the picture's blocks) */
   uint32_t event_area_permille; /* screen share of simultaneous same-direction transitions */
   int large_area;               /* 1 if a large-area flash candidate was detected */
 } rn_flash_info;
 
-rn_flash_filter* rn_flash_filter_new(rn_flash_level level); /* NULL on invalid level */
+rn_flash_filter* rn_flash_filter_new(rn_flash_level level); /* 256x240; NULL on invalid level */
+/* Positive multiples of 16; NULL on invalid level/size or allocation failure. */
+rn_flash_filter* rn_flash_filter_new_sized(rn_flash_level level, uint32_t width, uint32_t height);
+/* Resets even when the size is unchanged. Invalid sizes leave the filter unchanged. */
+rn_status rn_flash_filter_set_size(rn_flash_filter* f, uint32_t width, uint32_t height);
 void rn_flash_filter_free(rn_flash_filter* f);
 void rn_flash_filter_reset(rn_flash_filter* f);
 rn_status rn_flash_filter_set_level(rn_flash_filter* f, rn_flash_level level); /* also resets */
 rn_flash_level rn_flash_filter_get_level(const rn_flash_filter* f);
-/* in/out: 256x240 BGRA8 like rn_video (in == out allowed). info may be NULL. */
+/* in/out: 256x240 BGRA8 like rn_video (in == out allowed). info may be NULL.
+ * Returns RN_ERR_INVALID_ARG if the filter is not 256x240. */
 rn_status rn_flash_filter_process(rn_flash_filter* f, const uint32_t* in, uint32_t* out, rn_flash_info* info);
-/* Same, also producing the PPU codes of the shown picture for a CRT signal path (RF / composite):
+/* Input dimensions must match the filter; stride is in pixels and must be >= width.
+ * Output is tightly packed width*height BGRA8; in->pixels == out is allowed. info may be NULL.
+ * Returns RN_ERR_INVALID_ARG on null buffers, mismatched dimensions or invalid stride. */
+rn_status rn_flash_filter_process_frame(rn_flash_filter* f, const rn_video_frame_info* in,
+                                       uint32_t* out, rn_flash_info* info);
+/* 256x240 only (RN_ERR_INVALID_ARG for other filter sizes), also producing the PPU codes of the shown picture for a CRT signal path (RF / composite):
  * codes_in = rn_video_indices(...).codes of `in`, codes_out = 256x240 codes (codes_in == codes_out
  * allowed). Blocks passed through keep their codes; a reduced block is an ordered dither of the new
  * codes and the codes shown before whose mean light matches the reduced RGB picture, so the CRT keeps

@@ -65,10 +65,8 @@ set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
 add_subdirectory(${RNW_ROOT}/third_party/SDL ${CMAKE_CURRENT_BINARY_DIR}/SDL EXCLUDE_FROM_ALL)
 
-# The release version (root CMakeLists.txt); REPLAYNES_VERSION_OVERRIDE (e.g. 0.3.2-test) for
-# update tests.
-file(STRINGS ${RNW_ROOT}/CMakeLists.txt RNW_ROOT_PROJECT REGEX "^project\\(ReplayNES VERSION")
-string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" RNL_APP_VERSION "${RNW_ROOT_PROJECT}")
+# Product release version; REPLAYNES_VERSION_OVERRIDE remains available for update tests.
+set(RNL_APP_VERSION "${RN_PRODUCT_VERSION}")
 set(REPLAYNES_VERSION_OVERRIDE "" CACHE STRING "Version string of ReplayNES.exe instead of the project version (update tests)")
 if(REPLAYNES_VERSION_OVERRIDE)
   set(RNL_APP_VERSION ${REPLAYNES_VERSION_OVERRIDE})
@@ -77,22 +75,22 @@ string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" RNW_VERSION_NUMBER "${RNL_APP_VER
 
 # In-app updates: WinSparkle (MIT, prebuilt WinSparkle.dll per architecture next to the exe,
 # loaded at run time; the download is pinned by SHA-256). RNW_WINSPARKLE=OFF: no updates (offline
-# builds). The EdDSA public key is Sparkle's SUPublicEDKey (apps/macos/project.yml, the same key
-# signs both feeds); RNW_UPDATE_PUBLIC_KEY / RNW_APPCAST_URL override it for update tests.
+# builds). Product feed/key defaults come from Product.cmake; RNW_UPDATE_PUBLIC_KEY /
+# RNW_APPCAST_URL override them for update tests.
 option(RNW_WINSPARKLE "Bundle WinSparkle.dll (in-app updates)" ON)
-set(RNW_WINSPARKLE_VERSION 0.9.4)
-set(RNW_WINSPARKLE_SHA256 6037df37fc263bd1650a1c4949681a9d40ffe991d01f35892a406cb5d103c976)
-file(STRINGS ${RNW_ROOT}/apps/macos/project.yml RNW_SU_KEY_LINE REGEX "SUPublicEDKey:")
-string(REGEX REPLACE ".*SUPublicEDKey: *\"?([A-Za-z0-9+/=]+)\"?.*" "\\1" RNW_SU_KEY "${RNW_SU_KEY_LINE}")
-set(RNW_UPDATE_PUBLIC_KEY "${RNW_SU_KEY}" CACHE STRING "EdDSA public key of the update feed (base64)")
-set(RNW_APPCAST_URL "https://github.com/kathoc/ReplayNES/releases/latest/download/appcast-windows.xml" CACHE STRING "Update feed")
-if(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|ARM64|arm64)$")
-  set(RNW_WINSPARKLE_ARCH ARM64)
-else()
-  set(RNW_WINSPARKLE_ARCH x64)
-endif()
+set(RNW_HAVE_UPDATES OFF)
 set(RNW_WINSPARKLE_DLL "")
-if(RNW_WINSPARKLE)
+if(RN_PRODUCT_UPDATES AND RNW_WINSPARKLE)
+  set(RNW_HAVE_UPDATES ON)
+  set(RNW_WINSPARKLE_VERSION 0.9.4)
+  set(RNW_WINSPARKLE_SHA256 6037df37fc263bd1650a1c4949681a9d40ffe991d01f35892a406cb5d103c976)
+  set(RNW_UPDATE_PUBLIC_KEY "${RN_PRODUCT_UPDATE_PUBLIC_KEY}" CACHE STRING "EdDSA public key of the update feed (base64)")
+  set(RNW_APPCAST_URL "${RN_PRODUCT_WINDOWS_APPCAST_URL}" CACHE STRING "Update feed")
+  if(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|ARM64|arm64)$")
+    set(RNW_WINSPARKLE_ARCH ARM64)
+  else()
+    set(RNW_WINSPARKLE_ARCH x64)
+  endif()
   set(RNW_WS_CACHE ${RNW_ROOT}/build/cache)
   set(RNW_WS_ZIP ${RNW_WS_CACHE}/WinSparkle-${RNW_WINSPARKLE_VERSION}.zip)
   if(NOT EXISTS ${RNW_WS_ZIP})
@@ -116,6 +114,10 @@ if(RNW_WINSPARKLE)
                WinSparkle-${RNW_WINSPARKLE_VERSION}/COPYING)
   endif()
   set(RNW_WINSPARKLE_DLL ${RNW_WS_DIR}/${RNW_WINSPARKLE_ARCH}/Release/WinSparkle.dll)
+else()
+  # Do not retain a feed/key in an updates-disabled build after reconfiguration.
+  unset(RNW_APPCAST_URL CACHE)
+  unset(RNW_UPDATE_PUBLIC_KEY CACHE)
 endif()
 
 set(RNL_SDL3_TARGET SDL3::SDL3-static)
@@ -123,8 +125,12 @@ set(RNL_APP_FEATURES RNL_HAVE_STEAM=0 RNL_HAVE_MP4_EXPORT=1 RNL_HAVE_CRT=1)
 include(${RNL_DESKTOP_DIR}/app.cmake)
 
 # Resources: icon, manifest (MSVC embeds the .manifest source with mt instead), version.
-set(RNW_ICON ${CMAKE_CURRENT_SOURCE_DIR}/resources/replaynes.ico)
-set(RNW_MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/resources/replaynes.manifest)
+get_filename_component(RNW_ICON "${RN_PRODUCT_WINDOWS_ICON}" ABSOLUTE
+  BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+if(NOT EXISTS "${RNW_ICON}")
+  message(FATAL_ERROR "RN_PRODUCT_WINDOWS_ICON does not exist: ${RNW_ICON}")
+endif()
+set(RNW_MANIFEST "${RNL_WINDOWS_MANIFEST}")
 set(RNW_VERSION ${RNL_APP_VERSION})
 string(REPLACE "." "," RNW_VERSION_COMMA ${RNW_VERSION_NUMBER})
 file(TO_CMAKE_PATH "${RNW_ICON}" RNW_ICON)
@@ -141,24 +147,50 @@ add_executable(replaynes-win WIN32
   src/main_windows.cpp
   src/d3d11_renderer.cpp
   src/fonts_windows.cpp
-  src/update_winsparkle.cpp
   ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
   ${RNW_RC})
 if(MSVC)
   target_sources(replaynes-win PRIVATE ${RNW_MANIFEST})
 endif()
-set_target_properties(replaynes-win PROPERTIES OUTPUT_NAME ReplayNES)
+set_target_properties(replaynes-win PROPERTIES OUTPUT_NAME "${RN_PRODUCT_EXECUTABLE}")
 target_include_directories(replaynes-win PRIVATE src)
 target_link_libraries(replaynes-win PRIVATE rnl_app rnw_crt rnw_export SDL3::SDL3-static d3d11 dxgi d3dcompiler avrt ole32 shell32 uuid)
-target_compile_definitions(replaynes-win PRIVATE UNICODE _UNICODE RNW_UPDATE_PUBLIC_KEY="${RNW_UPDATE_PUBLIC_KEY}"
-  RNW_APPCAST_URL="${RNW_APPCAST_URL}")
-if(RNW_WINSPARKLE_DLL)
+target_compile_definitions(replaynes-win PRIVATE UNICODE _UNICODE RNW_HAVE_UPDATES=$<BOOL:${RNW_HAVE_UPDATES}>)
+if(RN_PRODUCT_STARTUP_TARGET)
+  if(NOT TARGET ${RN_PRODUCT_STARTUP_TARGET})
+    message(FATAL_ERROR "RN_PRODUCT_STARTUP_TARGET must name an existing CMake target")
+  endif()
+  target_link_libraries(replaynes-win PRIVATE ${RN_PRODUCT_STARTUP_TARGET})
+  target_compile_definitions(replaynes-win PRIVATE RN_PRODUCT_HAS_STARTUP=1)
+endif()
+if(RNW_HAVE_UPDATES)
+  target_sources(replaynes-win PRIVATE src/update_winsparkle.cpp)
+  target_link_libraries(replaynes-win PRIVATE rstrtmgr)  # Restart Manager: who holds a file the update writes
+  target_compile_definitions(replaynes-win PRIVATE RNW_UPDATE_PUBLIC_KEY="${RNW_UPDATE_PUBLIC_KEY}"
+    RNW_APPCAST_URL="${RNW_APPCAST_URL}")
   add_custom_command(TARGET replaynes-win POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RNW_WINSPARKLE_DLL} $<TARGET_FILE_DIR:replaynes-win>/WinSparkle.dll)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RNW_WINSPARKLE_DLL}" $<TARGET_FILE_DIR:replaynes-win>/WinSparkle.dll)
+else()
+  # A build directory may previously have bundled updates (also for multi-config generators).
+  add_custom_command(TARGET replaynes-win POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove -f $<TARGET_FILE_DIR:replaynes-win>/WinSparkle.dll)
 endif()
 target_compile_options(replaynes-win PRIVATE ${RNL_WARNINGS})
 if(MINGW)
   # Static C++ runtime (no libc++.dll / libunwind.dll next to the exe); see the toolchain file.
   # -municode: UNICODE makes SDL_main.h define wWinMain as the entry point.
   target_link_options(replaynes-win PRIVATE -static -municode $<$<CONFIG:Release>:-s>)
+endif()
+
+if(REPLAYNES_BUILD_TESTS AND RNW_HAVE_UPDATES)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME product_windows_release_identity
+      COMMAND ${Python3_EXECUTABLE} ${RNW_ROOT}/tests/test_product_release.py
+        --source ${RNW_ROOT} --cmake ${CMAKE_COMMAND}
+        --windows-build ${CMAKE_BINARY_DIR}
+        --version "${RN_PRODUCT_VERSION}" --feed "${RN_PRODUCT_WINDOWS_APPCAST_URL}"
+        --key "${RN_PRODUCT_UPDATE_PUBLIC_KEY}" --app-version "${RNL_APP_VERSION}"
+        --app-feed "${RNW_APPCAST_URL}" --app-key "${RNW_UPDATE_PUBLIC_KEY}")
+  endif()
 endif()

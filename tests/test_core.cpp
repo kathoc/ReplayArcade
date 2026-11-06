@@ -1,6 +1,7 @@
 // Core-level tests: MockCore stepping, Nestopia integration, savestate round trips, concurrency.
 #include <cstring>
 #include <thread>
+#include <vector>
 
 #include "replaynes/replaynes.h"
 #include "support/TestUtil.h"
@@ -9,6 +10,27 @@
 
 using namespace rn;
 using namespace rntest;
+
+TEST_CASE("crc32: the IEEE CRC of every length, alignment and split, as one byte at a time") {
+  auto reference = [](const uint8_t* p, size_t n, uint32_t prev) {
+    uint32_t c = prev ^ 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; ++i) {
+      c ^= p[i];
+      for (int k = 0; k < 8; ++k) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+    }
+    return c ^ 0xFFFFFFFFu;
+  };
+  CHECK_EQ(crc32("123456789", 9), 0xCBF43926u);  // the standard check value
+  CHECK_EQ(crc32("", 0), 0u);
+  std::vector<uint8_t> data(4099);
+  uint32_t x = 12345;
+  for (auto& b : data) b = uint8_t((x = x * 1103515245u + 12345u) >> 16);
+  for (size_t start = 0; start < 5; ++start)
+    for (size_t n : {size_t(0), size_t(1), size_t(15), size_t(16), size_t(17), size_t(31), size_t(64), size_t(1000), size_t(4094)})
+      CHECK_EQ(crc32(data.data() + start, n), reference(data.data() + start, n, 0));
+  // Chained (prev): the same as all at once.
+  CHECK_EQ(crc32(data.data() + 37, data.size() - 37, crc32(data.data(), 37)), crc32(data.data(), data.size()));
+}
 
 TEST_CASE("mock: pause keeps frame, step advances exactly +1") {
   auto s = newSession(CoreKind::Mock);
@@ -68,6 +90,7 @@ TEST_CASE("audio sample schedule is a pure function of the frame index") {
 }
 
 TEST_CASE("nestopia: test ROM runs, produces changing video and audible PCM") {
+  RN_REQUIRE_NESTOPIA();
   auto core = createCore(CoreKind::Nestopia);
   auto rom = buildTestRom();
   REQUIRE(core->loadROM(rom.data(), rom.size()).ok());
@@ -90,6 +113,7 @@ TEST_CASE("nestopia: test ROM runs, produces changing video and audible PCM") {
 }
 
 TEST_CASE("nestopia: rejects garbage ROM with explicit error") {
+  RN_REQUIRE_NESTOPIA();
   auto core = createCore(CoreKind::Nestopia);
   std::vector<uint8_t> junk(4096, 0x42);
   Status st = core->loadROM(junk.data(), junk.size());
@@ -136,12 +160,14 @@ static void saveRestoreScenario(CoreKind kind) {
 }
 
 TEST_CASE("nestopia: save -> 200f (soft reset + power cycle) -> restore -> same frames => identical hashes") {
+  RN_REQUIRE_NESTOPIA();
   saveRestoreScenario(CoreKind::Nestopia);
 }
 
 TEST_CASE("mock: save/restore round trip") { saveRestoreScenario(CoreKind::Mock); }
 
 TEST_CASE("nestopia: state from another core / truncated state is refused") {
+  RN_REQUIRE_NESTOPIA();
   auto rom = buildTestRom();
   auto n = createCore(CoreKind::Nestopia), m = createCore(CoreKind::Mock);
   REQUIRE(n->loadROM(rom.data(), rom.size()).ok());
@@ -154,6 +180,7 @@ TEST_CASE("nestopia: state from another core / truncated state is refused") {
 }
 
 TEST_CASE("nestopia: two instances run concurrently without interference") {
+  RN_REQUIRE_NESTOPIA();
   auto rom = buildTestRom();
   auto scriptA = DeterminismHarness::randomScript(3000, 1, 700);
   auto scriptB = DeterminismHarness::randomScript(3000, 2, 900);
@@ -191,6 +218,7 @@ TEST_CASE("nestopia: two instances run concurrently without interference") {
 }
 
 TEST_CASE("nestopia: power-on state does not depend on heap garbage (uninitialised members)") {
+  RN_REQUIRE_NESTOPIA();
   // A destroyed, fully used instance leaves its memory behind; the next instance usually reuses
   // it. Without patch 4 (Triangle::linearCtrl) this changes the power-on machine state.
   auto rom = buildTestRom();
@@ -218,6 +246,7 @@ TEST_CASE("nestopia: power-on state does not depend on heap garbage (uninitialis
 }
 
 TEST_CASE("nestopia: reloading the ROM in a used instance equals a fresh power-on") {
+  RN_REQUIRE_NESTOPIA();
   auto rom = buildTestRom();
   auto script = DeterminismHarness::randomScript(900, 3, 0, 5);
   auto fresh = createCore(CoreKind::Nestopia);

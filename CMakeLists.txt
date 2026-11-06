@@ -15,7 +15,13 @@ option(REPLAYNES_BUILD_WINDOWS_PROBE "Build replaynes-winprobe (Windows graphics
 option(REPLAYNES_BUILD_DESKTOP "Build the shared desktop frontend logic (apps/desktop) and its tests" ON)
 option(REPLAYNES_BUILD_WINDOWS_APP "Windows: build the frontend replaynes-win (SDL3 from third_party/SDL + Direct3D 11)" ${WIN32})
 
-include(cmake/NestopiaCore.cmake)
+include(cmake/Product.cmake)
+configure_file(engine/include/replaynes/product.h.in
+  ${CMAKE_BINARY_DIR}/generated/replaynes/product.h @ONLY)
+
+if(RN_PRODUCT_NES)
+  include(cmake/NestopiaCore.cmake)
+endif()
 add_subdirectory(engine)
 if(REPLAYNES_BUILD_FRONTEND)
   add_subdirectory(frontend)
@@ -42,3 +48,6 @@ if(REPLAYNES_BUILD_FRONTEND AND REPLAYNES_BUILD_DESKTOP)
     add_subdirectory(apps/windows)
   endif()
 endif()
+
+include(cmake/CheckNoNestopia.cmake)
+rn_check_no_nestopia_targets("${CMAKE_CURRENT_SOURCE_DIR}")

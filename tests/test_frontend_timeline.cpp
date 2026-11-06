@@ -170,6 +170,9 @@ TEST_CASE("visible ranges on an engine session") {
   std::string rom = rntest::writeTestRom(dir);
   rn_session_options o;
   rn_session_options_init(&o);
+#if !RN_PRODUCT_NES
+  o.core = RN_CORE_MOCK;
+#endif
   rn_session* s = nullptr;
   REQUIRE_EQ(rn_session_new(rom.c_str(), nullptr, &o, &s), RN_OK);
   for (int i = 0; i < 300; ++i) rn_step(s, i % 7 == 0 ? RN_BTN_A : 0, 0, 0, nullptr);
@@ -302,6 +305,35 @@ TEST_CASE("playhead snaps to whole pixels") {
 
 // ------------------------------------------------------------------ cache
 
+TEST_CASE("thumbnail cache: live capture on the finest grid, also before the timeline was laid out") {
+  std::vector<Img> imgs(8);
+  rnf_thumb_cache* c = rnf_thumb_cache_new(retainImg, releaseImg);
+  rnf_thumb_cache_reset(c, 1);
+  const double finest = rnf_thumb_tile_step(0, 0, 0);
+  CHECK_EQ(finest, RNF_THUMB_BASE_STEP);
+  // No step yet (the seek bar was never shown): the timeline's own test wants nothing...
+  CHECK_FALSE(rnf_thumb_cache_wants(c, uint64_t(finest), 1));
+  // ...live capture still keeps the finest grid and the start picture, nothing else.
+  CHECK(rnf_thumb_cache_wants_live(c, uint64_t(finest), 1));
+  CHECK(rnf_thumb_cache_wants_live(c, uint64_t(3 * finest), 1));
+  CHECK(rnf_thumb_cache_wants_live(c, rnf_thumb_start_picture(finest), 1));
+  CHECK_FALSE(rnf_thumb_cache_wants_live(c, uint64_t(finest) + 1, 1));
+  CHECK_FALSE(rnf_thumb_cache_wants_live(c, 0, 1));
+  CHECK_FALSE(rnf_thumb_cache_wants_live(c, uint64_t(finest), 2));  // another take
+  // Laid out at a coarser step: the finest grid is still kept (zooming in renders nothing played).
+  rnf_thumb_cache_set_step(c, 4 * finest);
+  CHECK(rnf_thumb_cache_wants_live(c, uint64_t(finest), 1));
+  CHECK(rnf_thumb_cache_insert(c, uint64_t(finest), 1, 0, 0, &imgs[0]));
+  CHECK_FALSE(rnf_thumb_cache_wants_live(c, uint64_t(finest), 1));  // already there
+  // Every coarser grid frame is a finest grid frame.
+  for (double f = finest; f <= 64 * finest; f *= 2) {
+    std::vector<uint64_t> t(rnf_thumb_targets(uint64_t(200 * finest), f, nullptr, 0));
+    rnf_thumb_targets(uint64_t(200 * finest), f, t.data(), t.size());
+    for (uint64_t x : t) CHECK((x == rnf_thumb_start_picture(f) || uint64_t(x) % uint64_t(finest) == 0));
+  }
+  rnf_thumb_cache_free(c);
+}
+
 TEST_CASE("thumbnail cache invalidation") {
   std::vector<Img> imgs(64);
   size_t next = 0;
@@ -383,4 +415,42 @@ TEST_CASE("downscaler") {
   CHECK_EQ(out[0], 0xFFFF0000u);
   CHECK_EQ(out[119 * 128 + 63], 0xFFFF0000u);
   CHECK_EQ(out[10 * 128 + 80], 0xFF7F7F7Fu);
+}
+
+TEST_CASE("media thumbnails preserve NES pixels and rotate non-NES pictures") {
+  rn_media_info media{320, 224, 5963, 100, 2, 1, 1, 1};
+  std::vector<uint32_t> source(324 * 224, 0xdeadbeef);
+  for (uint32_t y = 0; y < 224; ++y)
+    for (uint32_t x = 0; x < 320; ++x)
+      source[y * 324 + x] = 0xff000000u | ((x < 160 ? 255u : 0u) << 16) | (y < 112 ? 255u : 0u);
+  rn_video_frame_info frame{source.data(), 320, 224, 324};
+  uint32_t w = 0, h = 0;
+  CHECK(rnf_thumb_size(&frame, &media, &w, &h));
+  CHECK_EQ(w, 128u);
+  CHECK_EQ(h, 183u);
+  std::vector<uint32_t> out(size_t(w) * h + 1, 0xdeadbeef);
+  CHECK(!rnf_thumb_downscale_frame(&frame, &media, out.data(), out.size() - 2));
+  CHECK(rnf_thumb_downscale_frame(&frame, &media, out.data(), out.size() - 1));
+  CHECK_EQ(out.front(), 0xffff0000u);
+  CHECK_EQ(out[127], 0xffff00ffu);
+  CHECK_EQ(out[size_t(w) * (h - 1)], 0xff000000u);
+  CHECK_EQ(out[size_t(w) * h - 1], 0xff0000ffu);
+  CHECK_EQ(out.back(), 0xdeadbeefu);
+  media.pixel_aspect_num = 2;
+  CHECK(rnf_thumb_size(&frame, &media, &w, &h));
+  CHECK_EQ(h, 366u);
+  media.rotation = 4;
+  CHECK(!rnf_thumb_size(&frame, &media, &w, &h));
+
+  media = {RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_FPS_NUM, RN_FPS_DEN, 1, 1, 1, 0};
+  source.resize(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT);
+  for (size_t i = 0; i < source.size(); ++i) source[i] = uint32_t(i * 2654435761u);
+  frame = {source.data(), RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_VIDEO_WIDTH};
+  CHECK(rnf_thumb_size(&frame, &media, &w, &h));
+  CHECK_EQ(w, uint32_t(RNF_THUMB_WIDTH));
+  CHECK_EQ(h, uint32_t(RNF_THUMB_HEIGHT));
+  std::vector<uint32_t> legacy(size_t(w) * h), generic(legacy.size());
+  rnf_thumb_downscale(source.data(), legacy.data());
+  CHECK(rnf_thumb_downscale_frame(&frame, &media, generic.data(), generic.size()));
+  CHECK(legacy == generic);
 }

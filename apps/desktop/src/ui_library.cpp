@@ -5,13 +5,15 @@
 // (picture of the last session of the game, else a tile made from its name; the title from the
 // game database in the UI language, "maker · year" under it, a star on favourites).
 // A plays the focused game (a new project), Y marks it as a favourite, X lists its projects,
-// View / Select (Tab) cycles the sort, L / R turn the pages, the Menu pill (L+R / Esc) opens
+// View / Select (Tab) cycles the sort, L / R (or a swipe) turn the pages, the Menu pill (L+R / Esc) opens
 // Settings. An empty library is one card saying where the games go. "Add Test Cartridge" (the last
 // item of the row; Y on the empty card) writes the ReplayNES Test Cartridge into the ROM folder (once)
 // and focuses it. Nothing scrolls: the cards of the neighbouring pages peek in at the screen edges.
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <optional>
 
@@ -91,7 +93,7 @@ bool UI::thumbImage(ThumbRef& img, ImTextureID* tex, ImVec2* uv0, ImVec2* uv1) {
   if (!img) return false;
   uint64_t t = 0;
   float uv[4];
-  if (!d_.renderer->thumbTexture(img.get()->serial, img.get()->px, &t, uv)) return false;
+  if (!d_.renderer->thumbTextureSized(img.get()->serial, img.get()->px.data(), img.get()->width, img.get()->height, &t, uv)) return false;
   *tex = ImTextureID(t);
   *uv0 = ImVec2(uv[0], uv[1]);
   *uv1 = ImVec2(uv[2], uv[3]);
@@ -100,8 +102,8 @@ bool UI::thumbImage(ThumbRef& img, ImTextureID* tex, ImVec2* uv0, ImVec2* uv1) {
 
 namespace {
 // The picture fills r (cropped to its aspect ratio), rounded.
-void coverImage(ImDrawList* dl, ImTextureID tex, ImVec2 uv0, ImVec2 uv1, const LRect& r, float radius) {
-  float ia = float(RNF_THUMB_WIDTH) / float(RNF_THUMB_HEIGHT), ra = r.w / std::max(1.0f, r.h);
+void coverImage(ImDrawList* dl, ImTextureID tex, ImVec2 uv0, ImVec2 uv1, const LRect& r, float radius, float aspect) {
+  float ia = aspect, ra = r.w / std::max(1.0f, r.h);
   ImVec2 a = uv0, b = uv1;
   if (ra > ia) {  // wider box: crop top / bottom
     float keep = ia / ra, cut = (1 - keep) / 2 * (uv1.y - uv0.y);
@@ -120,7 +122,7 @@ namespace {
 constexpr int kFocusHero = -1;
 constexpr int kFocusPageStart = -2;  // L / R: the first card of the new page
 constexpr int kFocusBar = -3;        // the filter / sort / search row
-constexpr int kBarItems = RNF_LIBRARY_FILTER_COUNT + 3;  // filters, sort, search, Add Test Cartridge
+constexpr int kBarItems = RNF_LIBRARY_FILTER_COUNT + 2 + int(RN_PRODUCT_NES);  // filters, sort, search, Add Test Cartridge
 constexpr int kBarSort = RNF_LIBRARY_FILTER_COUNT, kBarSearch = RNF_LIBRARY_FILTER_COUNT + 1;
 constexpr int kBarTestCart = RNF_LIBRARY_FILTER_COUNT + 2;
 constexpr ImU32 kStar = IM_COL32(255, 200, 40, 255);
@@ -151,12 +153,13 @@ void UI::libraryBarAction(int item) {
   } else if (item == kBarSearch) {
     focusSearch_ = true;
     searchShown_ = true;
-  } else if (item == kBarTestCart) {
+  } else if (RN_PRODUCT_NES && item == kBarTestCart) {
     addTestCartridge(ImGui::GetTime());
   }
 }
 
 void UI::addTestCartridge(double now) {
+  if (!RN_PRODUCT_NES) return;
   LibraryModel* lib = d_.library;
   std::string error;
   std::string path = lib->addTestCartridge(&error);
@@ -186,6 +189,30 @@ void UI::handleLibraryInput(double now, size_t cardCount, size_t pages, bool her
   if (pressed(ImGuiKey_GamepadDpadDown, true) || pressed(ImGuiKey_DownArrow, true)) dy = 1;
   if (pressed(ImGuiKey_PageUp, false)) shoulder(-1);
   if (pressed(ImGuiKey_PageDown, false)) shoulder(1);
+  // A swipe turns the page (a finger on a touch screen, or a mouse dragged): right to left or bottom to top =
+  // next, either way it goes further than a tap wanders. The press it began is let go before the cards are
+  // made, so the card under the finger does not open. Without it a phone had no way to the next page but the
+  // dimmed edge of the neighbouring one (2026-11-06: "can't scroll with many ROMs").
+  {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+      const float sx = io.MousePos.x - io.MouseClickedPos[0].x, sy = io.MousePos.y - io.MouseClickedPos[0].y;
+      if (std::max(std::fabs(sx), std::fabs(sy)) >= S(64)) {
+        const float along = std::fabs(sx) >= std::fabs(sy) ? sx : sy;
+        std::fprintf(stderr, "library: swipe %.0f,%.0f: page %s\n", sx, sy, along < 0 ? "next" : "back");
+        shoulder(along < 0 ? 1 : -1);
+        ImGui::ClearActiveID();
+      }
+    }
+  }
+  // The mouse wheel turns the pages too (down / right = next), a page a notch, one per frame.
+  libWheel_ -= ImGui::GetIO().MouseWheel + ImGui::GetIO().MouseWheelH;
+  if (ImGui::GetIO().MouseWheel == 0 && ImGui::GetIO().MouseWheelH == 0 && std::fabs(libWheel_) < 1) libWheel_ = 0;
+  libWheel_ = std::clamp(libWheel_, -float(pages), float(pages));
+  if (std::fabs(libWheel_) >= 1) {  // the rest of a fast turn on the next frames
+    shoulder(libWheel_ > 0 ? 1 : -1);
+    libWheel_ -= libWheel_ > 0 ? 1 : -1;
+  }
   int n = int(cardCount);
   if (dx || dy) libMoved_ = true;
   // Top to bottom: the filter / sort / search row (top bar), the Continue card, the game cards.
@@ -230,7 +257,8 @@ void UI::handleLibraryInput(double now, size_t cardCount, size_t pages, bool her
       d_.app->playFromLibrary(*focused);
     } else if (n == 0 && d_.library->roms().empty()) {
       d_.library->ensureFolders();
-      openFolder(d_.library->romDir());
+      if (canImportFiles()) addRoms();
+      else openRomFolder();
     }
   } else if (keyX) {
     if (focused) {
@@ -274,7 +302,7 @@ void UI::buildLibraryBar(ImDrawList* dl, const LRect& bar, double now) {
   items.push_back({std::string(icons::glyph("list")) + "  " + rnf_library_sort_name(lib->sort()), false});
   std::string searchText = search_[0] ? std::string(search_) : std::string(TR("Search"));
   items.push_back({std::string(icons::glyph("search")) + "  " + searchText, search_[0] != 0});
-  items.push_back({std::string(icons::glyph("plus")) + "  " + TR("Add Test Cartridge"), false});
+  if (RN_PRODUCT_NES) items.push_back({std::string(icons::glyph("plus")) + "  " + TR("Add Test Cartridge"), false});
   // Natural widths, shrunk together when the row is narrow (labels are then cut).
   std::vector<float> widths;
   float total = gap * 4 + gap * float(items.size() - 1);
@@ -374,7 +402,18 @@ void UI::buildLibrary(double now) {
     if (now > libFocusPathUntil_) libFocusPath_.clear();
   }
   if (libFocus_ >= 0 && n > 0) libPage_ = libFocus_ / perPage;
+  // Every ROM without a picture gets one in the background, in the order shown (the shown cards
+  // ask first). One with a project shows that project's picture instead, so it is left alone.
+  if (d_.libraryThumbs && lib->version() != libPicturesFor_) {
+    libPicturesFor_ = lib->version();
+    for (const std::vector<const LibraryROM*>& list : {roms, lib->arranged("")})
+      for (const LibraryROM* rom : list)
+        if (lib->projectsFor(*rom).empty()) d_.libraryThumbs->requestRomPictureLater(rom->path);
+  }
   handleLibraryInput(now, size_t(n), size_t(pages), hero);
+  // The input may have turned the page (PageUp / PageDown, the mouse wheel: UI::shoulder) past
+  // either end: the cards below index roms from it. Its first card is focused on the next frame.
+  libPage_ = std::clamp(libPage_, 0, pages - 1);
   if (!hasSession() && menuOpen_) return;  // Settings over the library draw everything
 
   ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -395,10 +434,17 @@ void UI::buildLibrary(double now) {
   LRect bar = m.topBar();
   float cy = bar.y + bar.h / 2;
   float x = bar.x;
-  dl->AddText(ImGui::GetFont(), m.title(), ImVec2(x, cy - m.title() / 2), kText, "Replay");
-  x += measure(m.title(), "Replay").x;
-  dl->AddText(ImGui::GetFont(), m.title(), ImVec2(x, cy - m.title() / 2), kBrand, "NES");
-  x += measure(m.title(), "NES").x + S(24);
+  // The product name: "Replay" in the text colour, the rest ("NES", "Arcade") in the brand colour.
+  const std::string product = RN_PRODUCT_NAME;
+  const bool replay = product.compare(0, 6, "Replay") == 0 && product.size() > 6;
+  const std::string head = replay ? "Replay" : product, tail = replay ? product.substr(6) : "";
+  dl->AddText(ImGui::GetFont(), m.title(), ImVec2(x, cy - m.title() / 2), kText, head.c_str());
+  x += measure(m.title(), head.c_str()).x;
+  if (!tail.empty()) {
+    dl->AddText(ImGui::GetFont(), m.title(), ImVec2(x, cy - m.title() / 2), kBrand, tail.c_str());
+    x += measure(m.title(), tail.c_str()).x;
+  }
+  x += S(24);
   if (update_.noticeVisible()) {
     std::string t = updateStatusText();
     float w = std::min(measure(m.hint(), t.c_str()).x + S(48), std::max(0.0f, pill_.x - x - S(300)));
@@ -423,36 +469,47 @@ void UI::buildLibrary(double now) {
     textCentered(dl, m.title(), inset(r, S(24)), r.y + r.h * 0.40f, kText, loading ? TR("Loading…") : TR("Put your games here"));
     textCentered(dl, m.label(), inset(r, S(24)), r.y + r.h * 0.40f + m.title() * 1.5f, kTextDim, Paths::display(lib->romDir()));
     textCentered(dl, m.hint(), inset(r, S(24)), r.y + r.h * 0.40f + m.title() * 1.5f + m.label() * 1.6f, kTextFaint,
-                 TR(".nes files; they appear here by themselves"));
-    // Buttons: Open Folder (A), Reload (X), Add Test Cartridge (Y).
-    float gap = S(16), bw = std::min(S(220), (r.w - S(48) - gap * 2) / 3), bh = m.label() * 2.2f;
-    float bx = r.x + (r.w - bw * 3 - gap * 2) / 2;
-    static const char* const kIcon[3] = {"folder-open", "refresh", "plus"};
-    for (int i = 0; i < 3; ++i) {
+                 RN_PRODUCT_NES ? TR(".nes files; they appear here by themselves")
+                                : TR("ROM zips (FinalBurn Neo set names); they appear here by themselves"));
+    // Buttons: Add ROMs where the system has a file picker (A: Android, docs/design/ANDROID.md), Open Folder
+    // (A, else none), Reload (X), Add Test Cartridge (Y).
+    enum EmptyAction { kAddRoms, kOpenFolder, kReload, kTestCartridge };
+    EmptyAction actions[4];
+    int buttons = 0;
+    if (canImportFiles()) actions[buttons++] = kAddRoms;
+    actions[buttons++] = kOpenFolder;
+    actions[buttons++] = kReload;
+    if (RN_PRODUCT_NES) actions[buttons++] = kTestCartridge;
+    float gap = S(16), bw = std::min(S(220), (r.w - S(48) - gap * float(buttons - 1)) / float(buttons)), bh = m.label() * 2.2f;
+    float bx = r.x + (r.w - bw * float(buttons) - gap * float(buttons - 1)) / 2;
+    static const char* const kIcon[4] = {"file-plus", "folder-open", "refresh", "plus"};
+    for (int i = 0; i < buttons; ++i) {
+      const EmptyAction a = actions[i];
       const LRect br_{bx + float(i) * (bw + gap), r.bottom() - bh - S(24), bw, bh};
       ImGui::SetCursorScreenPos(tl(br_));
       ImGui::PushID(i);
       bool clicked = ImGui::InvisibleButton("##emptybtn", ImVec2(br_.w, br_.h));
       ImGui::PopID();
       dl->AddRectFilled(tl(br_), br(br_), i == 0 ? kBrand : kTile, br_.h / 2);
-      const char* label = i == 0 ? TR("Open Folder") : i == 1 ? TR("Reload") : TR("Add Test Cartridge");
-      std::string t = std::string(icons::glyph(kIcon[i])) + "  " + label;
+      const char* label = a == kAddRoms ? TR("Add ROMs") : a == kOpenFolder ? TR("Open Folder") : a == kReload ? TR("Reload") : TR("Add Test Cartridge");
+      std::string t = std::string(icons::glyph(kIcon[a])) + "  " + label;
       textFit(dl, m.label(), ImVec2(br_.x + S(12) + std::max(0.0f, (br_.w - S(24) - measure(m.label(), t.c_str()).x) / 2), br_.y + (br_.h - m.label()) / 2),
               br_.w - S(24), kText, t);
       if (clicked) {
-        if (i == 2) {
+        if (a == kTestCartridge) {
           addTestCartridge(now);
           continue;
         }
         lib->ensureFolders();
-        if (i == 0) openFolder(lib->romDir());
+        if (a == kAddRoms) addRoms();
+        else if (a == kOpenFolder) openRomFolder();
         else lib->refresh();
       }
     }
     if (!lib->folderError().empty()) description_ = lib->folderError();
-    prompt({"ui.confirm"}, TR("Open Folder"));
+    prompt({"ui.confirm"}, canImportFiles() ? TR("Add ROMs") : TR("Open Folder"));
     prompt({"face.west"}, TR("Reload"));
-    prompt({"face.north"}, TR("Add Test Cartridge"));
+    if (RN_PRODUCT_NES) prompt({"face.north"}, TR("Add Test Cartridge"));
   } else {
     // Continue: the last session (also after a crash), else the latest project.
     if (hero) {
@@ -471,7 +528,7 @@ void UI::buildLibrary(double now) {
                                                   : takeString(rnf_game_title(nullptr, cont->projectName.c_str()));
       ImTextureID tex{};
       ImVec2 uv0, uv1;
-      if (img && thumbImage(img, &tex, &uv0, &uv1)) coverImage(dl, tex, uv0, uv1, pic, m.tileRadius());
+      if (img && thumbImage(img, &tex, &uv0, &uv1)) coverImage(dl, tex, uv0, uv1, pic, m.tileRadius(), float(img.get()->width) / img.get()->height);
       else nameTile(dl, pic, game, m.tileRadius(), pic.h * 0.4f);
       float tx = pic.right() + S(24), tw = r.right() - S(24) - tx;
       float ty = r.y + (r.h - (m.hint() + m.title() + m.hint() + S(16))) / 2;
@@ -523,7 +580,7 @@ void UI::buildLibrary(double now) {
       std::string title = rom.title();
       ImTextureID tex{};
       ImVec2 uv0, uv1;
-      if (img && thumbImage(img, &tex, &uv0, &uv1)) coverImage(dl, tex, uv0, uv1, pic, m.tileRadius() - S(4));
+      if (img && thumbImage(img, &tex, &uv0, &uv1)) coverImage(dl, tex, uv0, uv1, pic, m.tileRadius() - S(4), float(img.get()->width) / img.get()->height);
       else nameTile(dl, pic, title, m.tileRadius() - S(4), pic.h * 0.45f);
       if (lib->isFavorite(rom)) {
         float d = m.label() * 1.7f;
@@ -571,7 +628,7 @@ void UI::buildLibrary(double now) {
       ThumbRef img = romThumb(rom, lib->projectsFor(rom));
       ImTextureID tex{};
       ImVec2 uv0, uv1;
-      if (img && thumbImage(img, &tex, &uv0, &uv1)) coverImage(dl, tex, uv0, uv1, pic, m.tileRadius() - S(4));
+      if (img && thumbImage(img, &tex, &uv0, &uv1)) coverImage(dl, tex, uv0, uv1, pic, m.tileRadius() - S(4), float(img.get()->width) / img.get()->height);
       else nameTile(dl, pic, rom.title(), m.tileRadius() - S(4), pic.h * 0.45f);
       dl->AddRectFilled(tl(r), br(r), IM_COL32(16, 16, 19, 150), m.tileRadius());  // dimmed: not this page
     };

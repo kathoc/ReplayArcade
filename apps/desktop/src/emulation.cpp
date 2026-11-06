@@ -30,7 +30,9 @@ const char* EmulationController::practiceBlockedText() {
 }
 
 EmulationController::EmulationController(rn_input* input, AudioSink* audio) : input_(input), audio_(audio) {
+#if RN_PRODUCT_FLASH_FILTER
   flash_ = rn_flash_filter_new(flashLevel_);
+#endif
   ff_ = rnf_fast_forward_new();
   stepRepeater_ = rnf_step_repeater_new();
   practiceLoop_ = rnf_practice_loop_new();
@@ -46,7 +48,9 @@ EmulationController::EmulationController(rn_input* input, AudioSink* audio) : in
 
 EmulationController::~EmulationController() {
   closeSession();
+#if RN_PRODUCT_FLASH_FILTER
   rn_flash_filter_free(flash_);
+#endif
   rnf_fast_forward_free(ff_);
   rnf_step_repeater_free(stepRepeater_);
   rnf_practice_loop_free(practiceLoop_);
@@ -69,7 +73,7 @@ void EmulationController::reportError(const std::string& title) {
 }
 
 void EmulationController::setMuted(bool m) {
-  if (audio_) audio_->setMuted(m);
+  if (audio_) audio_->setMuted(m || silent);
 }
 
 void EmulationController::setPaused(bool p) {
@@ -91,6 +95,30 @@ void EmulationController::setPaused(bool p) {
 void EmulationController::install(rn_session* s) {
   if (s != session_) closeSession();
   session_ = s;
+  sharesMachine_ = s && (rn_core_capabilities(rn_session_core_kind(s)) & RN_CORE_CAP_SHARES_MACHINE) != 0;
+  char* layout = s ? rn_session_input_layout_json(s) : nullptr;
+  rnf_input_set_layout_json(layout);
+  const bool wasNes = nesLayout_;
+  nesLayout_ = std::strcmp(rnf_input_layout_name(), "nes") == 0;
+  if (onInputLayout) onInputLayout(layout);
+  else if (!nesLayout_ || !wasNes) rn_input_set_layout_json(input_, layout);
+  rn_string_free(layout);
+  ++mediaGeneration_;
+  media_ = {RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, RN_FPS_NUM, RN_FPS_DEN, 1, 8, 7, 0};
+  if (s) rn_session_media_info(s, &media_);
+  pictureWidth_ = media_.max_width;
+  pictureHeight_ = media_.max_height;
+  display_.assign(size_t(pictureWidth_) * pictureHeight_, 0xFF000000u);
+#if RN_PRODUCT_FLASH_FILTER
+  rn_flash_filter_set_size(flash_, pictureWidth_, pictureHeight_);
+#endif
+  rnf_reel_free(reel_);
+  reel_ = rnf_reel_new_media(RNF_REEL_CAPACITY, &media_);
+  if (audio_) {
+    const double sampleRate = s ? double(rn_session_samples_before(s, media_.fps_num)) / double(media_.fps_den)
+                                : double(RN_SAMPLE_RATE);
+    audio_->configureMedia(media_, sampleRate);
+  }
   bool fresh = s && rn_take_length(s) == 0 && rn_frame(s) == 0 && (rn_get_mode(s) == RN_MODE_RECORD || rn_get_mode(s) == RN_MODE_LIVE);
   setPaused(!fresh);
   slow_ = 1;
@@ -98,6 +126,7 @@ void EmulationController::install(rn_session* s) {
   pendingEvents_ = 0;
   endOfTake_ = false;
   uiRewindHeld_ = uiFastForwardHeld_ = false;
+  stepRepeatHeld_ = false;
   rewinding_ = fastForward_ = false;
   rewindTicks_ = 0;
   lastPressSeq_ = pressSequence ? pressSequence() : 0;
@@ -124,6 +153,7 @@ void EmulationController::install(rn_session* s) {
   retryNotice_ = false;
   rewindFromPlay_ = false;
   replayButtons_ = 0xFFFF;
+  std::memset(replayRecord_.bytes, 0xFF, sizeof replayRecord_.bytes);
   rnf_vtr_reset(vtr_);
   vtrOn_ = false;
   pendingThumb_ = false;
@@ -144,9 +174,11 @@ void EmulationController::install(rn_session* s) {
 
 void EmulationController::closeSession() {
   if (!session_) return;
+  if (observer) observer->sessionClosing(session_);
   rnf_fast_forward_end(ff_, session_);
   rn_session_close(session_);
   session_ = nullptr;
+  signal_ = Signal();
   rnf_retry_reset(retry_);
   rn_input_release_all(input_);
   setMuted(true);
@@ -172,23 +204,45 @@ void EmulationController::setCrtDisplay(bool on) {
 }
 
 void EmulationController::setFlashLevel(rn_flash_level l) {
+#if RN_PRODUCT_FLASH_FILTER
   if (l == flashLevel_) return;
   flashLevel_ = l;
   rnf_vtr_configure(vtr_, vtrEnabled_ ? 1 : 0, l);
   rn_flash_filter_set_level(flash_, l);
   flashAltered_ = false;
   if (l == RN_FLASH_OFF) publishVideo();  // the unfiltered picture right away
+#else
+  (void)l;
+#endif
 }
 
 void EmulationController::resetFlashFilter() {
+#if RN_PRODUCT_FLASH_FILTER
   rn_flash_filter_reset(flash_);
+#endif
   flashAltered_ = false;
 }
 
-void EmulationController::show(const uint32_t* v) {
+bool EmulationController::crtAvailable() const {
+  rn_video_indices_info indices{};
+  return session_ && pictureWidth_ == RN_VIDEO_WIDTH && pictureHeight_ == RN_VIDEO_HEIGHT &&
+         media_.rotation == 0 && rn_video_indices(session_, &indices) == RN_OK && indices.codes;
+}
+
+void EmulationController::show(const rn_video_frame_info& frame) {
+  const uint32_t* v = frame.pixels;
+  if (!v || !frame.width || !frame.height || frame.stride < frame.width) return;
+  if (pictureWidth_ != frame.width || pictureHeight_ != frame.height) {
+    pictureWidth_ = frame.width;
+    pictureHeight_ = frame.height;
+    display_.resize(size_t(frame.width) * frame.height);
+#if RN_PRODUCT_FLASH_FILTER
+    rn_flash_filter_set_size(flash_, frame.width, frame.height);
+#endif
+  }
   signal_ = Signal();
   rn_video_indices_info vi{};
-  if (session_ && v == rn_video(session_) && rn_video_indices(session_, &vi) == RN_OK && vi.codes) {
+  if (crtAvailable() && frame.stride == RN_VIDEO_WIDTH && v == rn_video(session_) && rn_video_indices(session_, &vi) == RN_OK && vi.codes) {
     signal_.codes = vi.codes;
     signal_.burstPhase = vi.burst_phase;
     signal_.ordinal = vi.frame;
@@ -196,9 +250,11 @@ void EmulationController::show(const uint32_t* v) {
     signal_.ordinal = ++pictureOrdinal_;
   }
   int codesOk = 0;
-  if (flashLevel_ == RN_FLASH_OFF) {
-    std::memcpy(display_.data(), v, display_.size() * 4);
+  if (flashLevel_ == RN_FLASH_OFF || frame.width % 16 || frame.height % 16) {
+    for (uint32_t y = 0; y < frame.height; ++y)
+      std::memcpy(display_.data() + size_t(y) * frame.width, v + size_t(y) * frame.stride, size_t(frame.width) * 4);
     flashAltered_ = false;
+#if RN_PRODUCT_FLASH_FILTER
   } else {
     rn_flash_info info{};
     if (signal_.codes) {
@@ -207,10 +263,11 @@ void EmulationController::show(const uint32_t* v) {
       rn_flash_filter_process_codes(flash_, v, display_.data(), signal_.codes, displayCodes_.data(), &info, &codesOk);
       if (codesOk) signal_.codes = displayCodes_.data();
     } else {
-      rn_flash_filter_process(flash_, v, display_.data(), &info);
+      rn_flash_filter_process_frame(flash_, &frame, display_.data(), &info);
     }
     flashAltered_ = info.altered != 0;
     if (flashAltered_) lastFlashTick_ = tickCount_;
+#endif
   }
   // The CRT takes the RGB picture only when the codes do not describe it.
   signal_.flashAltered = flashAltered_ && !codesOk;
@@ -244,7 +301,7 @@ void EmulationController::republishVideo() {
 }
 
 const int16_t* EmulationController::withHiss(const int16_t* pcm, size_t n) {
-  if (!crtDisplay_ || !pcm || n == 0) return nullptr;
+  if (!crtDisplay_ || !crtAvailable() || media_.audio_channels != 1 || !pcm || n == 0) return nullptr;
   rnf_crt_reception r{};
   rnf_crt_reception_at(rnf_crt_power_current(power_), rnf_crt_power_counter(power_), flashLevel_ != RN_FLASH_OFF ? 1 : 0, &r);
   if (r.hiss == 0 && rnf_crt_hiss_level(hiss_) == 0) return nullptr;
@@ -255,10 +312,10 @@ const int16_t* EmulationController::withHiss(const int16_t* pcm, size_t n) {
 
 void EmulationController::publishVideo(bool continuous) {
   if (!session_) return;
-  const uint32_t* v = rn_video(session_);
-  if (!v) return;
+  rn_video_frame_info frame{};
+  if (rn_session_video_frame(session_, &frame) != RN_OK || !frame.pixels) return;
   if (!continuous) resetFlashFilter();
-  show(v);
+  show(frame);
 }
 
 // ------------------------------------------------------------------ seek / step
@@ -292,7 +349,8 @@ void EmulationController::scrub(uint64_t f) {
 
 void EmulationController::jumpSeconds(double seconds) {
   if (!session_) return;
-  uint64_t n = uint64_t(std::abs(seconds) * 60);
+  const bool nesTiming = media_.fps_num == RN_FPS_NUM && media_.fps_den == RN_FPS_DEN;
+  uint64_t n = uint64_t(std::abs(seconds) * (nesTiming ? 60.0 : 1.0 / framePeriod()));
   if (seconds < 0) stepBack(n);
   else seekCommand(std::min(rn_take_length(session_), rn_frame(session_) + n));
 }
@@ -332,6 +390,21 @@ void EmulationController::stepBack(uint64_t n) {
   }
   uint64_t f = rn_frame(session_);
   seekCommand(f >= n ? f - n : 0);
+}
+
+bool EmulationController::coreBusy() const {
+  return session_ && (!paused_ || rewinding_ || fastForward_ || uiRewindHeld_ || uiFastForwardHeld_ ||
+                      advanceRemaining_ > 0 || stepRepeatHeld_ ||
+                      rnf_step_repeater_direction(stepRepeater_) != 0);
+}
+
+void EmulationController::idleWork(uint32_t budgetFrames) {
+  if (!session_ || coreBusy() || budgetFrames == 0) return;
+  const rn_mode mode = rn_get_mode(session_);
+  if (mode != RN_MODE_RECORD && mode != RN_MODE_REPLAY) return;
+  // Cache preparation is optional. An unsuccessful attempt must not interrupt
+  // paused navigation with a dialog; normal seek/rewind remains authoritative.
+  (void)rn_session_idle_work(session_, budgetFrames);
 }
 
 void EmulationController::pausedStep(int dir, bool down) {
@@ -381,6 +454,13 @@ void EmulationController::startResume() {
 }
 
 bool EmulationController::replayButtonPressed() {
+  if (!nesLayout_) {
+    rn_input_record now{};
+    rn_input_sample_record(input_, rn_frame(session_), &now);
+    const bool pressed = rnf_input_record_buttons_pressed(&now, &replayRecord_) != 0;
+    replayRecord_ = now;
+    return pressed;
+  }
   uint8_t p1 = 0, p2 = 0;
   rn_input_sample_game(input_, rn_frame(session_), &p1, &p2);
   const uint16_t now = uint16_t(p1 | (p2 << 8));
@@ -460,9 +540,10 @@ EmulationController::Tick EmulationController::tick() {
       size_t n = 0;
       const int16_t* pcm = rn_audio(s, &n);
       if (n && audio_ && slow_ == 1) {
-        std::vector<int16_t> tail(rnf_audio_fade_tail(pcm, n, 4, nullptr, 0));
-        rnf_audio_fade_tail(pcm, n, 4, tail.data(), tail.size());
-        audio_->push(tail.data(), tail.size());
+        const size_t count = rnf_audio_fade_tail_with_channels(pcm, n, 4, media_.audio_channels, nullptr, 0);
+        std::vector<int16_t> tail(count * media_.audio_channels);
+        rnf_audio_fade_tail_with_channels(pcm, n, 4, media_.audio_channels, tail.data(), count);
+        audio_->push(tail.data(), count, media_.audio_channels);
       }
     }
     wantRewind = rw != 0;
@@ -477,6 +558,7 @@ EmulationController::Tick EmulationController::tick() {
     if (replayButtonPressed()) rerecordHere();
   } else {
     replayButtons_ = 0xFFFF;
+    std::memset(replayRecord_.bytes, 0xFF, sizeof replayRecord_.bytes);
   }
 
   bool emulatedLive = false;
@@ -490,6 +572,14 @@ EmulationController::Tick EmulationController::tick() {
     setMuted(true);
     rewindTicks_ += 1;
     uint64_t n = uint64_t(rnf_hold_speed(rewindTicks_));  // the same curve as fast-forward
+    // A core that shares one machine (an arcade core: a frame costs ~1-3 ms) rewinds on every
+    // other display tick by two ticks' worth: the same speed, twice the time per step. The first
+    // tick of a hold acts at once.
+    bool stepThisTick = true;
+    if (sharesMachine_) {
+      stepThisTick = rewindTicks_ % 2 == 1;
+      n += uint64_t(rnf_hold_speed(rewindTicks_ + 1));
+    }
     // Practice: rewinds the practice run only (the engine stops at A); take: clamps at 0.
     bool can = false;
     if (practicing) {
@@ -499,7 +589,7 @@ EmulationController::Tick EmulationController::tick() {
     } else {
       can = rn_frame(s) > 0;
     }
-    if (can) {
+    if (can && stepThisTick) {
       if (rn_rewind(s, n) == RN_OK) {
         endOfTake_ = false;
         if (practicing) rnf_reel_truncate(reel_, rn_practice_frame(s));
@@ -568,7 +658,7 @@ EmulationController::Tick EmulationController::tick() {
   // the tube needs a few pictures of it before the previous picture's phosphor light is gone
   // (kStaticSnowRepeats after the jump, then nothing).
   constexpr int kStaticSnowRepeats = 12;
-  if (crtDisplay_ && session_ && !pictureDirty_ && !vtrOn_ && rnf_crt_power_current(power_) == RNF_CRT_RECEPTION_NO_SIGNAL &&
+  if (crtDisplay_ && crtAvailable() && !pictureDirty_ && !vtrOn_ && rnf_crt_power_current(power_) == RNF_CRT_RECEPTION_NO_SIGNAL &&
       (flashLevel_ == RN_FLASH_OFF || snowRepeats_ < kStaticSnowRepeats)) {
     snowRepeats_ += 1;
     rnf_crt_power_tick(power_);
@@ -592,12 +682,19 @@ bool EmulationController::stepOnce(bool audible, bool frameStep) {
   rn_mode mode = rn_get_mode(s);
   bool live = mode == RN_MODE_RECORD || mode == RN_MODE_PRACTICE || mode == RN_MODE_LIVE;
   uint8_t p1 = 0, p2 = 0;
+  rn_input_record record{};
   if (live) {
     // Practice: rn_frame is frozen, so a separate monotonic clock drives tap latching / turbo.
     uint64_t clock = mode == RN_MODE_PRACTICE ? practiceSeq_++ : rn_frame(s);
-    rn_input_sample_game(input_, clock, &p1, &p2);
-    // The first frame after the resume countdown: plus the buttons typed ahead during it (once).
-    if (!frameStep) rnf_resume_countdown_apply(resumeCountdown_, &p1, &p2);
+    if (beforeSample) beforeSample();
+    if (nesLayout_) {
+      rn_input_sample_game(input_, clock, &p1, &p2);
+      // Apply buttons typed ahead during the countdown only on the first live frame.
+      if (!frameStep) rnf_resume_countdown_apply(resumeCountdown_, &p1, &p2);
+    } else {
+      rn_input_sample_record(input_, clock, &record);
+      if (!frameStep) rnf_resume_countdown_apply_record(resumeCountdown_, &record);
+    }
   }
   uint8_t ev = live ? pendingEvents_ : 0;
   pendingEvents_ = 0;
@@ -606,8 +703,16 @@ bool EmulationController::stepOnce(bool audible, bool frameStep) {
   // Live play goes through the retry bookkeeping (undo window, burst collapse); frame steps replay.
   const bool overwrite = !frameStep && rnf_tape_overwrites(mode, before, rn_take_length(s));
   rn_step_info info{};
-  rn_status st = mode == RN_MODE_LIVE ? rn_step(s, p1, p2, ev, &info) : frameStep ? rnf_transport_step(s, p1, p2, ev, &info)
-                           : rnf_retry_step(retry_, s, nowSeconds(), p1, p2, ev, &info);
+  rn_status st;
+  if (nesLayout_) {
+    st = mode == RN_MODE_LIVE ? rn_step(s, p1, p2, ev, &info) : frameStep ? rnf_transport_step(s, p1, p2, ev, &info)
+                             : rnf_retry_step(retry_, s, nowSeconds(), p1, p2, ev, &info);
+  } else {
+    record.bytes[2] = ev;
+    st = mode == RN_MODE_LIVE ? rn_step_record(s, &record, &info)
+         : frameStep ? rnf_transport_step_record(s, &record, &info)
+                     : rnf_retry_step_record(retry_, s, nowSeconds(), &record, &info);
+  }
   if (st != RN_OK) {
     setPaused(true);
     advanceRemaining_ = 0;
@@ -625,20 +730,21 @@ bool EmulationController::stepOnce(bool audible, bool frameStep) {
   // cursor. Takes are never shown; the structure / thumbnails follow.
   if (info.branched || info.take_id != takeBefore) markStructureDirty();
   else if (overwrite && observer) observer->takeCut(s, before);
-  if (const uint32_t* v = rn_video(s)) {
-    if (mode == RN_MODE_PRACTICE) rnf_reel_offer(reel_, rn_practice_frame(s), v);
+  rn_video_frame_info frame{};
+  if (rn_session_video_frame(s, &frame) == RN_OK && frame.pixels) {
+    if (mode == RN_MODE_PRACTICE) rnf_reel_offer_frame(reel_, rn_practice_frame(s), &frame);
     // The CRT reception: a step from `before` (practice: not a take frame) with the events applied.
     stepPending_ = true;
     stepBefore_ = mode == RN_MODE_PRACTICE ? UINT64_MAX : before;
     stepFrame_ = info.frame;
     stepEvents_ = info.events;
-    show(v);
+    show(frame);
   }
   if (audible && audio_) {
     size_t n = 0;
     const int16_t* pcm = rn_audio(s, &n);
     if (const int16_t* h = withHiss(pcm, n)) pcm = h;
-    if (n) audio_->push(pcm, n);
+    if (n) audio_->push(pcm, n, media_.audio_channels);
   }
   if (mode != RN_MODE_PRACTICE && mode != RN_MODE_LIVE) {
     pendingThumb_ = true;
@@ -741,9 +847,10 @@ void EmulationController::tickPractice() {
       size_t n = 0;
       const int16_t* pcm = rn_audio(s, &n);
       if (n && audio_) {
-        std::vector<int16_t> tail(rnf_audio_fade_tail(pcm, n, 4, nullptr, 0));
-        rnf_audio_fade_tail(pcm, n, 4, tail.data(), tail.size());
-        audio_->push(tail.data(), tail.size());
+        const size_t count = rnf_audio_fade_tail_with_channels(pcm, n, 4, media_.audio_channels, nullptr, 0);
+        std::vector<int16_t> tail(count * media_.audio_channels);
+        rnf_audio_fade_tail_with_channels(pcm, n, 4, media_.audio_channels, tail.data(), count);
+        audio_->push(tail.data(), count, media_.audio_channels);
       }
       dropInput();
       break;
@@ -757,7 +864,8 @@ void EmulationController::tickPractice() {
         resetFlashFilter();
       }
       int idx = rnf_reel_sweep_index(reel_, a.back);
-      if (const uint32_t* f = idx >= 0 ? rnf_reel_frame(reel_, idx) : nullptr) show(f);
+      rn_video_frame_info frame{};
+      if (idx >= 0 && rnf_reel_video_frame(reel_, idx, &frame)) show(frame);
       dropInput();
       break;
     }
@@ -799,6 +907,11 @@ void EmulationController::arriveAtA() {
 }
 
 void EmulationController::dropInput() {
+  if (!nesLayout_) {
+    rn_input_record ignored{};
+    rn_input_sample_record(input_, practiceSeq_++, &ignored);
+    return;
+  }
   uint8_t p1 = 0, p2 = 0;
   rn_input_sample_game(input_, practiceSeq_++, &p1, &p2);
 }
@@ -829,8 +942,15 @@ bool EmulationController::tickResumeCountdown() {
   // it (stepOnce: rnf_resume_countdown_apply).
   uint8_t p1 = 0, p2 = 0;
   const uint64_t clock = rn_get_mode(s) == RN_MODE_PRACTICE ? practiceSeq_++ : rn_frame(s);
-  rn_input_sample_game(input_, clock, &p1, &p2);
-  rnf_resume_countdown_input(resumeCountdown_, p1, p2);
+  if (beforeSample) beforeSample();
+  if (nesLayout_) {
+    rn_input_sample_game(input_, clock, &p1, &p2);
+    rnf_resume_countdown_input(resumeCountdown_, p1, p2);
+  } else {
+    rn_input_record record{};
+    rn_input_sample_record(input_, clock, &record);
+    rnf_resume_countdown_input_record(resumeCountdown_, &record);
+  }
   return true;
 }
 
@@ -842,6 +962,20 @@ void EmulationController::abortCountdown() {
   if (!session_ || rn_get_mode(session_) != RN_MODE_PRACTICE) return;
   if (rnf_practice_loop_phase(practiceLoop_, nullptr) != RNF_PHASE_COUNTDOWN) return;
   stopPractice();
+}
+
+// Turns a w x h picture by `turns` quarter turns clockwise into out (w * h pixels, may not alias);
+// returns the turned picture's width.
+static uint32_t turnQuarter(const uint32_t* in, uint32_t w, uint32_t h, uint32_t turns, uint32_t* out) {
+  for (uint32_t y = 0; y < h; ++y)
+    for (uint32_t x = 0; x < w; ++x) {
+      uint32_t v = in[size_t(y) * w + x];
+      if (turns == 1) out[size_t(x) * h + (h - 1 - y)] = v;                  // h wide, w high
+      else if (turns == 2) out[size_t(h - 1 - y) * w + (w - 1 - x)] = v;
+      else if (turns == 3) out[size_t(w - 1 - x) * h + y] = v;              // h wide, w high
+      else out[size_t(y) * w + x] = v;
+    }
+  return turns % 2 ? h : w;
 }
 
 // The VTR effect over the picture: the return sweep, L2 rewind, R2 fast-forward (lighter). Runs only
@@ -864,7 +998,22 @@ void EmulationController::tickVtr() {
       vtrBaseSignal_ = signal_;
       vtrOn_ = true;
     }
-    rnf_vtr_apply(vtrBase_.data(), display_.data(), &p);
+    const uint32_t turns = media_.rotation % 4;
+    if (turns == 0) {
+      rn_video_frame_info frame{vtrBase_.data(), pictureWidth_, pictureHeight_, pictureWidth_};
+      rnf_vtr_apply_frame(&frame, display_.data(), pictureWidth_, &p);
+    } else {
+      // A tape's noise runs along the lines on the screen: a rotated game (a vertical shooter) is
+      // turned to the screen's orientation for the effect and back, or its bands would run upright.
+      uint32_t w = pictureWidth_, h = pictureHeight_;
+      vtrTurned_.resize(size_t(w) * h);
+      vtrOut_.resize(size_t(w) * h);
+      uint32_t tw = turnQuarter(vtrBase_.data(), w, h, turns, vtrTurned_.data());
+      uint32_t th = uint32_t(vtrTurned_.size() / tw);
+      rn_video_frame_info frame{vtrTurned_.data(), tw, th, tw};
+      rnf_vtr_apply_frame(&frame, vtrOut_.data(), tw, &p);
+      turnQuarter(vtrOut_.data(), tw, th, (4 - turns) % 4, display_.data());
+    }
     signal_ = vtrBaseSignal_;
     signal_.codes = nullptr;  // the CRT takes the altered picture (RGB), not the PPU codes
     signal_.ordinal = ++pictureOrdinal_;
@@ -982,7 +1131,7 @@ void EmulationController::practiceSetAAt(int slot, uint64_t frame) {
   if (rn_practice_set_a(s, uint32_t(slot)) == RN_OK) {
     refreshPracticeLength(slot);
     markStructureDirty();
-    notice(TRF("A/B %lld: A %@", {slot + 1, timecode(frame)}));
+    notice(TRF("A/B %lld: A %@", {slot + 1, timecode(frame, framePeriod())}));
   } else {
     reportError(TR("Couldn’t set A"));
   }
@@ -1001,7 +1150,7 @@ void EmulationController::practiceSetB(int slot) {
     markStructureDirty();
     rn_practice_slot_info si{};
     rn_practice_slot_get(s, uint32_t(slot), &si);
-    notice(TRF("Set B of section %lld (length %@). Use “Practice” to repeat it", {slot + 1, timecode(si.length_frames)}));
+    notice(TRF("Set B of section %lld (length %@). Use “Practice” to repeat it", {slot + 1, timecode(si.length_frames, framePeriod())}));
     return;
   }
   switch (st) {
@@ -1073,10 +1222,10 @@ void EmulationController::practiceSetRange(int slot, uint64_t a, uint64_t b, boo
   markStructureDirty();
   // The engine restores the picture of the cursor: show it again.
   publishVideo();
-  if (fromMarkers) notice(TRF("A/B %lld: A %@ → B %@", {slot + 1, timecode(a), timecode(b)}));
+  if (fromMarkers) notice(TRF("A/B %lld: A %@ → B %@", {slot + 1, timecode(a, framePeriod()), timecode(b, framePeriod())}));
   else
     notice(TRF("Section %lld: A %@ → B %@ (length %@). Click the section to practice it",
-               {slot + 1, timecode(a), timecode(b), timecode(b - a)}));
+               {slot + 1, timecode(a, framePeriod()), timecode(b, framePeriod()), timecode(b - a, framePeriod())}));
 }
 
 void EmulationController::timelineMarkA(int slot) {
@@ -1210,7 +1359,7 @@ void EmulationController::addBookmark(const std::string& name) {
     notice(practiceBlockedText());
     return;
   }
-  std::string n = name.empty() ? TRF("Bookmark %lld (%@)", {(long long)rn_bookmark_count(s) + 1, timecode(rn_frame(s))}) : name;
+  std::string n = name.empty() ? TRF("Bookmark %lld (%@)", {(long long)rn_bookmark_count(s) + 1, timecode(rn_frame(s), framePeriod())}) : name;
   uint64_t id = 0;
   if (rn_bookmark_add(s, n.c_str(), &id) == RN_OK) {
     markStructureDirty();
@@ -1350,6 +1499,9 @@ std::string EmulationController::resetProject(bool keepPracticeSlots,
 void EmulationController::afterFrame(double slack) {
   rn_session* s = session_;
   if (!s) return;
+  // The checkpoint of the frame just shown, after its picture (defer_checkpoints): in a large state
+  // (Sega System 32: 22 MB) it took most of a frame between the input and the picture.
+  rn_session_checkpoint_work(s);
   if (pendingThumb_) {
     pendingThumb_ = false;
     if (observer) observer->frameShown(s, pendingThumbFrame_);
@@ -1371,7 +1523,7 @@ void EmulationController::maybeAutosave(double slack) {
     st = rn_session_save(s);
     if (st == RN_OK) lastFullSave_ = now;
   } else {
-    st = rn_session_autosave(s);
+    st = rn_session_autosave_background(s);  // while playing: the frame thread does not wait for state files
   }
   if (st == RN_OK) {
     autosaveFailed_ = false;

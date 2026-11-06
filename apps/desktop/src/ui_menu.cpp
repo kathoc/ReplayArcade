@@ -11,6 +11,7 @@
 
 #include "app_model.h"
 #include "emulation.h"
+#include "diagram_navigation.h"
 #include "icons.h"
 #include "imgui_internal.h"
 #include "input_router.h"
@@ -37,6 +38,19 @@ std::string str(char* p) {
   std::string s = p ? p : "";
   rnf_string_free(p);
   return s;
+}
+
+std::string playerLabel(rnf_action_group group, const std::string& label) {
+  int player = 0;
+  switch (group) {
+    case RNF_GROUP_PLAYER1: player = 1; break;
+    case RNF_GROUP_PLAYER2: player = 2; break;
+    case RNF_GROUP_PLAYER3: player = 3; break;
+    case RNF_GROUP_PLAYER4: player = 4; break;
+    default: return label;
+  }
+  if (std::strcmp(rnf_input_layout_name(), "nes") == 0) return std::to_string(player) + "P " + label;
+  return TRF("%lldP %@", {player, label});
 }
 
 void icon(ImDrawList* dl, const char* name, ImVec2 center, float size, ImU32 col) {
@@ -74,6 +88,7 @@ std::string UI::focusedItemId() const {
 size_t UI::listCount(const std::string& page) const {
   if (page == "bookmarks") return hasSession() ? d_.emu->structure().bookmarks.size() + 1 : 1;  // + "Add Bookmark"
   if (page == "controls.keyboard") return rnf_input_action_count();
+  if (page == "controls.turbo_buttons") return rnf_input_button_count();
   if (page == "controls.assign") return rnf_input_assign_choices(0, nullptr, 0);
   if (page == "library.projects") {
     const LibraryROM* r = projectsRom();
@@ -83,7 +98,7 @@ size_t UI::listCount(const std::string& page) const {
 }
 
 void UI::syncMenuCounts() {
-  for (const char* p : {"bookmarks", "controls.keyboard", "controls.assign", "library.projects"}) {
+  for (const char* p : {"bookmarks", "controls.keyboard", "controls.assign", "controls.turbo_buttons", "library.projects"}) {
     int i = rnf_menu_page_find(menu_, p);
     if (i >= 0) rnf_menu_set_count(menu_, size_t(i), listCount(p));
   }
@@ -202,20 +217,7 @@ void UI::handleMenuInput(double now) {
   if (pi.kind == RNF_MENU_PAGE_CUSTOM) {
     // The controller diagram: the D-pad moves between the buttons on the picture.
     if (dx || dy) {
-      int best = -1;
-      float bestScore = 1e9f;
-      if (diagramFocus_ < int(diagramCenters_.size())) {
-        ImVec2 c = diagramCenters_[size_t(diagramFocus_)];
-        for (size_t i = 0; i < diagramCenters_.size(); ++i) {
-          if (int(i) == diagramFocus_) continue;
-          float vx = diagramCenters_[i].x - c.x, vy = diagramCenters_[i].y - c.y;
-          float along = vx * float(dx) + vy * float(dy), across = std::fabs(vx * float(dy)) + std::fabs(vy * float(dx));
-          if (along <= 1) continue;
-          float score = along + across * 2.2f;
-          if (score < bestScore) bestScore = score, best = int(i);
-        }
-      }
-      if (best >= 0) diagramFocus_ = best;
+      diagramFocus_ = diagramFocusNext(diagramCenters_, diagramFocus_, dx, dy, &diagramHubs_);
     }
     if (confirm) menuEvent(RNF_MENU_EVENT_ACTIVATE, 0);
     else if (back) menuEvent(rnf_menu_back(menu_), 0);
@@ -273,6 +275,15 @@ void UI::buildMenu(double now) {
   ImGuiIO& io = ImGui::GetIO();
   const UiMetrics& m = metrics_;
   syncMenuCounts();
+  const std::string currentPage = menuPageId();
+  if (d_.input->usesDeviceKinds() &&
+      (currentPage == "settings.controls" || currentPage.rfind("controls.", 0) == 0)) {
+    if (!controlsEditingSelected_) {
+      d_.settings->diagramSlot = std::max(0, d_.input->lastSlot());
+      controlsEditingSelected_ = true;
+    }
+    d_.input->setEditingSlot(d_.settings->diagramSlot);
+  }
   handleMenuInput(now);
   if (!menuOpen_ || !rnf_menu_depth(menu_)) return;
   size_t page = rnf_menu_current(menu_);
@@ -289,7 +300,9 @@ void UI::buildMenu(double now) {
     header = sheets || id == "controls.keyboard" || id == "controls.assign" || id == "library.projects";
     if (sheets) reserve = RNF_MENU_MAX_ITEMS;
   }
-  PageGeometry g = layoutPage(m, pi.kind, count, pi.columns, header, reserve);
+  const bool profileHeader = d_.input->usesDeviceKinds() && std::strcmp(pi.id, "settings.controls") == 0;
+  PageGeometry g = layoutPage(m, pi.kind, count, pi.columns, header, reserve,
+                              profileHeader ? m.hint() + S(16) : 0);
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   ImGui::SetNextWindowSize(io.DisplaySize);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -307,6 +320,21 @@ void UI::buildMenu(double now) {
   else dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(16, 16, 19, 255));
   int vtx0 = dl->VtxBuffer.Size;
   buildBreadcrumb(m.topBar());
+  if (profileHeader) {
+    const std::string path = d_.emu->status().romPath;
+    std::string title;
+    for (const auto& rom : d_.library->roms())
+      if (LibraryModel::samePath(rom.path, path)) { title = rom.title(); break; }
+    if (title.empty()) {
+      const std::string filename = path.substr(path.find_last_of("/\\") + 1);
+      rnf_game_info info{};
+      const bool known = rnf_gamedb_find_name(filename.c_str(), &info) != 0;
+      title = str(rnf_game_title(known ? &info : nullptr, filename.empty() ? rnf_input_layout_name() : filename.c_str()));
+    }
+    const std::string kind = d_.input->editingKind() == DeviceKind::stick ? TR("Arcade Stick") : TR("Pad");
+    textFit(dl, m.hint(), tl(m.content()), m.content().w, kTextDim,
+            TRF("%@ · %@ Settings", {title, kind}));
+  }
   layoutRecord(g.content);
   switch (pi.kind) {
     case RNF_MENU_PAGE_TILES: buildTilesPage(g, page, now); break;
@@ -383,7 +411,7 @@ void UI::buildTilesPage(const PageGeometry& g, size_t page, double now) {
     ImU32 fg = en ? kText : kTextFaint;
     float is = std::min(rr.w * 0.30f, rr.h * 0.34f);
     icon(dl, it.icon, ImVec2(rr.x + rr.w / 2, rr.y + rr.h * 0.40f), is, it.kind == RNF_MENU_ITEM_RESUME ? kBrand : fg);
-    textCentered(dl, m.label(), inset(rr, S(10)), rr.y + rr.h * 0.70f, fg, txt(it.label));
+    textCentered(dl, m.label(), inset(rr, S(10)), rr.y + rr.h * 0.70f, fg, std::strcmp(it.id, "display.par87") == 0 && hasSession() && rn_session_core_kind(d_.emu->session()) == RN_CORE_EXTERNAL ? TR("Pixel Aspect Ratio") : txt(it.label));
     if (it.kind == RNF_MENU_ITEM_TOGGLE) {
       // State under the label ("On" in the brand color).
       bool on = itemOn(it.id);
@@ -583,7 +611,7 @@ void UI::buildSettingsPage(const PageGeometry& g, size_t page, double now) {
         break;
       }
     }
-    textFit(dl, m.label(), ImVec2(labelX, cy - m.label() / 2), std::max(0.0f, valueRight - valueW - S(16) - labelX), fg, txt(it.label));
+    textFit(dl, m.label(), ImVec2(labelX, cy - m.label() / 2), std::max(0.0f, valueRight - valueW - S(16) - labelX), fg, std::strcmp(it.id, "display.par87") == 0 && hasSession() && rn_session_core_kind(d_.emu->session()) == RN_CORE_EXTERNAL ? TR("Pixel Aspect Ratio") : txt(it.label));
     if (f) {
       drawFocus(r, m.tileRadius(), now);
       description_ = std::strcmp(it.id, "system.core") == 0
@@ -594,6 +622,9 @@ void UI::buildSettingsPage(const PageGeometry& g, size_t page, double now) {
       else if (it.kind != RNF_MENU_ITEM_INFO && en) prompt({"ui.confirm"}, it.kind == RNF_MENU_ITEM_PAGE ? TR("Open") : TR("Select"));
     }
   }
+  rnf_menu_page_info pageInfo{};
+  if (rnf_menu_page_get(menu_, page, &pageInfo) && std::strcmp(pageInfo.id, "display.crt") == 0)
+    prompt({"face.north"}, TR("Defaults"), [this] { rowAction("display.crt", 0, 'y'); });
   prompt({"ui.cancel"}, TR("Back"));
 }
 
@@ -648,7 +679,7 @@ void UI::buildCardsPage(const PageGeometry& g, double now) {
     float ty = thumb.bottom() + S(8);
     std::string name = hasA ? s->displayName() : std::string(TR("Set A Here"));
     textFit(dl, m.label(), ImVec2(r.x + S(12), ty), r.w - S(24), hasA ? kText : kTextDim, name);
-    std::string len = !hasA ? std::string() : s->hasB ? timecode(s->length) : std::string(TR("No B yet"));
+    std::string len = !hasA ? std::string() : s->hasB ? timecode(s->length, d_.emu->framePeriod()) : std::string(TR("No B yet"));
     if (!len.empty()) textFit(dl, m.hint(), ImVec2(r.x + S(12), ty + m.label() * 1.2f), r.w - S(24), kTextDim, len);
     if (f) drawFocus(r, m.tileRadius(), now);
   }
@@ -668,14 +699,16 @@ void UI::buildCardsPage(const PageGeometry& g, double now) {
   if (hasA) prompt({"face.north"}, TR("Rename"));
   if (active) prompt({"face.west"}, TR("Stop"));
   else if (hasA) prompt({"face.west"}, TR("Clear"));
-  // The countdown after returning to A (3, 2, 1): a setting of practice, toggled here (View / Tab, or
-  // a click on the hint).
-  prompt({"options"}, d_.settings->practiceCountdown ? TR("Countdown: On") : TR("Countdown: Off"), [this] { toggleCountdown(); });
+  // The countdown (3 / 1 / none; also Settings > System > More), cycled here (View / Tab, or a click on
+  // the hint).
+  const int cs = d_.settings->countdownSeconds;
+  prompt({"options"}, cs >= 3 ? TR("Countdown: 3") : cs >= 1 ? TR("Countdown: 1") : TR("Countdown: None"), [this] { toggleCountdown(); });
   prompt({"ui.cancel"}, TR("Back"));
 }
 
 void UI::toggleCountdown() {
-  d_.settings->practiceCountdown = !d_.settings->practiceCountdown;
+  int& cs = d_.settings->countdownSeconds;
+  cs = cs >= 3 ? 1 : cs >= 1 ? 0 : 3;  // 3 -> 1 -> none -> 3
   changed();
 }
 
@@ -717,7 +750,7 @@ void UI::buildListPage(const PageGeometry& g, size_t page, double now) {
         const BookmarkInfo& b = ss->bookmarks[row - 1];
         ic = "bookmark";
         label = b.name;
-        value = timecode(b.frame);
+        value = timecode(b.frame, d_.emu->framePeriod());
         if (f) description_ = TR("A: jump there");
       }
     } else if (id == "controls.keyboard") {
@@ -725,8 +758,7 @@ void UI::buildListPage(const PageGeometry& g, size_t page, double now) {
       if (rnf_input_action_get(row, &a)) {
         ic = a.group == RNF_GROUP_HOTKEY ? "bolt" : "keyboard";
         label = str(rnf_input_action_label(a.id));
-        if (a.group == RNF_GROUP_PLAYER2) label = "2P " + label;
-        else if (a.group == RNF_GROUP_PLAYER1) label = "1P " + label;
+        label = playerLabel(a.group, label);
         if (capturingAction_ == a.id) {
           value = TR("Press a key…");
         } else {
@@ -740,6 +772,15 @@ void UI::buildListPage(const PageGeometry& g, size_t page, double now) {
           if (value.empty()) value = "—";
         }
         if (f) description_ = TR("A: set a key · X: clear");
+      }
+    } else if (id == "controls.turbo_buttons") {
+      rnf_menu_item_info item{};
+      if (rnf_menu_item_get(menu_, page, row, &item)) {
+        ic = "bolt";
+        label = txt(item.label);
+        int period, duty;
+        const char* action = rnf_input_button_id(row);
+        if (action) value = d_.input->buttonTurbo(action, period, duty) ? TR("Custom") : TR("Global");
       }
     } else if (id == "controls.assign") {
       int slot = 0;
@@ -757,8 +798,7 @@ void UI::buildListPage(const PageGeometry& g, size_t page, double now) {
         } else {
           ic = ai.group == RNF_GROUP_HOTKEY ? "bolt" : "device-gamepad";
           label = str(rnf_input_action_label(a.c_str()));
-          if (ai.group == RNF_GROUP_PLAYER2) label = "2P " + label;
-          else if (ai.group == RNF_GROUP_PLAYER1) label = "1P " + label;
+          label = playerLabel(ai.group, label);
         }
         const std::vector<rnf_binding>& b = d_.input->bindings();
         std::string el = assignElement_.substr(assignElement_.find(':') + 1);
@@ -807,6 +847,8 @@ void UI::buildListPage(const PageGeometry& g, size_t page, double now) {
       prompt({"face.north"}, TR("Rename"));
       prompt({"face.west"}, TR("Delete"));
     }
+  } else if (id == "controls.turbo_buttons") {
+    prompt({"ui.confirm"}, TR("Settings"));
   } else if (id == "controls.assign") {
     prompt({"ui.confirm"}, TR("Assign"));
   } else if (id == "controls.keyboard") {
@@ -832,8 +874,56 @@ void UI::buildControllerPage(const PageGeometry& g, double now) {
                       (pad.pad ? pad.name : std::string(TR("Not Connected")) + "  ·  " + str(rnf_controller_family_title(fam)));
   textFit(dl, m.label(), ImVec2(g.panel.x + S(20), g.panel.y + S(16)), g.panel.w - S(40), kText, title);
   LRect area{g.panel.x + S(20), g.panel.y + S(16) + m.label() * 1.8f, g.panel.w - S(40), 0};
+  LRect kindRow{}, orderRow{};
+  if (d_.input->usesDeviceKinds()) {
+    kindRow = {area.x, area.y, area.w, m.label() + S(18)};
+    area.y += kindRow.h + S(8);
+  }
+  if (playerOrderOffered_) {
+    orderRow = {area.x, area.y, area.w, m.label() + S(18)};
+    area.y += orderRow.h + S(8);
+  }
   area.h = g.panel.bottom() - area.y - S(16);
   buildDiagram(fam, slot, area, now);
+  if (d_.input->usesDeviceKinds()) {
+    const int index = int(diagramIds_.size());
+    diagramIds_.push_back("__kind__");
+    diagramCenters_.push_back(ImVec2(kindRow.x + kindRow.w / 2, kindRow.y + kindRow.h / 2));
+    diagramHubs_.push_back(-1);
+    const KindOverride choice = d_.input->kindOverride(slot);
+    std::string value = choice == KindOverride::stick ? TR("Arcade Stick") : TR("Pad");
+    if (choice == KindOverride::automatic)
+      value = TRF("Automatic (%@)", {std::string(pad.detectedKind == DeviceKind::stick ? TR("Arcade Stick") : TR("Pad"))});
+    const std::string label = TRF("Kind: %@", {value});
+    dl->AddRectFilled(tl(kindRow), br(kindRow), kTile, S(8));
+    textFit(dl, m.label(), ImVec2(kindRow.x + S(12), kindRow.y + S(9)), kindRow.w - S(24), kText, label);
+    ImGui::SetCursorScreenPos(tl(kindRow));
+    const bool clicked = ImGui::InvisibleButton("##controllerkind", ImVec2(kindRow.w, kindRow.h));
+    if (ImGui::IsItemHovered() && (clicked || ImGui::GetIO().MouseDelta.x || ImGui::GetIO().MouseDelta.y)) diagramFocus_ = index;
+    if (clicked) activateRow("controls.controller", size_t(index));
+    if (diagramFocus_ == index) {
+      drawFocus(kindRow, S(8), now);
+      description_ = label;
+    }
+  }
+  // Player Order (not under Steam Input): each controller's press, player 1 first (InputRouter).
+  if (playerOrderOffered_) {
+    const int index = int(diagramIds_.size());
+    diagramIds_.push_back("__order__");
+    diagramCenters_.push_back(ImVec2(orderRow.x + orderRow.w / 2, orderRow.y + orderRow.h / 2));
+    diagramHubs_.push_back(-1);
+    const std::string label = TR("Player Order");
+    dl->AddRectFilled(tl(orderRow), br(orderRow), kTile, S(8));
+    textFit(dl, m.label(), ImVec2(orderRow.x + S(12), orderRow.y + S(9)), orderRow.w - S(24), kText, label);
+    ImGui::SetCursorScreenPos(tl(orderRow));
+    const bool clicked = ImGui::InvisibleButton("##playerorder", ImVec2(orderRow.w, orderRow.h));
+    if (ImGui::IsItemHovered() && (clicked || ImGui::GetIO().MouseDelta.x || ImGui::GetIO().MouseDelta.y)) diagramFocus_ = index;
+    if (clicked) activateRow("controls.controller", size_t(index));
+    if (diagramFocus_ == index) {
+      drawFocus(orderRow, S(8), now);
+      description_ = TR("Press a button on each controller, player 1 first");
+    }
+  }
   prompt({"ui.confirm"}, TR("Change"));
   prompt({"face.west"}, TR("Next Pad"));
   prompt({"face.north"}, TR("Reset"));
@@ -844,7 +934,12 @@ void UI::buildControllerPage(const PageGeometry& g, double now) {
 
 void UI::activateRow(const std::string& page, size_t row) {
   EmulationController* emu = d_.emu;
-  if (page == "practice") {
+  if (page == "controls.turbo_buttons") {
+    rnf_menu_item_info item{};
+    const int index = rnf_menu_page_find(menu_, page.c_str());
+    if (index >= 0 && rnf_menu_item_get(menu_, size_t(index), row, &item))
+      menuEvent(rnf_menu_push(menu_, item.target), 0);
+  } else if (page == "practice") {
     const SessionStructure& ss = emu->structure();
     if (row >= ss.slots.size()) return;
     const SlotInfo& s = ss.slots[row];
@@ -897,7 +992,18 @@ void UI::activateRow(const std::string& page, size_t row) {
     else if (row == 1) d_.app->tryRom(r.path);
     else if (row - 2 < projects.size()) d_.app->continueProject(projects[row - 2].path);
   } else if (page == "controls.controller") {
-    if (diagramFocus_ >= 0 && size_t(diagramFocus_) < diagramIds_.size()) openAssign(diagramIds_[size_t(diagramFocus_)]);
+    if (diagramFocus_ >= 0 && size_t(diagramFocus_) < diagramIds_.size()) {
+      if (diagramIds_[size_t(diagramFocus_)] == "__order__") {
+        d_.input->beginPlayerOrder();
+        if (!d_.input->playerOrderActive()) notice(TR("No controller is connected"));
+      } else if (diagramIds_[size_t(diagramFocus_)] == "__kind__") {
+        const int slot = d_.settings->diagramSlot;
+        const KindOverride current = d_.input->kindOverride(slot);
+        const KindOverride next = current == KindOverride::automatic ? KindOverride::pad :
+                                  current == KindOverride::pad ? KindOverride::stick : KindOverride::automatic;
+        d_.input->setKindOverride(slot, next);
+      } else openAssign(diagramIds_[size_t(diagramFocus_)]);
+    }
   } else if (page == "controls.assign") {
     int slot = 0;
     rnf_input_controller_slot(assignElement_.c_str(), &slot);
@@ -911,6 +1017,11 @@ void UI::activateRow(const std::string& page, size_t row) {
 
 void UI::rowAction(const std::string& page, size_t row, char key) {
   EmulationController* emu = d_.emu;
+  if (page == "display.crt" && key == 'y') {  // Display > CRT: Y = back to the defaults (was the Defaults row)
+    activateItem("crt.reset");
+    notice(TR("CRT settings are back to the defaults"));
+    return;
+  }
   if (page == "practice") {
     const SessionStructure& ss = emu->structure();
     if (row >= ss.slots.size() || !ss.slots[row].hasA) return;
@@ -941,16 +1052,21 @@ void UI::rowAction(const std::string& page, size_t row, char key) {
     int slot = std::clamp(d_.settings->diagramSlot, 0, InputRouter::kSlots - 1);
     if (key == 'x') {
       d_.settings->diagramSlot = (slot + 1) % InputRouter::kSlots;
+      if (d_.input->usesDeviceKinds()) d_.input->setEditingSlot(d_.settings->diagramSlot);
       diagramFocus_ = 0;
       changed();
     } else {
       Dialog d;
-      d.title = TRF("Reset Pad %lld to Defaults", {slot + 1});
+      d.title = d_.input->usesDeviceKinds() ? TR("Reset Controls") : TRF("Reset Pad %lld to Defaults", {slot + 1});
+      if (d_.input->usesDeviceKinds()) d.message = TR("Reset only this title and controller kind to defaults");
       d.buttons = {TR("Reset"), TR("Cancel")};
       d.destructiveIndex = 0;
       d.cancelIndex = 1;
       d.onResult = [this, slot](int b, bool) {
-        if (b == 0) d_.input->resetController(slot);
+        if (b == 0) {
+          if (d_.input->usesDeviceKinds()) d_.input->resetToDefaults();
+          else d_.input->resetController(slot);
+        }
       };
       showDialog(std::move(d));
     }

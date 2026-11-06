@@ -17,6 +17,7 @@
 // Without present timing the loop runs on the host clock at the NES rate (no JIT sampling;
 // reported), as with VRR on Windows (--vrr).
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "replaynes/product.h"
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -56,6 +57,7 @@
 #include "script.h"
 #include "settings.h"
 #include "thumbnails.h"
+#include "touch_controls.h"
 #include "ui.h"
 #include "update_service.h"
 
@@ -101,6 +103,7 @@ class App {
   std::unique_ptr<LibraryThumbs> libraryThumbs_;
   std::unique_ptr<LibraryModel> library_;
   std::unique_ptr<UI> ui_;
+  std::unique_ptr<TouchControls> touch_;  // the on-screen controller (PlatformHooks::touchControls)
   std::unique_ptr<AppModel> app_;
   std::unique_ptr<UpdateService> updates_;
   bool restart_ = false;  // quit, then start the newest installed version (an update)
@@ -111,6 +114,16 @@ class App {
   double lastPictureSample_ = 0;
   bool running_ = true;
   bool fullscreen_ = false;
+  bool focused_ = true;  // the window has the input focus (another window in front: false)
+  bool overlay_ = false;  // the system's UI in front (PlatformHooks::systemOverlay, --script "overlay")
+  bool overlayArmed_ = false;  // the window was in front once (before that it is the launch, not a menu)
+  // Screensaver (docs/design/SCREENSAVER.md): the last input, the current demo's start.
+  double lastInput_ = 0, screensaverDemoAt_ = 0;
+  void updateScreensaver(double now);
+  void updateOverlay(int scripted);
+  bool handleFaceCheck(const SDL_Event& e);
+  // The input's paused-in-play mode from the emulation's state, every frame (not only on a change).
+  void syncPausedStepMode() { input_->setPausedStepMode(emu_->paused()); }
   int lastHeight_ = 0;
   float lastUIScale_ = 0;
   int lastWidth_ = 0;
@@ -128,12 +141,19 @@ void App::applyFullscreen(bool on) {
 }
 
 void App::applySettings() {
+  // The ROM / Projects folders chosen in Settings (a rescan when they change; Share's ROMs go there).
+  const std::string romsBefore = library_->romDir();
+  library_->setFolders(settings_.romFolder, settings_.projectsFolder);
+  if (library_->romDir() != romsBefore) setImportFolder(library_->romDir());
+  setScreenOrientation(settings_.orientation);  // Android: MainActivity keeps it (a repeat changes nothing)
   emu_->pauseAfterRewind = settings_.pauseAfterRewind;
   emu_->autosaveInterval = settings_.autosaveInterval;
   emu_->setFlashLevel(rn_flash_level(settings_.flash));
   emu_->setVtrEffect(settings_.vtrEffect);
-  emu_->setPracticeCountdown(settings_.practiceCountdown);
-  emu_->setResumeCountdown(settings_.resumeCountdown);
+  // One countdown setting for both (3 / 1 / none): the length, and whether there is one at all.
+  rnf_countdown_set_seconds(std::max(1, settings_.countdownSeconds));
+  emu_->setPracticeCountdown(settings_.countdownSeconds > 0);
+  emu_->setResumeCountdown(settings_.countdownSeconds > 0);
   audio_.setVolume(settings_.volume);
   applyPostProcess();
 }
@@ -145,6 +165,7 @@ void App::applyPostProcess() {
   pp.maxTubeWidth = opt_.crtMaxWidth;
   pp.adaptiveResolution = opt_.crtAdaptive;
   pp.allowBuildAhead = opt_.crtBuildAhead;
+  pp.backdrop = settings_.backdrop;
   renderer_->setPostProcess(pp);
 }
 
@@ -155,6 +176,15 @@ void App::applyPostProcess() {
 void App::updateNavigation() {
   bool inter = ui_->interactive();
   input_->setUIMode(inter);
+  syncPausedStepMode();
+  // The mouse plays a game that binds it while it runs (not paused, no menu, the window focused):
+  // relative mode keeps the pointer in the window and hides it. Esc (the menu) gives it back.
+  const bool capture = input_->mouseGame() && !inter && emu_->session() && !emu_->paused() &&
+                       (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS) != 0;
+  if (capture != input_->mouseCaptured()) {
+    input_->setMouseCaptured(capture);
+    SDL_SetWindowRelativeMouseMode(window_, capture);
+  }
   input_->setSeekFocus(inter ? 0 : ui_->seekFocus());
   // Y stops practice; both countdowns take the NES buttons as game input typed ahead
   // (docs/design/VTR_UX.md, "Countdown type-ahead").
@@ -164,10 +194,161 @@ void App::updateNavigation() {
   else io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
 }
 
-void App::handleEvent(const SDL_Event& e, double now) {
+namespace {
+// A person did something (a resting stick's drift, a pointer the compositor nudges or a key repeat
+// is not one).
+bool isUserInput(const SDL_Event& e) {
+  switch (e.type) {
+    case SDL_EVENT_KEY_DOWN: return !e.key.repeat;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_WHEEL:
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: return true;
+    case SDL_EVENT_MOUSE_MOTION: return std::fabs(e.motion.xrel) + std::fabs(e.motion.yrel) > 3;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: return std::abs(int(e.gaxis.value)) > 16000;
+    default: return false;
+  }
+}
+}  // namespace
+
+// The screensaver starts after the setting's minutes without input on the library or with a game paused
+// (not practising, no countdown, nothing a dialog or an export waits for), and switches demos every 2 min.
+void App::updateScreensaver(double now) {
+  if (lastInput_ == 0) lastInput_ = now;
+  if (app_->screensaverActive()) {
+    if (now - screensaverDemoAt_ >= 120) {
+      app_->nextScreensaverDemo();
+      screensaverDemoAt_ = now;
+    }
+    return;
+  }
+  const int minutes = settings_.screensaverMinutes;
+  if (minutes <= 0 || now - lastInput_ < minutes * 60.0 || !focused_ || overlay_ || ui_->screensaverBlocked()) return;
+  const EmuStatus& st = emu_->status();
+  if (emu_->session() && (!st.paused || st.practicing || st.countdown > 0 || emu_->live())) return;
+  if (app_->startScreensaver()) {
+    std::fprintf(stderr, "screensaver: on (%s)\n", app_->screensaverRom().c_str());
+    screensaverDemoAt_ = now;
+  } else {
+    lastInput_ = now;  // could not leave the session (its work not saved): another full wait
+  }
+}
+
+// The Steam menu in gamescope (docs/design/STEAM_OVERLAY_PAUSE.md): no focus event comes, so its
+// coming is a focus loss here, and a game open shows the pause menu, still there when it goes.
+void App::updateOverlay(int scripted) {
+  const bool shown = scripted >= 0 ? scripted > 0 : platform_.systemOverlay && platform_.systemOverlay();
+  if (shown == overlay_) {
+    if (!shown) overlayArmed_ = true;
+    return;
+  }
+  overlay_ = shown;
+  std::fprintf(stderr, "input: system overlay %s\n", shown ? "shown" : "gone");
+  // Steam's UI is in front while the app starts, until gamescope shows its window: not the Steam menu.
+  if (!shown) overlayArmed_ = true;
+  if (!shown || !overlayArmed_ || !RN_PRODUCT_FOCUS_PAUSE || settings_.playInBackground) return;
+  if (emu_->session() && !app_->screensaverActive()) {
+    if (!emu_->paused()) emu_->setPaused(true);
+    ui_->setMenu(true);  // paused, the pause menu (an open menu stays where it is)
+  }
+  input_->releaseControllers();
+}
+
+// The face button check on screen (docs/design/FACE_CHECK.md): the controllers are its own. The checked
+// controller's face buttons go to the check as SDL reports them (before any swap); the one at the lit
+// position held a second answers. Nothing reaches the UI or a game meanwhile.
+bool App::handleFaceCheck(const SDL_Event& e) {
+  const bool button = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP;
+  const bool axis = e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION;
+  if (!button && !axis) return false;
+  const int slot = input_->faceCheckSlot();
+  const SDL_JoystickID which = button ? e.gbutton.which : e.gaxis.which;
+  if (slot < 0 || input_->slotOfPad(which) != slot) return true;  // another controller: nothing
+  if (button && e.gbutton.button <= SDL_GAMEPAD_BUTTON_NORTH)
+    ui_->faceCheckButton(e.gbutton.button, e.gbutton.down, ImGui::GetTime());
+  return true;
+}
+
+void App::handleEvent(const SDL_Event& reported, double now) {
+  if (isUserInput(reported)) {
+    lastInput_ = now;
+    if (app_->screensaverActive()) {  // the input that ends it does nothing else
+      app_->stopScreensaver();
+      std::fprintf(stderr, "screensaver: off\n");
+      return;
+    }
+  }
+  if (ui_->faceCheckActive() && handleFaceCheck(reported)) return;  // the check needs SDL's own numbers
+  // From here on a face button is where it is (docs/design/FACE_CHECK.md): the one place the user's check
+  // applies, so the menus (PadNavFeed), the on-screen keyboard, ImGui, the player order and the game all
+  // see the same button. (The menus read SDL's numbers before: on a swapped controller the east button
+  // was the south one there - confirm and cancel the other way round - while the game and the hints
+  // had it right.)
+  const SDL_Event e = input_->atFacePosition(reported);
+  // The on-screen controller takes the fingers on it (and the mouse events SDL makes from them).
+  if (touch_ && touch_->visible()) {
+    const bool finger = e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION || e.type == SDL_EVENT_FINGER_UP ||
+                        e.type == SDL_EVENT_FINGER_CANCELED;
+    if (finger && touch_->handleFinger(e, now * 1000)) {
+      ui_->touchUsed();
+      return;
+    }
+    if (touch_->takesTouchMouse(e)) return;
+  }
+  // Another window in front (RN_PRODUCT_FOCUS_PAUSE): unless Play in the Background is on (Settings > System > More), the
+  // game pauses and the controllers reach neither the game nor the menus until the window is back.
+  // The game stays paused then (play resumes when the player says so).
+  if (input_->debugInput()) {
+    if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST || e.type == SDL_EVENT_WINDOW_FOCUS_GAINED)
+      std::fprintf(stderr, "input: window focus %s\n", e.type == SDL_EVENT_WINDOW_FOCUS_GAINED ? "gained" : "lost");
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
+      std::fprintf(stderr, "input: SDL gamepad %u button %d down (focused %d, play in background %d)\n", unsigned(e.gbutton.which),
+                   int(e.gbutton.button), int(focused_), int(settings_.playInBackground));
+  }
+  if (ui_ && (e.type == SDL_EVENT_WINDOW_FOCUS_LOST || e.type == SDL_EVENT_WINDOW_FOCUS_GAINED))
+    ui_->focusChanged(e.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
+  if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+    focused_ = false;
+    if (RN_PRODUCT_FOCUS_PAUSE && !settings_.playInBackground) {
+      if (emu_->session() && !emu_->paused()) emu_->setPaused(true);
+      input_->releaseControllers();
+    }
+  } else if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+    focused_ = true;
+  }
+  if (RN_PRODUCT_FOCUS_PAUSE && (!focused_ || overlay_) && !settings_.playInBackground &&
+      (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
+       e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN ||
+       e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_UP))
+    return;
+  // Player Order (Settings > Controls): a controller's press names its player and reaches neither the
+  // menus nor the game; Esc ends it.
+  if (input_->playerOrderOwns(e)) {
+    const bool was = input_->playerOrderActive();
+    input_->handleEvent(e, now, false);
+    if (was && !input_->playerOrderActive()) ui_->notice(TR("Players are set"));
+    return;
+  }
+  if (input_->playerOrderActive() && e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_ESCAPE) {
+    input_->endPlayerOrder();
+    return;
+  }
   // A text field with an on-screen keyboard takes the controller and taps on the keyboard
   // (ui_osk.cpp); PadNavFeed still follows the pads (it feeds ImGui nothing meanwhile).
   bool textEntry = ui_->textEntryEvent(e, now);
+  // A captured mouse is the game's (no pointer for the UI then: SDL relative mode).
+  const bool mouseToGame = input_->mouseCaptured() &&
+                           (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                            e.type == SDL_EVENT_MOUSE_BUTTON_UP || e.type == SDL_EVENT_MOUSE_WHEEL);
+  if (mouseToGame) {
+    input_->handleEvent(e, now - double(SDL_GetTicksNS() - e.common.timestamp) * 1e-9, ui_->wantsKeyboard());
+    return;
+  }
+  // A press or release says where it is: ImGui's backend takes the position from motion events only, and
+  // after another app was in front (the window left: ImGui's mouse "nowhere") a tap where the last one was makes
+  // no motion - the button under it never saw the press (Android: Add ROMs did nothing after the picker).
+  if (!textEntry && (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP))
+    ImGui::GetIO().AddMousePosEvent(e.button.x, e.button.y);
   if (!textEntry) ImGui_ImplSDL3_ProcessEvent(&e);
   padNav_.setSuppressed(ui_->textEntryOwnsPad());
   padNav_.handle(e);
@@ -219,11 +400,11 @@ int App::run(const AppOptions& opt) {
   settings_.load(paths_.settingsFile());
   if (opt.flash >= 0 && opt.flash <= 3) settings_.flash = opt.flash;
   if (opt.integerScale >= 0) settings_.integerScale = opt.integerScale != 0;
-  std::fprintf(stderr, "ReplayNES %s\n", platform_.version);
+  std::fprintf(stderr, "%s %s\n", RN_PRODUCT_NAME, platform_.version);
   if (platform_.setupFrameThread) platform_.setupFrameThread();  // precise wake-ups for the just-in-time sample
   const bool perfMode = opt.perfSeconds > 0;
 
-  SDL_SetAppMetadata("ReplayNES", platform_.version, "io.github.replaynes.ReplayNES");
+  SDL_SetAppMetadata(RN_PRODUCT_NAME, platform_.version, RN_PRODUCT_APP_ID);
   SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
   SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "0");
   // Controllers are updated on their own thread (below), not by the frame loop's event pump: the
@@ -242,18 +423,18 @@ int App::run(const AppOptions& opt) {
     desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
     desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
     desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
-    desc.name = "ReplayNES Virtual Pad";
+    desc.name = RN_PRODUCT_NAME " Virtual Pad";
     if (!SDL_AttachVirtualJoystick(&desc)) std::fprintf(stderr, "virtual pad: %s\n", SDL_GetError());
   }
   // Language: Japanese iff the first preferred language is Japanese (before any other thread
   // reads localized strings).
-  const char* langOverride = !opt.lang.empty() ? opt.lang.c_str() : std::getenv("REPLAYNES_LANG");
+  const char* langOverride = !opt.lang.empty() ? opt.lang.c_str() : std::getenv(productEnvName("LANG").c_str());
   if ((!langOverride || !*langOverride) && settings_.language != "auto") langOverride = settings_.language.c_str();
   std::string lang = chooseUILanguage(preferredLanguages(), langOverride);
   rnf_l10n_set_language(lang.c_str());
 
   bool fullscreen = opt.fullscreen == 1 || (opt.fullscreen == -1 && gamingMode());
-  window_ = SDL_CreateWindow("ReplayNES", 1280, 800, platform_.windowFlags | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+  window_ = SDL_CreateWindow(RN_PRODUCT_NAME, 1280, 800, platform_.windowFlags | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   if (!window_) { std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return 1; }
   if (fullscreen) applyFullscreen(true);
   std::string err;
@@ -261,7 +442,7 @@ int App::run(const AppOptions& opt) {
   if (!renderer_ || !renderer_->init(window_, &err)) {
     std::fprintf(stderr, "renderer: %s\n", err.c_str());
 #ifdef _WIN32  // a GUI program there: no console shows the message
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ReplayNES", ("The display could not be started:\n" + err).c_str(), window_);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, RN_PRODUCT_NAME, ("The display could not be started:\n" + err).c_str(), window_);
 #endif
     return 1;
   }
@@ -279,10 +460,14 @@ int App::run(const AppOptions& opt) {
   input_->load();
   emu_ = std::make_unique<EmulationController>(input_->input(), audioOK_ ? &audio_ : nullptr);
   thumbs_ = std::make_unique<ThumbnailManager>();
+  if (!perfMode) thumbs_->storeDir = paths_.sessionRoot + "/Filmstrips";  // the seek bar's pictures, kept
   if (!perfMode) libraryThumbs_ = std::make_unique<LibraryThumbs>(paths_.sessionRoot + "/LibraryThumbs");
   library_ = std::make_unique<LibraryModel>(paths_.libraryRoot);
   // Favourites / history / order: the settings folder (a scratch --session-root keeps its own).
   library_->setPrefsFile((opt.sessionRoot.empty() ? paths_.configDir : paths_.sessionRoot) + "/" + RNF_LIBRARY_PREFS_FILE);
+  library_->setFolders(settings_.romFolder, settings_.projectsFolder);
+  setImportFolder(library_->romDir());
+  setScreenOrientation(settings_.orientation);
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -295,6 +480,7 @@ int App::run(const AppOptions& opt) {
   UI::Deps deps{nullptr,          emu_.get(), library_.get(), input_.get(), thumbs_.get(), renderer_.get(), &settings_, window_,
                 updates_.get(), libraryThumbs_.get()};
   // The UI is the app model's dialog host and shows its state.
+  deps.touchControls = platform_.touchControls;
   ui_ = std::make_unique<UI>(deps);
   app_ = std::make_unique<AppModel>(paths_, emu_.get(), library_.get(), ui_.get());
   ui_->setApp(app_.get());
@@ -320,9 +506,34 @@ int App::run(const AppOptions& opt) {
     d.message = m;
     ui_->showDialog(std::move(d));
   };
+  emu_->onInputLayout = [this](const char* json) {
+    input_->setLayout(json);
+    if (opt_.injectInput && opt_.perfSeconds > 0 && std::strcmp(rnf_input_layout_name(), "nes") != 0 && rnf_input_button_count())
+      rn_input_bind(input_->input(), "inject:b", rnf_input_button_id(0));
+    ui_->inputLayoutChanged();
+  };
+  // At once on a change (a press later in the same frame), and every frame from the state itself
+  // (syncPausedStepMode): a session opened paused while the emulation already was paused (the library's
+  // Continue right after the start: paused_ starts true) never sent a change, the input stayed in play
+  // and the cancel button's "Continue" did nothing.
   emu_->onPausedChanged = [this](bool p) { input_->setPausedStepMode(p); };
   emu_->pressSequence = [this] { return input_->pressSequence(); };
+  emu_->beforeSample = [this] { input_->beginMouseFrame(); };
   input_->onMenuButton = [this] { ui_->toggleMenu(); };
+  if (platform_.touchControls) {  // docs/design/TOUCH_ANDROID.md
+    input_->setTouchEnabled(true);
+    TouchControls::Host th;
+    th.press = [this](const std::string& id, bool down) { input_->setTouch(id, down); };
+    th.toggleMenu = [this] { ui_->toggleMenu(); };
+    th.togglePause = [this] { emu_->togglePause(); };
+    th.toggleSlow = [this] { emu_->toggleSlow(); };
+    th.haptic = platform_.haptic;
+    th.setWays = [this](int ways) {
+      setTouchWaysFor(settings_, ways);
+      settings_.save(paths_.settingsFile());
+    };
+    touch_ = std::make_unique<TouchControls>(std::move(th));
+  }
   input_->onPausedStep = [this](int dir, bool down) { emu_->pausedStep(dir, down); };
   input_->onPausedResume = [this] { ui_->resumeFromSeekBar(); };
   input_->onPracticeStop = [this] { ui_->stopPracticeFromPad(); };
@@ -330,6 +541,7 @@ int App::run(const AppOptions& opt) {
   input_->onMarkerHold = [this](int dir, bool down) { ui_->markerHold(dir, down); };
   input_->onPausedShoulder = [this](int dir) { ui_->pausedShoulder(dir); };
   input_->onPauseGesture = [this](int dir, bool repeat) { ui_->pauseGesture(dir, repeat); };
+  input_->onPracticeToA = [this] { ui_->practiceToA(); };
   input_->onUiShoulder = [this](int dir) { ui_->shoulder(dir); };
   ui_->onLanguage = [this](const std::string& l) { pendingLanguage_ = l; };
   input_->onDisconnect = [this](const std::string& name) {
@@ -396,7 +608,13 @@ int App::run(const AppOptions& opt) {
       running_ = false;
     };
     script->windowId = [this] { return SDL_GetWindowID(window_); };
+    script->mouseCaptured = [this] { return input_->mouseCaptured(); };
     script->padId = [this]() -> SDL_JoystickID { return input_->pad(0).pad ? input_->pad(0).id : SDL_JoystickID(0x7fff0000); };
+    script->players = [this] {
+      std::string out;
+      for (int s = 0; s < InputRouter::kSlots; ++s) out += (s ? "|" : "") + (input_->pad(s).pad ? input_->pad(s).name : std::string("-"));
+      return out + (input_->standbyConnected() ? " (built-in waiting)" : "");
+    };
     script->onCrt = [this](bool on) {
       settings_.crt = on;
       opt_.crt = -1;  // the script's choice wins over --crt / --no-crt
@@ -438,7 +656,10 @@ int App::run(const AppOptions& opt) {
   std::deque<FrameRecord> inflight;  // presented, not yet confirmed on screen
   uint64_t seq = 0;
   double lastRate = 0;
+  uint64_t lastMediaGeneration = UINT64_MAX;
   double hostNext = 0;  // host-clock pacing: the next sample time
+  constexpr double kHousekeepingGap = 0.25;
+  double lastHousekeeping = 0;  // the slack's tasks below, at least this often
   recentLatency_.assign(60, 0.0);
 
   std::map<int, int> waitFailures;  // VkResult -> count (diagnostics)
@@ -470,6 +691,11 @@ int App::run(const AppOptions& opt) {
     }
     while (inflight.size() > 16) { settle(inflight.front(), nullptr); inflight.pop_front(); }
     // 2. Target vblank and input lead for the next frame.
+    if (lastMediaGeneration != emu_->mediaGeneration()) {
+      lastMediaGeneration = emu_->mediaGeneration();
+      lastRate = 0;
+    }
+    sched_.setFramePeriod(emu_->framePeriod());
     sched_.setRefreshHint(renderer_->refreshPeriod());
     double r = sched_.refresh();
     if (r > 0) {
@@ -477,8 +703,8 @@ int App::run(const AppOptions& opt) {
       // frames may overlap (lead > one refresh).
       double maxLead = std::min(0.030, 2.0 * r);
       rnf_input_deadline_set_limits(deadline_, 0, maxLead, std::max(0.003, maxLead - RNF_INPUT_DEADLINE_MIN_LEAD));
-      // Host-clock pacing (no present timing) emulates at the NES rate.
-      double rate = renderer_->presentTiming() ? sched_.cadence().emulationRate(r) : 1.0 / nesFramePeriod();
+      // Host-clock pacing (no present timing) emulates at the game rate.
+      double rate = renderer_->presentTiming() ? sched_.cadence().emulationRate(r) : 1.0 / emu_->framePeriod();
       if (std::fabs(rate - lastRate) > 0.01) { audio_.setEmulationRate(rate); lastRate = rate; }
       audio_.setFramesPerPush(sched_.cadence().kind == Cadence::Kind::slower ? RNF_MAX_FRAMES_PER_PRESENT : 1);
     }
@@ -489,10 +715,10 @@ int App::run(const AppOptions& opt) {
     lastTargetIssued = target;
     if (!renderer_->presentTiming()) {
       // No present timing (no present_wait / frame statistics, or --vrr on Windows): the host
-      // clock at the NES rate on a steady schedule - a late frame does not delay the later ones.
+      // clock at the game rate on a steady schedule - a late frame does not delay the later ones.
       // FIFO / vsync keeps the pictures on vblanks; a variable refresh display follows the presents.
-      hostNext = hostNext > 0 ? hostNext + nesFramePeriod() : nowSeconds();
-      if (hostNext < nowSeconds() - 2 * nesFramePeriod()) hostNext = nowSeconds();  // after a stall
+      hostNext = hostNext > 0 ? hostNext + emu_->framePeriod() : nowSeconds();
+      if (hostNext < nowSeconds() - 2 * emu_->framePeriod()) hostNext = nowSeconds();  // after a stall
       sampleAt = hostNext;
     } else {
       hostNext = 0;
@@ -504,19 +730,27 @@ int App::run(const AppOptions& opt) {
     // it): the no-signal snow animates and the power-on hiss plays (display / audio output only).
     emu_->setCrtDisplay(renderer_->postProcess().crt && renderer_->postProcessStatus().crtAvailable);
     for (int i = 1; i < frames; ++i) {
+      input_->syncPads();
       SDL_Event e;
       while (SDL_PollEvent(&e)) handleEvent(e, nowSeconds());
       input_->tick(nowSeconds());
       extraPicture = emu_->tick().newPicture || extraPicture;
     }
     // Housekeeping in the slack, then wait for the sample point.
+    // A frame loop that never has slack (every frame late: the Android emulator's software Vulkan ran at
+    // 22 fps with none in 2 s) still does it every kHousekeepingGap: otherwise a ROM added to the folder
+    // never showed (the scan's result waited for library_->poll), nor did the thumbnails or the resume
+    // record move on. Each task keeps its own limits (autosave needs 8 ms of slack unless paused).
     double slack = sampleAt - nowSeconds();
-    if (slack > 0.004) {
+    if (slack > 0.004 || nowSeconds() - lastHousekeeping >= kHousekeepingGap) {
       double now = nowSeconds();
+      lastHousekeeping = now;
       emu_->afterFrame(slack);
       app_->update(now);
       ui_->slack(now);
-      thumbs_->pump(emu_->session(), now);
+      emu_->setStepRepeatHeld(input_->stepRepeatHeld());
+      emu_->idleWork();
+      thumbs_->pump(emu_->session(), now, emu_->coreBusy());
       library_->poll();
     }
     sleepUntil(sampleAt);
@@ -530,9 +764,30 @@ int App::run(const AppOptions& opt) {
     rec.frames = frames;
     rec.refresh = sched_.refresh();
     rec.sample = nowSeconds();
+    // The controllers read once more here (the pad thread's last read is up to 1 ms old): what the
+    // kernel has at the sample point reaches this frame.
+    // <PREFIX>_DEBUG_EVENTS: which part of the event stage took long (over 3 ms), with its frame.
+    static const bool debugEvents = std::getenv(productEnvName("DEBUG_EVENTS").c_str()) != nullptr;
+    double mark = rec.sample;
+    auto lap = [&](const char* what) {
+      if (!debugEvents) return;
+      const double t = nowSeconds();
+      if (t - mark > 0.003) std::fprintf(stderr, "events: %s %.1f ms (seq %llu)\n", what, (t - mark) * 1e3, (unsigned long long)rec.seq);
+      mark = t;
+    };
+    SDL_UpdateJoysticks();
+    lap("SDL_UpdateJoysticks");
+    input_->syncPads();  // which controller is which player: what is connected now, every frame
+    lap("syncPads");
+    syncPausedStepMode();  // before this frame's presses (a tap needs it at its press and its release)
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, rec.sample);
+    lap("events");
     input_->tick(nowSeconds());  // L or R held alone past the chord window fires now
+    lap("input tick");
+    updateOverlay(script ? script->overlay : -1);
+    updateScreensaver(nowSeconds());
+    lap("overlay / screensaver");
     if (!running_) break;
     rec.polled = nowSeconds();
     double ev = input_->lastEventTime();
@@ -547,7 +802,7 @@ int App::run(const AppOptions& opt) {
     SDL_GetWindowSizeInPixels(window_, &w, &h);
     if (!pendingLanguage_.empty()) {
       // Settings -> System -> Language: the strings and the fonts (CJK first for Japanese) now.
-      std::string l = pendingLanguage_ == "auto" ? chooseUILanguage(preferredLanguages(), std::getenv("REPLAYNES_LANG")) : pendingLanguage_;
+      std::string l = pendingLanguage_ == "auto" ? chooseUILanguage(preferredLanguages(), std::getenv(productEnvName("LANG").c_str())) : pendingLanguage_;
       pendingLanguage_.clear();
       rnf_l10n_set_language(l.c_str());
       if (!ui_->loadFonts(l == "ja")) rnf_l10n_set_language("en");
@@ -567,15 +822,55 @@ int App::run(const AppOptions& opt) {
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;  // fed from the events (PadNavFeed)
     padNav_.setSuppressed(ui_->textEntryOwnsPad());
     if (padNav_.takeActivity()) ui_->padUsed();
+    if (touch_) {
+      TouchControls::Frame tf;
+      tf.widthPx = w;
+      tf.heightPx = h;
+      const float ds = SDL_GetWindowDisplayScale(window_);
+      tf.density = ds > 0 ? ds : 1;
+      int ww = 0, wh = 0;
+      SDL_GetWindowSize(window_, &ww, &wh);
+      tf.windowToPx = ww > 0 ? double(w) / ww : 1;
+      SDL_Rect safe{};
+      if (ww > 0 && wh > 0 && SDL_GetWindowSafeArea(window_, &safe) && safe.w > 0 && safe.h > 0) {
+        const double k = tf.windowToPx / tf.density;  // window coordinates -> points
+        tf.safe = touch::TouchInsets{safe.y * k, safe.x * k, (wh - safe.y - safe.h) * k, (ww - safe.x - safe.w) * k};
+      }
+      tf.show = emu_->session() && !ui_->playCovered() &&
+                !(settings_.touchHideWithPad && input_->connectedCount() > 0);
+      tf.fireButtons = input_->fireButtons();
+      const rn_media_info& m = emu_->media();
+      const rn_video_frame_info vf = emu_->videoFrame();
+      if (vf.width && vf.height) {
+        double par = gamePixelAspect(settings_) && m.pixel_aspect_num && m.pixel_aspect_den ? double(m.pixel_aspect_num) / m.pixel_aspect_den : 1.0;
+        double aspect = vf.width * par / vf.height;
+        tf.pictureAspect = (m.rotation & 1) ? 1 / aspect : aspect;
+      }
+      tf.fill = !settings_.integerScale;
+      tf.nowMs = nowSeconds() * 1000;
+      settings_.touchWaysRom = emu_->session() ? app_->currentRomSHA256() : std::string();
+      tf.ways = touchWaysFor(settings_);
+      tf.playing = emu_->session() && !emu_->paused();
+      tf.sessionKey = emu_->session() ? emu_->status().romPath + "|" + settings_.touchWaysRom : std::string();
+      touch_->update(tf, settings_);
+      ui_->setPictureArea(touch_->pictureArea());
+      ui_->setTouchControlsShown(touch_->visible());
+      const auto ov = touch_->overlayArea();
+      ui_->setOverlayArea(ov ? LRect{ov->x, ov->y, ov->z, ov->w} : LRect{0, 0, 0, 0});
+    }
     ImGui::NewFrame();
     ui_->build(rec.sample);
+    if (touch_) touch_->draw(ImGui::GetForegroundDrawList(), emu_->paused(), emu_->status().slow > 1);
     ImGui::Render();
     rec.ui = nowSeconds();
     GameRect rect = ui_->gameRect(w, h);
+    if (touch_) touch_->setPicture(rect.x, rect.y, rect.w, rect.h);
     bool newPicture = tick.newPicture || extraPicture;
     const EmulationController::Signal& es = emu_->signal();
     FrameSignal sig{es.codes, es.burstPhase, es.ordinal, es.flashAltered, es.receptionStep, es.receptionCounter, es.flashReduced};
-    uint64_t id = renderer_->drawAndPresent(newPicture ? emu_->picture() : nullptr, rect, ImGui::GetDrawData(), &sig);
+    renderer_->configureMedia(emu_->media(), emu_->crtAvailable());
+    rn_video_frame_info frame = emu_->videoFrame();
+    uint64_t id = renderer_->drawFrameAndPresent(newPicture ? &frame : nullptr, rect, ImGui::GetDrawData(), &sig);
     rec.submit = nowSeconds();
     rec.acquireWait = renderer_->lastAcquireWait();
     // CRT built with the present: its GPU time is part of the sample -> screen work.
@@ -609,7 +904,7 @@ int App::run(const AppOptions& opt) {
         if (fallback)
           std::snprintf(what, sizeof what, "FALLBACK: plain picture (CRT off) for %.0f s, CRT renderer and swap chain recreated",
                         watchdog.fallbackLeft(now));
-        std::fprintf(stderr, "ReplayNES: display watchdog: %s (a picture waited %.0f ms with emulation advancing; last present %s; %s)\n",
+        std::fprintf(stderr, "%s: display watchdog: %s (a picture waited %.0f ms with emulation advancing; last present %s; %s)\n", RN_PRODUCT_NAME,
                      fallback  ? what
                      : restart ? "RESTART: CRT renderer and swap chain recreated"
                                : "RECOVER: CRT output discarded, plain picture for a present",
@@ -625,7 +920,7 @@ int App::run(const AppOptions& opt) {
       if (crtFallbackUntil_ != 0 && now >= crtFallbackUntil_) {
         crtFallbackUntil_ = 0;
         applyPostProcess();
-        std::fprintf(stderr, "ReplayNES: display watchdog: CRT model tried again after the plain-picture fallback\n");
+        std::fprintf(stderr, "%s: display watchdog: CRT model tried again after the plain-picture fallback\n", RN_PRODUCT_NAME);
       }
     }
     if (id) {
@@ -633,7 +928,7 @@ int App::run(const AppOptions& opt) {
       if (renderer_->presentTiming()) inflight.push_back(rec);
       else if (perfMode) perf.add(rec);
     } else {
-      sleepUntil(nowSeconds() + nesFramePeriod());  // hidden / minimised: keep time on the host clock
+      sleepUntil(nowSeconds() + emu_->framePeriod());  // hidden / minimised: keep time on the host clock
     }
 
     // Perf window.
@@ -713,7 +1008,7 @@ int App::run(const AppOptions& opt) {
     // it so that Steam keeps the game running (and stops it with this one).
     int rc = updates_->restartLatestAndWait(restartArguments(opt.argv));
     if (rc >= 0) return rc;
-    std::fprintf(stderr, "could not start the updated ReplayNES: start it again\n");
+    std::fprintf(stderr, "could not start the updated %s: start it again\n", RN_PRODUCT_NAME);
   }
   return scriptExit_;
 }
@@ -726,12 +1021,12 @@ void printUsage(const PlatformHooks& platform) {
       "  --rom PATH            play PATH without a project (temporary session)\n"
       "  --no-resume           do not offer the last session (Continue)\n"
       "  --fullscreen | --windowed\n"
-      "  --lang ja|en          UI language (also REPLAYNES_LANG; default: the system's)\n"
+      "  --lang ja|en          UI language (also %sLANG; default: the system's)\n"
       "  --perf-seconds N      measure N seconds after --warmup S (default 8), then quit\n"
       "  --stats-log FILE      append the JSON summary to FILE\n"
       "  --frame-log FILE      per-frame CSV\n"
       "  --session-root DIR    session folder (perf runs use a scratch folder)\n"
-      "  --library-root DIR    library folder (default: Documents/ReplayNES)\n"
+      "  --library-root DIR    library folder (default: Documents/%s)\n"
       "  --inject-input        press B every ~0.25 s from another thread (event -> screen latency)\n"
       "  --label NAME          label of the summary\n"
       "  --flash 0-3           flash reduction level for this run (off / low / standard / high)\n"
@@ -748,11 +1043,15 @@ void printUsage(const PlatformHooks& platform) {
 #endif
       "  --version             print the version and exit\n"
 #ifndef _WIN32
-      "  --add-to-steam        add ReplayNES to the Steam library with its artwork, then exit (close Steam first);\n"
+      "  --add-to-steam        add %s to the Steam library with its artwork, then exit (close Steam first);\n"
       "                        add --dry-run to only show what would change (also --force, --steam-userdata DIR, --steam-artwork DIR)\n"
 #endif
-      "Environment: REPLAYNES_LANG=ja|en overrides the system language.\n",
-      platform.executable);
+      "Environment: %sLANG=ja|en overrides the system language.\n",
+      platform.executable, RN_PRODUCT_ENV_PREFIX, RN_PRODUCT_DATA_DIR,
+#ifndef _WIN32
+      RN_PRODUCT_NAME,
+#endif
+      RN_PRODUCT_ENV_PREFIX);
 }
 
 bool parseAppArgs(int argc, char** argv, const PlatformHooks& platform, AppOptions* o) {

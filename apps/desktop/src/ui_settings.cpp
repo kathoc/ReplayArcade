@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <future>
 #include <map>
 #include <string>
@@ -26,6 +28,7 @@
 #include "update_service.h"
 
 namespace rnl {
+namespace fs = std::filesystem;
 
 using namespace theme;
 
@@ -37,8 +40,23 @@ std::string str(char* p) {
 }
 const char* txt(const char* key) { return !key || !*key ? "" : key[0] == '=' ? key + 1 : TR(key); }
 
+bool buttonTurboRow(const std::string& id, std::string& action, std::string& field) {
+  const std::string prefix = "controls.button_turbo.";
+  if (id.compare(0, prefix.size(), prefix) != 0) return false;
+  const size_t dot = id.find('.', prefix.size());
+  if (dot == std::string::npos) return false;
+  char* end = nullptr;
+  const std::string index = id.substr(prefix.size(), dot - prefix.size());
+  const unsigned long n = std::strtoul(index.c_str(), &end, 10);
+  if (index.empty() || *end || n >= rnf_input_button_count()) return false;
+  action = rnf_input_button_id(n);
+  field = id.substr(dot + 1);
+  return true;
+}
+
 const int kCrtLines[] = {110, 120, 140, 160, 180, 200, 220, 240};
 const double kAutosave[] = {2, 3, 5, 10, 30};
+const int kScreensaverMinutes[] = {0, 1, 3, 5, 10, 30};  // Settings::screensaverMinutes
 
 // The menu model item of an id (any page): page / index / info.
 bool findItem(const rnf_menu* m, const std::string& id, size_t* page, size_t* index, rnf_menu_item_info* info) {
@@ -60,15 +78,28 @@ namespace {
 int choiceIndex(const Settings& s, const InputRouter& in, const std::string& id) {
   if (id == "display.size") return s.integerScale ? 0 : 1;
   if (id == "display.flash") return std::clamp(s.flash, 0, 3);
+  if (id == "display.backdrop") return std::clamp(s.backdrop, 0, 4);
   if (id == "controls.osk") return s.onScreenKeyboard == "builtin" ? 1 : s.onScreenKeyboard == "steam" ? 2 : 0;
   if (id == "controls.socd") return in.socd() == "last_wins" ? 1 : in.socd() == "allow" ? 2 : 0;
   if (id == "controls.confirm") return s.southConfirm ? 1 : 0;
-  if (id == "system.core") return s.core == "replaynescore" ? 1 : 0;
+  if (id == "touch.ways") return touchWaysFor(s) == 4 ? 1 : 0;
+  if (id == "system.core") {
+    for (size_t i = 0; i < rnf_product_core_count(); ++i)
+      if (s.core == rnf_product_core_id(i)) return int(i);
+    return 0;
+  }
   if (id == "system.language") return s.language == "ja" ? 1 : s.language == "en" ? 2 : 0;
+  if (id == "system.orientation") return s.orientation == "landscape" ? 1 : s.orientation == "portrait" ? 2 : 0;
+  if (id == "system.resume_countdown") return s.countdownSeconds >= 3 ? 0 : s.countdownSeconds >= 1 ? 1 : 2;  // 3 / 1 / none
   if (id == "system.autosave") {
     for (int i = 0; i < 5; ++i)
       if (s.autosaveInterval <= kAutosave[i] + 0.01) return i;
     return 4;
+  }
+  if (id == "system.screensaver") {
+    for (int i = 0; i < 6; ++i)
+      if (s.screensaverMinutes <= kScreensaverMinutes[i]) return i;
+    return 5;
   }
   return 0;
 }
@@ -77,10 +108,23 @@ int choiceIndex(const Settings& s, const InputRouter& in, const std::string& id)
 std::string UI::itemValue(const std::string& id) const {
   const Settings& s = *d_.settings;
   const InputRouter& in = *d_.input;
-  if (id == "system.core" && s.core != "nestopia" && s.core != "replaynescore") return s.core;
+  std::string action, field;
+  if (buttonTurboRow(id, action, field)) {
+    int period, duty;
+    const bool custom = in.buttonTurbo(action, period, duty);
+    if (field == "mode") return custom ? TR("Custom") : TR("Global");
+    if (field == "duty") return TRF("%lld frames", {duty});
+    return TRF("%.1f/s", {1.0 / d_.emu->framePeriod() / std::max(1, period)});
+  }
+  if (id == "system.core") {
+    bool available = false;
+    for (size_t i = 0; i < rnf_product_core_count(); ++i)
+      if (s.core == rnf_product_core_id(i)) available = true;
+    if (!available) return s.core;
+  }
   if (id == "system.core_status") {
-    if (s.core != "nestopia" && s.core != "replaynescore") return TR("Unknown core; select a supported core");
-    rn_core_kind core = s.core == "replaynescore" ? RN_CORE_REPLAYNESCORE : RN_CORE_NESTOPIA;
+    if (s.core != "nestopia" && s.core != "replaynescore" && s.core != "external") return TR("Unknown core; select a supported core");
+    rn_core_kind core = s.core == "external" ? RN_CORE_EXTERNAL : s.core == "replaynescore" ? RN_CORE_REPLAYNESCORE : RN_CORE_NESTOPIA;
     if (!rn_core_available(core)) return TR("Not included in this build");
     return core == RN_CORE_REPLAYNESCORE ? TR("Development: no recording or saves") : TR("Available");
   }
@@ -97,10 +141,18 @@ std::string UI::itemValue(const std::string& id) const {
     return b;
   }
   if (id == "controls.turbo") {
-    std::snprintf(b, sizeof b, "%.1f/s", 60.0988 / std::max(1, in.turboPeriod()));
+    if (std::strcmp(rnf_input_layout_name(), "nes") != 0)
+      return TRF("%.1f/s", {1.0 / d_.emu->framePeriod() / std::max(1, in.turboPeriod())});
+    std::snprintf(b, sizeof b, "%.1f/s", 1.0 / d_.emu->framePeriod() / std::max(1, in.turboPeriod()));
     return b;
   }
   if (id == "controls.turbo_duty") return TRF("%lld frames", {in.turboDuty()});
+  if (id == "touch.opacity") return std::to_string(s.touchOpacity) + "%";
+  if (id == "touch.dpad_size") return std::to_string(s.touchDpadSize) + " pt";
+  if (id == "touch.follow_y" || id == "touch.follow_x") {
+    std::snprintf(b, sizeof b, "%.2fx", id == "touch.follow_y" ? s.touchFollowY : s.touchFollowX);
+    return b;
+  }
   if (id == "controls.stick") {
     std::snprintf(b, sizeof b, "%.2f", in.analogThreshold());
     return b;
@@ -129,18 +181,22 @@ std::string UI::itemValue(const std::string& id) const {
 
 bool UI::itemOn(const std::string& id) const {
   const Settings& s = *d_.settings;
-  if (id == "display.crt") return s.crt && d_.renderer->postProcessStatus().crtAvailable;
+  if (id == "display.crt") return s.crt && d_.renderer->postProcessStatus().crtAvailable && (!hasSession() || d_.emu->crtAvailable());
   if (id == "display.par87") return s.par87;
-  if (id == "display.overscan") return s.hideOverscan;
+  if (id == "display.overscan") return RN_PRODUCT_OVERSCAN_CROP && s.hideOverscan;
   if (id == "display.vtr") return s.vtrEffect;
   if (id == "crt.beam") return s.crtBeamGrowth;
   if (id == "crt.persistence") return s.crtPersistence;
   if (id == "crt.supply") return s.crtSupply;
   if (id == "controls.dpad_paused") return s.dpadStepWhenPaused;
+  if (id == "touch.turbo") return s.touchTurbo;
+  if (id == "touch.vibration") return s.touchVibration;
+  if (id == "touch.hide_with_pad") return s.touchHideWithPad;
+  if (id == "controls.mouse") return s.mouseControls;
   if (id == "controls.rewind_pause") return s.pauseAfterRewind;
   if (id == "system.fullscreen") return isFullscreen && isFullscreen();
   if (id == "system.flash_badge") return s.showFlashIndicator;
-  if (id == "system.resume_countdown") return s.resumeCountdown;
+  if (id == "system.background") return s.playInBackground;
   if (id == "system.stats") return s.showStats;
   if (id == "updates.auto") return d_.updates && d_.updates->ownsDialogs() ? d_.updates->autoCheckEnabled() : s.checkForUpdates;
   if (id == "retry.playback") return hasSession() && !d_.emu->status().recording && !d_.emu->status().practicing;
@@ -150,9 +206,20 @@ bool UI::itemOn(const std::string& id) const {
 float UI::itemFraction(const std::string& id) const {
   const Settings& s = *d_.settings;
   const InputRouter& in = *d_.input;
+  std::string action, field;
+  if (buttonTurboRow(id, action, field)) {
+    int period, duty;
+    in.buttonTurbo(action, period, duty);
+    if (field == "period") return float(30 - std::clamp(period, 2, 30)) / 28.0f;
+    if (field == "duty") return period > 2 ? float(duty - 1) / float(period - 2) : 0.0f;
+  }
   if (id == "crt.lines") return float(std::clamp(s.crtLines, 110, 240) - 110) / 130.0f;
   if (id == "crt.antenna") return float((s.crtAntenna - 20) / 70);
   if (id == "controls.turbo") return float(30 - std::clamp(in.turboPeriod(), 2, 30)) / 28.0f;
+  if (id == "touch.opacity") return float(std::clamp(s.touchOpacity, 15, 100) - 15) / 85.0f;
+  if (id == "touch.dpad_size") return float(std::clamp(s.touchDpadSize, 130, 210) - 130) / 80.0f;
+  if (id == "touch.follow_y") return float(std::clamp(s.touchFollowY, 0.0, 2.0) / 2);
+  if (id == "touch.follow_x") return float(std::clamp(s.touchFollowX, 0.0, 2.0) / 2);
   if (id == "controls.turbo_duty") return in.turboPeriod() > 2 ? float(in.turboDuty() - 1) / float(in.turboPeriod() - 2) : 0.0f;
   if (id == "controls.stick") return float((in.analogThreshold() - 0.2) / 0.7);
   if (id == "sound.volume") return s.volume;
@@ -164,7 +231,7 @@ bool UI::itemEnabled(const std::string& id) const {
   const EmuStatus& st = d_.emu->status();
   if (st.live && (id.rfind("retry.", 0) == 0 || id == "retry" || id == "practice" ||
                   id == "share.export" || id == "game.save" || id == "game.save_as" || id == "game.reset")) return false;
-  bool crt = d_.renderer->postProcessStatus().crtAvailable;
+  bool crt = d_.renderer->postProcessStatus().crtAvailable && (!hasSession() || d_.emu->crtAvailable());
   if (id == "retry.playback") return !st.practicing && st.takeLength > 0;
   if (id == "retry.rerecord" || id == "retry.bookmarks" || id == "retry.restart") return hasSession();
   if (id == "share.export") return RNL_HAVE_MP4_EXPORT && st.takeLength > 0;
@@ -186,6 +253,20 @@ void UI::adjustItem(const std::string& id, int dir) {
   if (!itemEnabled(id)) return;
   Settings& s = *d_.settings;
   InputRouter& in = *d_.input;
+  std::string action, field;
+  if (buttonTurboRow(id, action, field)) {
+    int period, duty;
+    const bool custom = in.buttonTurbo(action, period, duty);
+    if (field == "mode") in.setButtonTurbo(action, custom ? 0 : period, custom ? 0 : duty);
+    else if (dir != 0) {
+      if (field == "period") {
+        period = std::clamp(period - dir, 2, 30);
+        duty = std::min(duty, period - 1);
+      } else if (field == "duty") duty = std::clamp(duty + dir, 1, std::max(1, period - 1));
+      in.setButtonTurbo(action, period, duty);
+    }
+    return;
+  }
   rnf_menu_item_info info{};
   size_t page = 0, index = 0;
   if (!findItem(menu_, id, &page, &index, &info)) return;
@@ -193,18 +274,22 @@ void UI::adjustItem(const std::string& id, int dir) {
   if (info.kind == RNF_MENU_ITEM_TOGGLE) {
     if (id == "display.crt") s.crt = !s.crt;
     else if (id == "display.par87") s.par87 = !s.par87;
-    else if (id == "display.overscan") s.hideOverscan = !s.hideOverscan;
+    else if (id == "display.overscan") s.hideOverscan = RN_PRODUCT_OVERSCAN_CROP && !s.hideOverscan;
     else if (id == "display.vtr") s.vtrEffect = !s.vtrEffect;
     else if (id == "crt.beam") s.crtBeamGrowth = !s.crtBeamGrowth;
     else if (id == "crt.persistence") s.crtPersistence = !s.crtPersistence;
     else if (id == "crt.supply") s.crtSupply = !s.crtSupply;
     else if (id == "controls.dpad_paused") s.dpadStepWhenPaused = !s.dpadStepWhenPaused;
+    else if (id == "touch.turbo") s.touchTurbo = !s.touchTurbo;
+    else if (id == "touch.vibration") s.touchVibration = !s.touchVibration;
+    else if (id == "touch.hide_with_pad") s.touchHideWithPad = !s.touchHideWithPad;
+    else if (id == "controls.mouse") s.mouseControls = !s.mouseControls;
     else if (id == "controls.rewind_pause") s.pauseAfterRewind = !s.pauseAfterRewind;
     else if (id == "system.fullscreen") {
       if (onFullscreen) onFullscreen(!(isFullscreen && isFullscreen()));
       return;
     } else if (id == "system.flash_badge") s.showFlashIndicator = !s.showFlashIndicator;
-    else if (id == "system.resume_countdown") s.resumeCountdown = !s.resumeCountdown;
+    else if (id == "system.background") s.playInBackground = !s.playInBackground;
     else if (id == "system.stats") s.showStats = !s.showStats;
     else if (id == "updates.auto") {
       if (d_.updates && d_.updates->ownsDialogs()) {
@@ -224,19 +309,25 @@ void UI::adjustItem(const std::string& id, int dir) {
     int next = ((i + step) % n + n) % n;
     if (id == "display.size") s.integerScale = next == 0;
     else if (id == "display.flash") s.flash = next;
+    else if (id == "display.backdrop") s.backdrop = next;
     else if (id == "controls.osk") s.onScreenKeyboard = next == 1 ? "builtin" : next == 2 ? "steam" : "auto";
     else if (id == "controls.confirm") s.southConfirm = next == 1;
+    else if (id == "touch.ways") setTouchWaysFor(s, next == 1 ? 4 : 8);
     else if (id == "controls.socd") {
       in.setSOCD(next == 1 ? "last_wins" : next == 2 ? "allow" : "neutral");
       return;
     } else if (id == "system.core") {
-      s.core = next == 1 ? "replaynescore" : "nestopia";
+      if (const char* core = rnf_product_core_id(size_t(next))) s.core = core;
     } else if (id == "system.language") {
       s.language = next == 1 ? "ja" : next == 2 ? "en" : "auto";
       changed();
       if (onLanguage) onLanguage(s.language);
       return;
+    } else if (id == "system.orientation") {
+      s.orientation = next == 1 ? "landscape" : next == 2 ? "portrait" : "auto";  // App::applySettings turns it
     } else if (id == "system.autosave") s.autosaveInterval = kAutosave[next];
+    else if (id == "system.screensaver") s.screensaverMinutes = kScreensaverMinutes[next];
+    else if (id == "system.resume_countdown") s.countdownSeconds = next == 0 ? 3 : next == 1 ? 1 : 0;
     changed();
     return;
   }
@@ -249,6 +340,14 @@ void UI::adjustItem(const std::string& id, int dir) {
       s.crtLines = kCrtLines[std::clamp(at + dir, 0, 7)];
     } else if (id == "crt.antenna") {
       s.crtAntenna = std::clamp(s.crtAntenna + 5.0 * dir, 20.0, 90.0);
+    } else if (id == "touch.opacity") {
+      s.touchOpacity = std::clamp(s.touchOpacity + 5 * dir, 15, 100);
+    } else if (id == "touch.dpad_size") {
+      s.touchDpadSize = std::clamp(s.touchDpadSize + 2 * dir, 130, 210);
+    } else if (id == "touch.follow_y") {
+      s.touchFollowY = std::clamp(std::round((s.touchFollowY + 0.05 * dir) * 20) / 20, 0.0, 2.0);
+    } else if (id == "touch.follow_x") {
+      s.touchFollowX = std::clamp(std::round((s.touchFollowX + 0.05 * dir) * 20) / 20, 0.0, 2.0);
     } else if (id == "controls.turbo") {
       int p = std::clamp(in.turboPeriod() - dir, 2, 30);
       in.setTurbo(p, std::min(in.turboDuty(), p - 1));
@@ -286,10 +385,14 @@ void UI::activateItem(const std::string& id) {
     s.crtBeamGrowth = s.crtPersistence = s.crtSupply = true;
     s.crtAntenna = 65;
     changed();
+  } else if (id == "controls.faces") {
+    // The connected controllers' face buttons checked again (docs/design/FACE_CHECK.md); not a reset.
+    if (!d_.input->recheckFaceLayouts()) notice(TR("No controller is connected"));
   } else if (id == "controls.reset") {
     Dialog d;
     d.title = TR("Reset Controls");
-    d.message = TR("Every key and button back to the defaults");
+    d.message = d_.input->usesDeviceKinds() ? TR("Reset only this title and controller kind to defaults")
+                                          : TR("Every key and button back to the defaults");
     d.buttons = {TR("Reset"), TR("Cancel")};
     d.destructiveIndex = 0;
     d.cancelIndex = 1;
@@ -309,12 +412,14 @@ void UI::activateItem(const std::string& id) {
     } else if (d_.updates) {
       d_.updates->update();
     }
+  } else if (id == "about.add_roms") {
+    addRoms();
+  } else if (id == "about.share_log") {
+    shareLog();
   } else if (id == "about.roms") {
-    d_.library->ensureFolders();
-    openFolder(d_.library->romDir());
+    folderChoices(true);
   } else if (id == "about.projects") {
-    d_.library->ensureFolders();
-    openFolder(d_.library->projectsDir());
+    folderChoices(false);
   } else if (id == "game.library") {
     setMenu(false);
     d_.app->closeProject();  // asks to save first when needed; then the library
@@ -404,12 +509,14 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
   ImVec2 o(area.x + (area.w - cw) / 2, area.y + (area.h - legendH - ch) / 2);
   auto P = [&](double x, double y) { return ImVec2(o.x + float(x) * k, o.y + float(y) * k); };
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  const auto geometry = rnf_diagram_family_for_layout(family, in.usesDeviceKinds(), in.deviceKind(slot) == DeviceKind::stick);
+  const bool arcadeStick = geometry == RNF_FAMILY_ARCADE_STICK;
   rnf_diagram_info info{};
-  rnf_diagram_info_get(family, &info);
+  rnf_diagram_info_get(geometry, &info);
   // The outline (rnf_diagram_decor): a rounded body without grips, the Steam Deck's screen, pads.
-  for (size_t i = 0, nd = rnf_diagram_decor_count(family); i < nd; ++i) {
+  for (size_t i = 0, nd = rnf_diagram_decor_count(geometry); i < nd; ++i) {
     rnf_diagram_decor d{};
-    if (!rnf_diagram_decor_get(family, i, &d)) continue;
+    if (!rnf_diagram_decor_get(geometry, i, &d)) continue;
     ImVec2 a = P(d.x, d.y), z = P(d.x + d.width, d.y + d.height);
     float r = float(d.radius) * k;
     switch (d.kind) {
@@ -427,43 +534,72 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
         break;
     }
   }
-  for (auto [x, y] : {std::pair<double, double>{info.left_stick_x, info.left_stick_y}, {info.right_stick_x, info.right_stick_y}}) {
-    dl->AddCircleFilled(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 36));
-    dl->AddCircle(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 110));
+  if (arcadeStick) {
+    dl->AddCircleFilled(P(info.dpad_x, info.dpad_y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 36));
+    dl->AddCircle(P(info.dpad_x, info.dpad_y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 110));
+  } else {
+    for (auto [x, y] : {std::pair<double, double>{info.left_stick_x, info.left_stick_y}, {info.right_stick_x, info.right_stick_y}}) {
+      dl->AddCircleFilled(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 36));
+      dl->AddCircle(P(x, y), float(info.stick_radius) * k, IM_COL32(255, 255, 255, 110));
+    }
+    dl->AddRectFilled(P(info.dpad_x - RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y - RNF_DIAGRAM_DPAD_ARM / 2),
+                      P(info.dpad_x + RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y + RNF_DIAGRAM_DPAD_ARM / 2), IM_COL32(255, 255, 255, 80));
   }
-  dl->AddRectFilled(P(info.dpad_x - RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y - RNF_DIAGRAM_DPAD_ARM / 2),
-                    P(info.dpad_x + RNF_DIAGRAM_DPAD_ARM / 2, info.dpad_y + RNF_DIAGRAM_DPAD_ARM / 2), IM_COL32(255, 255, 255, 80));
   std::map<std::string, std::pair<rnf_group_summary, std::string>> groups;
   for (const char* g : {"dpad", "lstick", "rstick"}) {
+    if (arcadeStick && std::strcmp(g, "dpad") != 0) continue;
     char* text = nullptr;
     rnf_group_summary gs = rnf_input_group_summary(b.data(), b.size(), g, slot, &text);
     groups[g] = {gs, str(text)};
   }
   std::string prefix = "gc" + std::to_string(slot) + ":";
-  size_t n = rnf_diagram_element_count(family);
+  size_t n = rnf_diagram_element_count(geometry);
   float fs = std::max(m.hint() * 0.85f, 12 * k);
+  const bool kindFocused = in.usesDeviceKinds() && diagramFocus_ >= 0 &&
+      size_t(diagramFocus_) < diagramIds_.size() && diagramIds_[size_t(diagramFocus_)] == "__kind__";
+  const bool orderFocused = playerOrderOffered_ && diagramFocus_ >= 0 &&
+      size_t(diagramFocus_) < diagramIds_.size() && diagramIds_[size_t(diagramFocus_)] == "__order__";
   diagramIds_.clear();
   diagramCenters_.clear();
-  if (diagramFocus_ >= int(n)) diagramFocus_ = 0;
+  diagramHubs_.clear();
+  std::vector<std::string> diagramGroups;  // each focusable element's group ("lstick" ...), for the hubs
+  size_t focusable = n;
+  for (size_t i = 0; i < n; ++i) {
+    rnf_diagram_element e{};
+    if (rnf_diagram_element_get(geometry, i, &e) && rnf_input_element_ignored(e.element)) --focusable;
+  }
+  // The rows after the diagram's elements (buildControllerPage): the kind, then Player Order.
+  const int rows = (in.usesDeviceKinds() ? 1 : 0) + (playerOrderOffered_ ? 1 : 0);
+  if (kindFocused) diagramFocus_ = int(focusable);
+  if (orderFocused) diagramFocus_ = int(focusable) + (in.usesDeviceKinds() ? 1 : 0);
+  if (diagramFocus_ >= int(focusable) + rows) diagramFocus_ = 0;
   LRect focusRect;
   for (size_t i = 0; i < n; ++i) {
     rnf_diagram_element e{};
-    if (!rnf_diagram_element_get(family, i, &e)) continue;
+    if (!rnf_diagram_element_get(geometry, i, &e)) continue;
     std::string el = e.element, id = prefix + el;
     ImVec2 c = P(e.cx, e.cy);
     float w = float(e.width) * k, h = float(e.height) * k;
     ImVec2 a(c.x - w / 2, c.y - h / 2), z(c.x + w / 2, c.y + h / 2);
     float hw = std::max(w, S(30)), hh = std::max(h, S(30));
-    ImGui::SetCursorScreenPos(ImVec2(c.x - hw / 2, c.y - hh / 2));
-    ImGui::PushID(el.c_str());
-    bool clicked = ImGui::InvisibleButton("##el", ImVec2(hw, hh));
-    bool hovered = ImGui::IsItemHovered();
-    ImGui::PopID();
+    const bool bindable = !rnf_input_element_ignored(el.c_str());
+    bool clicked = false, hovered = false;
+    if (bindable) {
+      ImGui::SetCursorScreenPos(ImVec2(c.x - hw / 2, c.y - hh / 2));
+      ImGui::PushID(el.c_str());
+      clicked = ImGui::InvisibleButton("##el", ImVec2(hw, hh));
+      hovered = ImGui::IsItemHovered();
+      ImGui::PopID();
+    }
     int index = int(diagramIds_.size());
-    diagramIds_.push_back(id);
-    diagramCenters_.push_back(c);
+    if (bindable) {
+      diagramIds_.push_back(id);
+      diagramCenters_.push_back(c);
+      diagramGroups.push_back(e.kind == RNF_DIAGRAM_STICK_CLICK ? (el == "leftThumb" ? "lstick" : "rstick")
+                              : e.kind == RNF_DIAGRAM_STICK_DIRECTION && e.group ? e.group : "");
+    }
     if (hovered && (ImGui::GetIO().MouseDelta.x != 0 || ImGui::GetIO().MouseDelta.y != 0)) diagramFocus_ = index;
-    bool focused = index == diagramFocus_;
+    bool focused = bindable && index == diagramFocus_;
     bool reserved = InputRouter::isReserved(el);
     if (clicked) {
       diagramFocus_ = index;
@@ -546,6 +682,14 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
     dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + S(10), bp.y + ts.y + S(3)), IM_COL32(40, 110, 230, 230), (ts.y + S(3)) / 2);
     dl->AddText(ImGui::GetFont(), fs, ImVec2(bp.x + S(5), bp.y + S(1.5f)), IM_COL32(255, 255, 255, 255), v.second.c_str());
   }
+  // A stick's arrows and its click: the click is their hub (diagramFocusNext).
+  diagramHubs_.assign(diagramIds_.size(), -1);
+  for (size_t i = 0; i < diagramIds_.size(); ++i) {
+    const std::string click = diagramGroups[i] == "lstick" ? "leftThumb" : diagramGroups[i] == "rstick" ? "rightThumb" : "";
+    if (click.empty()) continue;
+    for (size_t j = 0; j < diagramIds_.size(); ++j)
+      if (diagramIds_[j] == prefix + click) diagramHubs_[i] = int(j);
+  }
   if (focusRect.w > 0) drawFocus(focusRect, focusRect.h / 2, now);
   // Legend: game / hotkeys, and the Quick Menu chord (not a single button on the picture).
   float y = area.bottom() - legendH + m.hint() * 0.6f, x = area.x + S(6);
@@ -557,7 +701,21 @@ void UI::buildDiagram(rnf_controller_family family, int slot, const LRect& area,
   };
   chip(IM_COL32(40, 110, 230, 230), TR("Game input (recorded)"));
   chip(IM_COL32(255, 149, 0, 235), TR("Hotkeys (not recorded)"));
-  std::string menuHint = menuChordGlyph(family, true) + ": " + TR("Quick Menu");
+  const std::string chord = in.usesDeviceKinds() && in.deviceKind(slot) == DeviceKind::stick
+      ? padGlyph(family, "leftShoulder") + "+" + padGlyph(family, "leftTrigger") : menuChordGlyph(family, true);
+  std::string menuHint = chord + ": " + TR("Quick Menu");
+  // The Undo of a retry's chord (L3+R3 by default): not on the picture either.
+  for (const rnf_binding& bd : b) {
+    char *ca = nullptr, *cb = nullptr;
+    if (std::strcmp(bd.action, "hk.undo_take") != 0 || !rnf_input_combo_split(bd.input, &ca, &cb)) continue;
+    const std::string sa = ca, sb = cb;
+    rnf_string_free(ca);
+    rnf_string_free(cb);
+    if (sa.rfind(prefix, 0) != 0 || sb.rfind(prefix, 0) != 0) continue;
+    menuHint += "    " + padGlyph(family, sa.substr(prefix.size()).c_str()) + "+" + padGlyph(family, sb.substr(prefix.size()).c_str()) +
+                ": " + TR("Undo");
+    break;
+  }
   dl->AddText(ImGui::GetFont(), m.hint(), ImVec2(x, y), kTextDim, menuHint.c_str());
   description_ = diagramFocus_ < int(diagramIds_.size())
                      ? str(rnf_input_element_title(diagramIds_[size_t(diagramFocus_)].substr(prefix.size()).c_str(), family, nullptr))
@@ -586,6 +744,258 @@ void UI::openAssign(const std::string& physicalId) {
   for (size_t i = 0; i < choices.size(); ++i)
     if (current == choices[i]) rnf_menu_set_focus(menu_, i);
   pageChangedAt_ = -1;
+}
+
+// ---- Settings > App > Folders & License: the ROM and Projects folders (docs/design/ANDROID.md, "Choosing
+// the folders"): open, change (the system's picker or the app's own), back to the library's own.
+
+void UI::folderChoices(bool roms) {
+  LibraryModel& lib = *d_.library;
+  const std::string dir = roms ? lib.romDir() : lib.projectsDir();
+  const bool chosen = roms ? lib.romFolderChosen() : lib.projectsFolderChosen();
+  Dialog d;
+  d.title = roms ? TR("ROM Folder") : TR("Projects Folder");
+  d.message = Paths::display(dir) + (chosen ? std::string() : "\n" + std::string(TR("(the default)")));
+  d.buttons = {TR("Open Folder"), TR("Change…")};
+  if (chosen) d.buttons.push_back(TR("Back to the Default"));
+  d.buttons.push_back(TR("Cancel"));
+  d.cancelIndex = int(d.buttons.size()) - 1;
+  d.onResult = [this, roms, chosen, dir](int b, bool) {
+    if (b == 0) {
+      d_.library->ensureFolders();
+      if (!(roms ? openRomFolder() : openFolder(dir))) notice(TRF("Can’t open the folder: %@", {Paths::display(dir)}), 4);
+    } else if (b == 1) {
+      changeFolder(roms);
+    } else if (b == 2 && chosen) {
+      setFolder(roms, "");
+    }
+  };
+  showDialog(std::move(d));
+}
+
+void UI::changeFolder(bool roms) {
+  const std::string start = roms ? d_.library->romDir() : d_.library->projectsDir();
+  if (chooseFolder(start)) {  // the system's picker answers later: pollChosenFolder
+    pendingFolder_ = roms ? 1 : 2;
+    return;
+  }
+  ChooserRequest r;
+  r.mode = ChooserRequest::Mode::chooseFolder;
+  r.title = roms ? TR("Choose the ROM Folder") : TR("Choose the Projects Folder");
+  r.root = "/";  // any disk: a card, a USB drive (/run/media ...)
+  r.startDir = start;
+  r.onChosen = [this, roms](const std::string& path) { setFolder(roms, path); };
+  showChooser(std::move(r));
+}
+
+void UI::pollChosenFolder() {
+  if (!pendingFolder_) return;
+  std::string path, error;
+  if (!takeChosenFolder(&path, &error)) return;
+  const bool roms = pendingFolder_ == 1;
+  pendingFolder_ = 0;
+  if (!path.empty()) {
+    setFolder(roms, path);
+  } else if (error == "no-access") {
+    notice(TR("Allow access to all files to use a folder outside the app"), 5);
+  } else if (error == "not-local") {
+    notice(TR("Choose a folder on the device or its memory card"), 5);
+  } else if (!error.empty()) {
+    notice(TRF("Can’t choose a folder: %@", {error}), 5);
+  }
+}
+
+// path "": the library's own folder again. A chosen folder is made if missing and must take a file; the
+// files in the folder used before stay where they are (nothing is moved).
+void UI::setFolder(bool roms, const std::string& path) {
+  LibraryModel& lib = *d_.library;
+  std::string value = path;
+  const std::string own = lib.root() + "/" + (roms ? RNF_LIBRARY_ROM_DIR : RNF_LIBRARY_PROJECTS_DIR);
+  if (!value.empty() && LibraryModel::samePath(value, own)) value.clear();
+  if (!value.empty()) {
+    std::error_code ec;
+    fs::create_directories(fs::u8path(value), ec);
+    const fs::path probe = fs::u8path(value) / ".replay-write-test";
+    std::FILE* f = std::fopen(probe.string().c_str(), "wb");
+    if (!f) {
+      notice(TRF("Can’t write to the folder: %@", {Paths::display(value)}), 5);
+      return;
+    }
+    std::fclose(f);
+    fs::remove(probe, ec);
+  }
+  (roms ? d_.settings->romFolder : d_.settings->projectsFolder) = value;
+  changed();  // saved; the library rescans
+  const std::string now = roms ? lib.romDir() : lib.projectsDir();
+  notice(value.empty() ? TRF("Back to the default folder: %@", {Paths::display(now)})
+                       : TRF("Now using %@ (the files in the previous folder stay there)", {Paths::display(now)}),
+         5);
+}
+
+// ---- Add ROMs: Search the Device or Choose Files (docs/design/ANDROID.md, "Finding ROMs anywhere"). Searching
+// needs nothing of the system's picker (which may hide zips: its "Documents" view; whatever a maker's picker
+// does): the app walks the storage itself and offers the ROMs the game database knows.
+
+void UI::addRoms() {
+  d_.library->ensureFolders();
+  if (deviceStorageRoots(nullptr).empty()) {  // no search here: the picker
+    importFiles(d_.library->romDir());
+    return;
+  }
+  Dialog d;
+  d.title = TR("Add ROMs");
+  d.message = TR("Search the whole device for ROMs (every folder, the memory card too), or choose the files yourself.");
+  d.buttons = {TR("Search the Device"), TR("Choose Files"), TR("Cancel")};
+  d.cancelIndex = 2;
+  d.onResult = [this](int b, bool) {
+    if (b == 0) searchDevice();
+    else if (b == 1) importFiles(d_.library->romDir());
+  };
+  showDialog(std::move(d));
+}
+
+void UI::searchDevice() {
+  if (searching_ || copying_ || awaitingAccess_) return;
+  if (!storageAccessGranted()) {  // the system's page; pollRomFinder takes the answer
+    awaitingAccess_ = true;
+    requestStorageAccess();
+    return;
+  }
+  std::vector<std::string> skip;
+  std::vector<std::string> roots = deviceStorageRoots(&skip);
+  if (!romFinder_) romFinder_ = std::make_unique<RomFinder>();
+  std::fprintf(stderr, "find: searching %zu storage roots\n", roots.size());
+  romFinder_->search(std::move(roots), d_.library->romDir(), std::move(skip));
+  searching_ = true;
+  findNoticeAt_ = 0;
+}
+
+bool UI::openRomFolder() {
+  if (!openFolder(d_.library->romDir())) return false;
+  const bool searchable = !deviceStorageRoots(nullptr).empty();  // the device can be searched (Android)
+  if (searchable) romVisit_ = RomVisit::opened;
+  std::fprintf(stderr, "library: Open Folder (ROM folder)%s\n", searchable ? ", a search offered if it is empty on return" : "");
+  return true;
+}
+
+void UI::focusChanged(bool focused) {
+  const RomVisit was = romVisit_;
+  if (!focused && romVisit_ == RomVisit::opened) romVisit_ = RomVisit::away;
+  if (focused && romVisit_ == RomVisit::away) romVisit_ = RomVisit::returned;
+  if (romVisit_ != was)
+    std::fprintf(stderr, "library: Open Folder: %s\n", romVisit_ == RomVisit::away ? "the other app in front" : "back in the app");
+}
+
+// Opened -> away (the Files app took the focus) -> returned (the app has it again; focusChanged) -> back (a
+// rescan) -> scanned (its result taken) -> the ROM folder still empty: Search the Device offered, once.
+void UI::pollRomFolderVisit(double now) {
+  switch (romVisit_) {
+    case RomVisit::none:
+    case RomVisit::opened:
+    case RomVisit::away:
+      return;
+    case RomVisit::returned:
+      d_.library->refresh();
+      romVisit_ = RomVisit::back;
+      return;
+    case RomVisit::back:
+      if (d_.library->scanning()) return;
+      romVisit_ = RomVisit::scanned;
+      romVisitAt_ = now;
+      return;
+    default:
+      break;
+  }
+  if (now - romVisitAt_ < 0.5) return;  // the scan's result taken by the frame loop's housekeeping
+  romVisit_ = RomVisit::none;
+  if (!d_.library->roms().empty() || searching_ || copying_ || awaitingAccess_) return;
+  std::fprintf(stderr, "library: back from the Files app, the ROM folder is empty: Search the Device offered\n");
+  Dialog d;
+  d.title = TR("No ROMs in the ROM folder yet");
+  d.message = TR("In the Files app, Documents, Images and the like show some kinds of files only: ROM zips never "
+                 "appear there. Search the whole device for ROMs, or choose the files yourself.");
+  d.buttons = {TR("Search the Device"), TR("Choose Files"), TR("Close")};
+  d.cancelIndex = 2;
+  d.onResult = [this](int b, bool) {
+    if (b == 0) searchDevice();
+    else if (b == 1) importFiles(d_.library->romDir());
+  };
+  showDialog(std::move(d));
+}
+
+void UI::pollRomFinder(double now) {
+  bool granted = false;
+  if (awaitingAccess_ && takeStorageAccessAnswer(&granted)) {
+    awaitingAccess_ = false;
+    if (granted) {
+      searchDevice();
+    } else {
+      // Refused, or no page for it on this device: the picker is the other way.
+      notice(TR("Without access to all files the app can't search the device: choose the files instead"), 5);
+      importFiles(d_.library->romDir());
+    }
+  }
+  if (!romFinder_) return;
+  if (searching_ || copying_) {
+    if (now - findNoticeAt_ >= 0.5) {
+      findNoticeAt_ = now;
+      notice(searching_ ? TRF("Searching the device for ROMs… (%@ folders)", {std::to_string(romFinder_->foldersSeen())})
+                        : TRF("Adding ROMs… (%@)", {std::to_string(romFinder_->copied())}),
+             1);
+    }
+  }
+  RomSearch found;
+  if (searching_ && romFinder_->takeSearch(&found)) {
+    searching_ = false;
+    std::fprintf(stderr, "find: %zu folders, %zu ROMs to add, %zu already there, %zu unknown, %zu unreadable\n",
+                 found.folders, found.roms.size(), found.alreadyThere, found.unknown, found.skipped.size());
+    for (const FoundRom& f : found.roms) std::fprintf(stderr, "find: found %s\n", f.path.c_str());
+    Dialog d;
+    std::string extra;
+    if (found.alreadyThere) extra += "\n" + TRF("%@ already in the ROM folder.", {std::to_string(found.alreadyThere)});
+    if (found.unknown)
+      extra += "\n" + TRF("%@ other files with a ROM's extension are no game the app knows (not added).", {std::to_string(found.unknown)});
+    if (found.roms.empty()) {
+      d.title = TR("No new ROMs found");
+      d.message = TRF("Searched %@ folders.", {std::to_string(found.folders)}) + extra + "\n" +
+                  TR("ROMs inside another app's own folder (Android/data) can't be read: copy them elsewhere first, or choose the files.");
+      d.buttons = {TR("Choose Files"), TR("Close")};
+      d.cancelIndex = 1;
+      d.onResult = [this](int b, bool) {
+        if (b == 0) importFiles(d_.library->romDir());
+      };
+    } else {
+      d.title = TRF("%@ ROMs found", {std::to_string(found.roms.size())});
+      std::string list;
+      const size_t shown = std::min<size_t>(found.roms.size(), 8);
+      for (size_t i = 0; i < shown; ++i) list += found.roms[i].name + "  (" + Paths::display(fs::path(found.roms[i].path).parent_path().string()) + ")\n";
+      if (found.roms.size() > shown) list += TRF("… and %@ more", {std::to_string(found.roms.size() - shown)}) + "\n";
+      d.message = list + TR("They are copied into the ROM folder (the files stay where they are).") + extra;
+      d.buttons = {TR("Add All"), TR("Cancel")};
+      d.cancelIndex = 1;
+      auto roms = std::make_shared<std::vector<FoundRom>>(std::move(found.roms));
+      d.onResult = [this, roms](int b, bool) {
+        if (b != 0) return;
+        romFinder_->copy(*roms, d_.library->romDir());
+        copying_ = true;
+        findNoticeAt_ = 0;
+      };
+    }
+    showDialog(std::move(d));
+  }
+  size_t copied = 0;
+  std::vector<std::string> failed;
+  if (copying_ && romFinder_->takeCopy(&copied, &failed)) {
+    copying_ = false;
+    d_.library->refresh();
+    if (failed.empty()) {
+      notice(TRF("%@ ROMs added", {std::to_string(copied)}), 4);
+    } else {
+      std::string names;
+      for (const std::string& n : failed) names += (names.empty() ? "" : ", ") + n;
+      notice(TRF("%@ ROMs added; could not add: %@", {std::to_string(copied), names}), 6);
+    }
+  }
 }
 
 }  // namespace rnl

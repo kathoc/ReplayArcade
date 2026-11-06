@@ -5,6 +5,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "replaynes/product.h"
+
 #include <cstdint>
 #include <string>
 
@@ -13,11 +15,21 @@ namespace rnl {
 struct Settings {
   // Display
   bool integerScale = true;  // Integer (largest integer scale) vs FILL
-  bool par87 = false;
-  bool hideOverscan = true;
+  bool par87 = false;  // the NES's 8:7 pixels; without the NES (ReplayArcade) every game has its own: gamePixelAspect()
+  bool hideOverscan = RN_PRODUCT_OVERSCAN_CROP;
+#if !RN_PRODUCT_OVERSCAN_CROP
+  std::string preservedOverscanLines;  // opaque settings lines, as for the flash option
+#endif
   bool showStats = false;
-  int flash = 2;  // rn_flash_level: 0 off, 1 low, 2 standard (default: safety first), 3 high
+  int flash = RN_PRODUCT_FLASH_FILTER ? 2 : 0;  // rn_flash_level: 0 off, 1 low, 2 standard (default: safety first), 3 high
+#if !RN_PRODUCT_FLASH_FILTER
+  std::string preservedFlashLines;  // opaque settings lines: ignore the value without rewriting it
+#endif
   bool showFlashIndicator = true;
+  // The empty sides show the picture enlarged and dimmed: 0 none, 1 sharp (no blur), 2 low, 3 medium, 4 high
+  // (render/backdrop.h). Saved as "backdrop2" since 2026-11-03; the older "backdrop" (0 off, 1-3 blurred
+  // more than the new high) reads as none or the default.
+  int backdrop = 2;
   bool vtrEffect = true;  // the VTR tape look while rewinding / returning to A (rnf_vtr; display only)
   float uiScale = 1.0f;  // multiplies the automatic scale (window height / 800)
   // CRT display (nesterm physical model; display only). Defaults are nesterm's.
@@ -36,19 +48,49 @@ struct Settings {
   // value that was surely chosen, and it stays off).
   bool pauseAfterRewind = false;
   double autosaveInterval = 2.0;  // seconds
+  int screensaverMinutes = 5;     // demos after this long without input (docs/design/SCREENSAVER.md); 0 = off
   bool dpadStepWhenPaused = true;
+  // The mouse plays games with analog controls (sticks, dials, levers; Controls > More). Off by default: a
+  // mouse moved by accident would leave the lever pushed.
+  bool mouseControls = false;
   bool practiceCountdown = true;  // 3, 2, 1 after the practice run returned to A (Practice page, View)
   // 3, 2, 1 before play resumes from a pause (System > More); independent of practiceCountdown.
   bool resumeCountdown = true;
+  // The countdown before play resumes and before each practice run: 3 or 1 second(s) (1: the ring
+  // alone, no numeral), 0 = none. It decides both countdowns (resumeCountdown / practiceCountdown
+  // above are kept in the file but no longer used).
+  int countdownSeconds = 1;
+  // Another window in front (focus lost): off = pause and take no controller input until it comes
+  // back; on = keep playing with the controllers (the keyboard is the focused window's in any case).
+  bool playInBackground = false;
   // UI confirm / cancel (rnf_ui_confirm_element): false = east confirms, south goes back (default).
   bool southConfirm = false;
+  // Touch controls (platforms with a touch screen: Android; docs/design/TOUCH_ANDROID.md), the iPhone's
+  // settings and defaults: opacity (15-100 %), D-pad size (130-210 CSS px), D-pad follow up-down / left-right
+  // (0-2), directions (8 / 4), the turbo buttons AA / BB, vibration, hidden while a controller is connected.
+  int touchOpacity = 100;
+  int touchDpadSize = 144;
+  double touchFollowY = 1.0;
+  double touchFollowX = 0.3;
+  int touchWays = 8;
+  bool touchTurbo = true;
+  bool touchVibration = true;
+  bool touchHideWithPad = true;
+  // D-pad directions per game, as on the iPhone: "<ROM SHA-256>:<4|8>,..."; a game without an entry uses
+  // touchWays. touchWaysRom: the open game's ROM (set by the app each frame, not saved).
+  std::string touchWaysPerRom;
+  std::string touchWaysRom;
   // Text fields: "auto" (Steam's keyboard where it can be asked for, else the built-in one),
   // "builtin" (ReplayNES's controller keyboard), "steam" (Steam's only). See osk.h.
   std::string onScreenKeyboard = "auto";
   // System
-  std::string core = "nestopia";  // next new game; existing projects retain their core
+  std::string core = RN_PRODUCT_DEFAULT_CORE;  // next new game; existing projects retain their core
   bool checkForUpdates = true;  // keep the Flatpak portal's update monitor open (update_service.h)
+  std::string orientation = "auto";  // Android: "auto" (the device's, its rotation lock), "landscape", "portrait"
   std::string language = "auto";  // "auto" (the system's), "ja", "en"
+  // The ROM and Projects folders chosen in Settings > App > Folders & License ("": the library's own,
+  // <library>/ROM and <library>/Projects).
+  std::string romFolder, projectsFolder;
   bool menuHintShown = false;     // the Menu pill pulsed on the first launch
   uint32_t coachShown = 0;        // first-run coach toasts shown (rnf_coach_shown bits, docs/design/VTR_UX.md)
   // Input layout version of the saved bindings (RNF_CONTROLLER_LAYOUT_VERSION; 0 = never saved).
@@ -64,5 +106,41 @@ struct Settings {
   bool load(const std::string& path);  // false if the file is missing (defaults kept)
   bool save(const std::string& path) const;  // atomic (temp file + rename)
 };
+
+/// Whether the picture takes the game's own pixel aspect (rn_media_info.pixel_aspect_*). A product without
+/// the NES (ReplayArcade) always does: its games' pixel grids are not their screens' shape (384 x 224 on a
+/// 4:3 screen), and square pixels stretched them; the 8:7 toggle is the NES's. With the NES: the toggle.
+inline bool gamePixelAspect(const Settings& s) { return !RN_PRODUCT_NES || s.par87; }
+
+/// The touch D-pad's directions (8 / 4) for the open game (touchWaysRom), else the global setting.
+inline int touchWaysFor(const Settings& s) {
+  if (!s.touchWaysRom.empty()) {
+    const std::string key = s.touchWaysRom + ":";
+    for (size_t a = 0, b; a < s.touchWaysPerRom.size(); a = b + 1) {
+      b = s.touchWaysPerRom.find(',', a);
+      if (b == std::string::npos) b = s.touchWaysPerRom.size();
+      if (s.touchWaysPerRom.compare(a, key.size(), key) == 0) return s.touchWaysPerRom[a + key.size()] == '4' ? 4 : 8;
+    }
+  }
+  return s.touchWays == 4 ? 4 : 8;
+}
+/// Sets it for the open game (touchWaysRom), else the global setting.
+inline void setTouchWaysFor(Settings& s, int ways) {
+  ways = ways == 4 ? 4 : 8;
+  if (s.touchWaysRom.empty()) {
+    s.touchWays = ways;
+    return;
+  }
+  std::string out;
+  const std::string key = s.touchWaysRom + ":";
+  for (size_t a = 0, b; a < s.touchWaysPerRom.size(); a = b + 1) {
+    b = s.touchWaysPerRom.find(',', a);
+    if (b == std::string::npos) b = s.touchWaysPerRom.size();
+    const std::string e = s.touchWaysPerRom.substr(a, b - a);
+    if (!e.empty() && e.compare(0, key.size(), key) != 0) out += (out.empty() ? "" : ",") + e;
+  }
+  s.touchWaysPerRom = out + (out.empty() ? "" : ",") + key + std::to_string(ways);
+}
+
 
 }  // namespace rnl
