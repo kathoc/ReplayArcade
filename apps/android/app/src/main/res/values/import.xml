@@ -5,6 +5,10 @@
         <item quantity="one">%d file added to the ROM folder</item>
         <item quantity="other">%d files added to the ROM folder</item>
     </plurals>
+    <plurals name="rn_import_skipped">
+        <item quantity="one">%d already in the ROM folder, skipped</item>
+        <item quantity="other">%d already in the ROM folder, skipped</item>
+    </plurals>
     <string name="rn_import_failed">Could not add: %s</string>
     <string name="rn_import_not_rom">Not a ROM, not added: %s</string>
     <!-- The share sheet's Direct Share entry (MainActivity.publishShareShortcut). -->

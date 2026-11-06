@@ -24,7 +24,11 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -59,6 +63,7 @@ public class MainActivity extends SDLActivity {
     // device and its rotation lock, as ReplayNES does; Landscape and Portrait keep that one (either way up).
     private static final String PREFS = "replaynes.screen";
     private static final String ORIENTATION = "orientation";
+    private static final String MIGRATED_KOTLIN = "migrated_kotlin_v1";
     private volatile int chosenOrientation = ActivityInfo.SCREEN_ORIENTATION_USER;
 
     private static int orientationFor(String which) {
@@ -204,6 +209,7 @@ public class MainActivity extends SDLActivity {
      */
     public boolean setRomDir(String dir) {
         romDir = dir;
+        migrateLegacyLibrary(dir);
         List<Uri> uris;
         synchronized (pendingImport) {
             uris = new ArrayList<>(pendingImport);
@@ -211,6 +217,75 @@ public class MainActivity extends SDLActivity {
         }
         if (!uris.isEmpty()) runOnUiThread(() -> RomImport.copyInto(this, uris, new File(dir)));
         return true;
+    }
+
+    // v0.6.5 and earlier (the Kotlin app) kept ROMs in <internal>/roms and projects in <internal>/projects/
+    // <name>.nesrec; the shared app keeps the library under the external files folder (.../ROM, .../Projects).
+    // The release applicationId is the same (io.github.replaynes), so those internal folders survive the update:
+    // move their contents across once, at the first start-up that learns the ROM folder. A file (or project)
+    // already at the destination is left as it is, never overwritten. Guarded by a one-time preference.
+    private void migrateLegacyLibrary(String romDirPath) {
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(MIGRATED_KOTLIN, false)) return;
+        try {
+            File internal = getFilesDir();
+            File newRoms = new File(romDirPath);
+            File parent = newRoms.getParentFile();
+            File newProjects = parent != null ? new File(parent, "Projects") : new File(newRoms, "Projects");
+            int roms = moveContents(new File(internal, "roms"), newRoms);
+            int projects = moveContents(new File(internal, "projects"), newProjects);
+            if (roms + projects > 0)
+                Log.i("ReplayNES", "migrate: moved " + roms + " ROMs and " + projects
+                        + " projects from the previous version's internal storage");
+        } catch (RuntimeException e) {
+            Log.w("ReplayNES", "migrate: " + e);
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(MIGRATED_KOTLIN, true).apply();
+    }
+
+    // Moves every entry of src into dst (made if missing). An entry whose name is already in dst is left in place
+    // (never overwritten). renameTo first, then a copy + delete for the internal -> external move. Returns the
+    // number of entries moved.
+    private static int moveContents(File src, File dst) {
+        File[] entries = src.isDirectory() ? src.listFiles() : null;
+        if (entries == null || entries.length == 0) return 0;
+        if (!dst.exists()) dst.mkdirs();
+        int moved = 0;
+        for (File e : entries) {
+            File target = new File(dst, e.getName());
+            if (target.exists()) continue;
+            if (e.renameTo(target)) { moved += 1; continue; }
+            try {
+                copyTree(e, target);
+                deleteTree(e);
+                moved += 1;
+            } catch (IOException ex) {
+                Log.w("ReplayNES", "migrate: " + e.getName() + ": " + ex);
+                deleteTree(target);  // a half copy is worse than none
+            }
+        }
+        return moved;
+    }
+
+    private static void copyTree(File src, File dst) throws IOException {
+        if (src.isDirectory()) {
+            if (!dst.exists() && !dst.mkdirs()) throw new IOException("cannot make " + dst);
+            File[] kids = src.listFiles();
+            if (kids != null) for (File k : kids) copyTree(k, new File(dst, k.getName()));
+            return;
+        }
+        try (InputStream in = new FileInputStream(src); OutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[1 << 16];
+            for (int n; (n = in.read(buf)) > 0;) out.write(buf, 0, n);
+        }
+    }
+
+    private static void deleteTree(File f) {
+        if (f == null || !f.exists()) return;
+        if (f.isDirectory()) {
+            File[] kids = f.listFiles();
+            if (kids != null) for (File k : kids) deleteTree(k);
+        }
+        f.delete();
     }
 
     /** Add ROMs (importFiles in platform/shell.cpp through JNI, any thread): the system file picker, several files at once. */

@@ -19,10 +19,13 @@ import android.util.Log;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -109,12 +112,14 @@ final class RomImport {
         AppLog.line(c, "import: remembered " + folder);
     }
 
+    private enum Result { ADDED, DUPLICATE }
+
     /** Copies the URIs into dir on a worker thread and says how it went in a toast. */
     static void copyInto(Activity activity, List<Uri> uris, File dir) {
         if (uris.isEmpty()) return;
         final ContentResolver resolver = activity.getContentResolver();
         new Thread(() -> {
-            int added = 0;
+            int added = 0, skipped = 0;
             List<String> failed = new ArrayList<>();
             List<String> notRom = new ArrayList<>();
             dir.mkdirs();
@@ -126,17 +131,24 @@ final class RomImport {
                     continue;
                 }
                 try {
-                    copy(resolver, u, dir, name);
-                    added += 1;
-                    Log.i(TAG, "import: " + name + " -> " + dir);
+                    Result r = copy(resolver, u, dir, name);
+                    if (r == Result.DUPLICATE) {
+                        skipped += 1;
+                        Log.i(TAG, "import: " + name + ": same name and content already there, skipped");
+                    } else {
+                        added += 1;
+                        Log.i(TAG, "import: " + name + " -> " + dir);
+                    }
                 } catch (IOException | SecurityException e) {
                     failed.add(name);
                     Log.w(TAG, "import: " + u + ": " + e);
                 }
             }
             List<String> lines = new ArrayList<>();
-            if (added > 0 || (failed.isEmpty() && notRom.isEmpty()))
+            if (added > 0 || (skipped == 0 && failed.isEmpty() && notRom.isEmpty()))
                 lines.add(activity.getResources().getQuantityString(R.plurals.rn_import_added, added, added));
+            if (skipped > 0)
+                lines.add(activity.getResources().getQuantityString(R.plurals.rn_import_skipped, skipped, skipped));
             if (!failed.isEmpty()) lines.add(activity.getString(R.string.rn_import_failed, String.join(", ", failed)));
             if (!notRom.isEmpty()) lines.add(activity.getString(R.string.rn_import_not_rom, String.join(", ", notRom)));
             final String text = String.join("\n", lines);
@@ -161,20 +173,66 @@ final class RomImport {
         return name.isEmpty() ? "rom" : name;
     }
 
-    // Same name: replaced (a newer set of the same game), as a copy over USB or with a file manager does.
-    private static void copy(ContentResolver resolver, Uri u, File dir, String name) throws IOException {
+    // Never overwrites: a file of the same name and the same content (SHA-256) is skipped (Result.DUPLICATE);
+    // the same name with other content is taken under "name (2).ext" (a newer set kept beside the old one), as
+    // the Kotlin app did. The copy goes through a hidden ".name.part" the library's scan skips, then a rename.
+    private static Result copy(ContentResolver resolver, Uri u, File dir, String name) throws IOException {
         File part = new File(dir, "." + name + ".part");
-        File dest = new File(dir, name);
         try (InputStream in = resolver.openInputStream(u)) {
             if (in == null) throw new IOException("cannot open");
+            MessageDigest md = newSha256();
             try (OutputStream out = new FileOutputStream(part)) {
                 byte[] buf = new byte[1 << 16];
-                for (int n; (n = in.read(buf)) > 0;) out.write(buf, 0, n);
+                for (int n; (n = in.read(buf)) > 0;) {
+                    out.write(buf, 0, n);
+                    if (md != null) md.update(buf, 0, n);
+                }
             }
-            if (dest.exists() && !dest.delete()) throw new IOException("cannot replace " + dest);
+            File dest = new File(dir, name);
+            if (dest.exists()) {
+                byte[] incoming = md != null ? md.digest() : null;
+                byte[] existing = sha256(dest);
+                if (incoming != null && existing != null && MessageDigest.isEqual(incoming, existing)) {
+                    part.delete();
+                    return Result.DUPLICATE;
+                }
+                dest = freeName(dir, name);  // same name, other content: keep both
+            }
             if (!part.renameTo(dest)) throw new IOException("cannot rename " + part);
+            return Result.ADDED;
         } finally {
             if (part.exists()) part.delete();
+        }
+    }
+
+    private static MessageDigest newSha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            return null;  // without a hash, same name with other content is kept beside (never overwritten)
+        }
+    }
+
+    private static byte[] sha256(File f) {
+        MessageDigest md = newSha256();
+        if (md == null) return null;
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] buf = new byte[1 << 16];
+            for (int n; (n = in.read(buf)) > 0;) md.update(buf, 0, n);
+            return md.digest();
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** "name.ext" taken: "name (2).ext", "name (3).ext", ... the first that is free. */
+    private static File freeName(File dir, String name) {
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        String ext = dot > 0 ? name.substring(dot) : "";
+        for (int n = 2; ; ++n) {
+            File f = new File(dir, base + " (" + n + ")" + ext);
+            if (!f.exists()) return f;
         }
     }
 }

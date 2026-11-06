@@ -3,6 +3,9 @@
     <plurals name="rn_import_added">
         <item quantity="other">ROM フォルダに %d 個のファイルを追加しました</item>
     </plurals>
+    <plurals name="rn_import_skipped">
+        <item quantity="other">%d 個は ROM フォルダに既にあるため飛ばしました</item>
+    </plurals>
     <string name="rn_import_failed">追加できませんでした: %s</string>
     <string name="rn_import_not_rom">ROM ではないので追加しませんでした: %s</string>
     <string name="rn_share_target">ROM フォルダへ追加</string>
