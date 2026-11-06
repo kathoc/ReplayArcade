@@ -113,19 +113,32 @@ main の 0.6.5 リリース成果（`scripts/build-linux-flatpak.sh` の `ARCH`�
 - Linux（Lima VM `lima-flatpak`、オフスクリーン UI ツールで描画確認）。
 - Windows の VM 試験は macsrv 不可（Parallels Pro 必要）。必要時に旧 Mac で実施。
 
-## 6. 未決・要判断（STOP 項目）
+## 6. 判断の結果（2026-11-06、ユーザー承認）と実装
 
-1. **【STOP】Android の applicationId と署名（最重要）**
-   - 現 v0.6.5 Kotlin リリースのパッケージは **`io.github.replaynes`**（2026-11-05 作成の RSA4096 鍵、
-     alias `replaynes`、`~/.config/replaynes/android-release.jks`）。
-   - generalize の既定 applicationId は **`io.github.replaynes.android`**（`-PrnApplicationId` で上書き可）。
-     署名は環境変数（`RN_ANDROID_KEYSTORE` 他）読み。generalize 単体には ReplayNES 用のリリース
-     ビルド script が無い（ANDROID.md の M3「Signing for release」が未了）。
-   - **このままだと applicationId が違い、既存 v0.6.5 利用者は上書き更新されず別アプリが入る**
-     （データ分離）。→ 推奨: ReplayNES の Android リリースで
-     `-PrnApplicationId=io.github.replaynes -PrnAppName=ReplayNES -PrnVersion=<版>` を渡し、
-     署名は既存 `android-release.jks`/alias `replaynes` を環境変数経由で使う（同一鍵＝上書き更新可）。
-     この配線（`scripts/build-android.sh` 相当）を入れるかどうかの判断が要る。ここで一旦止めて報告。
-2. **RomImport の重複仕様**: 「同名・同内容は上書きせず飛ばし、n 追加/m スキップ表示」へ変更
-   （generalize の「同名上書き」とは逆の設計。ReplayNES/ReplayArcade 共通になる）。
-3. **ReplayArcade サブモジュール更新**（`dfb3bc5` → `6c32d44` 以降）はユーザー承認制。提案のみ。
+1. **Android の applicationId と署名** — ユーザー承認: リリースは `io.github.replaynes` に固定し、既存
+   `android-release.jks`（alias `replaynes`）で署名。→ `scripts/build-android.sh` を追加
+   （`-PrnApplicationId=io.github.replaynes -PrnAppName=ReplayNES -PrnVersion=<CMake版>`、署名は
+   `~/.config/replaynes/android-signing.properties` を `RN_ANDROID_*` 環境変数へ渡す）。debug の既定 ID
+   （`io.github.replaynes.android`）と ReplayArcade の ID（`rnProductFile` 経由）は不変、build.gradle 無改変。
+2. **データ移行** — リリース ID が同じなので更新後も内部ストレージは残る。`MainActivity.setRomDir` に
+   一度きりの移行を追加: 旧 Kotlin の内部 `roms/`・`projects/<name>.nesrec` を外部ライブラリの
+   `ROM/`・`Projects/` へ移す（既存の同名は上書きしない。一度きりのフラグで防護）。
+3. **RomImport の重複仕様** — ユーザー承認どおり変更: 同名・同内容（SHA-256）はスキップ、
+   同名・異内容は `name (2).ext` で別名取り込み、トーストに追加/スキップ件数（`rn_import_skipped`, en/ja）。
+4. **ReplayArcade サブモジュール更新**（`dfb3bc5` → `6c32d44` 以降）はユーザー承認制。提案のみ（未実施）。
+
+## 7. 検証結果
+
+- **ホスト（エンジン＋共通フロントエンド）**: `cmake -G Ninja … && ninja && ctest` で **39/39 合格**
+  （当初 `product_release_identity` のみ失敗＝`frontend.h` のフォールバック版が 0.6.4 のままだった取りこぼし。
+  0.6.5 へ修正して解消）。
+- **Android リリースビルド**: `scripts/build-android.sh` で `app-release.apk` 生成（package `io.github.replaynes`、
+  versionCode 605、versionName 0.6.5、arm64-v8a、署名証明書 SHA-256 が旧 v0.6.5 と**完全一致**）。
+- **上書き更新（エミュレータ API29/arm64）**: 旧 v0.6.5(versionCode 7) 導入 → `adb install -r` 新版 → **成功**、
+  versionCode が 605 に更新（別アプリにならない）。
+- **データ移行（同エミュレータ）**: 旧の内部 `roms/seedrom.nes`・`projects/seedrom.nesrec/journal.bin` を seed →
+  更新・起動後、外部 `ROM/`・`Projects/` へ中身そのまま移動、内部は空、ログに
+  「migrate: moved 1 ROMs and 1 projects」。
+- **Q2（RomImport）**: リリースビルドでコンパイル通過（文言含む）。on-device の重複スキップ動作そのものは未実施
+  （共通 RomImport なので ReplayArcade のエミュレータ試験マトリクスが同経路を網羅する）。
+- macOS（XCTest）・Linux（Lima、offscreen UI 描画）は実行中/予定。Windows の VM 試験は macsrv 不可。

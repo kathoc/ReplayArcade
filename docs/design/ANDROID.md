@@ -313,3 +313,22 @@ the window was. MainActivity applies the saved choice in onCreate (before the fi
 setScreenOrientation from the settings (platform/shell.cpp, App::applySettings) and answers SDL's request with
 the choice. Checked on the Android 16 emulator: Landscape 2424 x 1080, Portrait 1080 x 2424 after a restart
 too, Automatic turning with the device (user_rotation 1 / 0). Emulator test O1-O3.
+
+## ROM import dedup, release id and data migration (2026-11-06, ReplayNES merge)
+
+When the shared Android app replaced ReplayNES's Kotlin preview (option A; docs/REPLAY_FAMILY_UI.md),
+three ReplayNES-specific points were settled with the user and apply to the shared code:
+
+- **RomImport never overwrites.** A file of the same name and the same content (SHA-256) is skipped; the
+  same name with other content is taken as "name (2).ext" (both kept). The toast says how many were added
+  and how many skipped (rn_import_skipped, en + ja). This replaces the earlier "same name: replaced".
+- **Release applicationId / signing.** scripts/build-android.sh builds the release with
+  -PrnApplicationId=io.github.replaynes (the v0.6.5 Kotlin release id, so an install -r updates in place,
+  not a second app) and signs with the dedicated key from ~/.config/replaynes/android-signing.properties
+  via the RN_ANDROID_* environment. The debug build keeps the Gradle default id; ReplayArcade keeps its
+  own id via rnProductFile.
+- **Migrating v0.6.5 data.** The Kotlin app kept the library in internal storage (roms/, projects/); the
+  shared app keeps it under the external files folder. The release id is the same, so the internal files
+  survive the update: MainActivity.setRomDir moves them to ROM/ and Projects/ once, never overwriting a
+  destination. Verified on the API 29 emulator: install -r over v0.6.5 updates in place and the seeded
+  ROM and project move across intact.
