@@ -1,5 +1,6 @@
 // Media geometry and thumbnail regressions, independent of SDL and Vulkan.
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <vector>
@@ -10,6 +11,8 @@
 #include "png_writer.h"
 #include "qoi.h"
 #include "render/backdrop.h"
+#include "settings.h"
+#include "render/surface_plan.h"
 #include "support/rn_test.h"
 #include "thumbnails.h"
 
@@ -47,6 +50,23 @@ TEST_CASE("media game rectangle follows rotation and pixel aspect") {
   auto smaller = computeGameRect(1280, 720, m, f, false, true, false);
   CHECK_EQ(smaller.w, 378);
   CHECK_EQ(smaller.h, 720);
+}
+
+TEST_CASE("arcade pixel grids that are not their screen's shape are shown 4:3") {
+  // FinalBurn Neo's drivers: Strider 384 x 224 and Kid Niki 384 x 256, both on 4:3 screens; the pixel
+  // aspect as FbneoCore derives it (4 * h : 3 * w). Square pixels stretched them to 1.71 and 1.50.
+  struct { uint32_t w, h, num, den; } games[] = {{384, 224, 7, 9}, {384, 256, 8, 9}, {320, 224, 14, 15}};
+  for (const auto& g : games) {
+    rn_media_info m{g.w, g.h, 5963, 100, 2, g.num, g.den, 0};
+    rn_video_frame_info f{nullptr, g.w, g.h, g.w};
+    auto r = computeGameRect(1920, 1080, m, f, false, true, false);
+    CHECK_EQ(r.w, 1440);
+    CHECK_EQ(r.h, 1080);
+    m.rotation = 1;  // a vertical game: 3:4
+    auto v = computeGameRect(1920, 1080, m, f, false, true, false);
+    CHECK_EQ(v.w, 810);
+    CHECK_EQ(v.h, 1080);
+  }
 }
 
 TEST_CASE("QOI decoding, every chunk kind; cut short or not QOI is refused") {
@@ -189,7 +209,19 @@ TEST_CASE("backdrop: only where the picture leaves the screen empty, covering it
   CHECK(std::fabs(p.w - 1280) < 0.01f);
   CHECK(std::fabs(p.h - 1280 * 800.f / 1067) < 0.5f);
   CHECK(std::fabs(p.y - (800 - p.h) / 2) < 0.01f);
-  CHECK(std::fabs(p.lod - std::log2(320 / kBackdropTexels)) < 1e-4f);
+  CHECK(std::fabs(p.lod - std::log2(320 / backdropTexels(2))) < 1e-4f);  // the default: low
+  CHECK_EQ(p.spread, 1.f);
+  // Stronger levels read coarser levels; none draws nothing; sharp reads level 0 without the tent.
+  const BackdropPlan sharp = planBackdrop(107, 0, 1067, 800, 1280, 800, 320, 240, 1);
+  REQUIRE(sharp.show);
+  CHECK_EQ(sharp.lod, 0.f);
+  CHECK_EQ(sharp.spread, 0.f);
+  CHECK(planBackdrop(107, 0, 1067, 800, 1280, 800, 320, 240, 4).lod > planBackdrop(107, 0, 1067, 800, 1280, 800, 320, 240, 3).lod);
+  CHECK(planBackdrop(107, 0, 1067, 800, 1280, 800, 320, 240, 3).lod > p.lod);
+  CHECK(p.lod > sharp.lod);
+  // User decision 2026-11-03: high is finer than the former low (24 texels across).
+  CHECK(backdropTexels(4) > 24.f);
+  CHECK_FALSE(planBackdrop(107, 0, 1067, 800, 1280, 800, 320, 240, 0).show);
   CHECK_EQ(p.dim, kBackdropDim);
   CHECK(p.dim < 1.f);  // dimmed
   // The picture fills the screen (FILL): nothing to cover.
@@ -226,4 +258,71 @@ TEST_CASE("backdrop: only where the picture leaves the screen empty, covering it
   CHECK(std::fabs(uv[3] - 0.9f) < 1e-5f);
   CHECK(std::fabs(uv[0]) < 1e-6f);
   CHECK(std::fabs(uv[2] - 1) < 1e-6f);
+}
+
+TEST_CASE("surface plan: every device's orientation and size give an identity swapchain the size of the window") {
+  auto caps = [](uint32_t w, uint32_t h, uint32_t current, uint32_t supported = kSurfaceIdentity | kSurfaceRotate90 |
+                                                                                kSurfaceRotate180 | kSurfaceRotate270) {
+    SurfaceCaps c;
+    c.width = w, c.height = h, c.currentTransform = current, c.supportedTransforms = supported;
+    c.maxWidth = std::max(w, h) == kSurfaceUndefinedExtent ? 16384 : (w == kSurfaceUndefinedExtent ? 16384 : w);
+    c.maxHeight = w == kSurfaceUndefinedExtent ? 16384 : h;
+    return c;
+  };
+  // The desktop (X11): the extent undefined, the window's size.
+  SurfacePlan p = planSurface(caps(kSurfaceUndefinedExtent, kSurfaceUndefinedExtent, kSurfaceIdentity), 1280, 800);
+  CHECK_EQ(p.width, 1280u);
+  CHECK_EQ(p.height, 800u);
+  CHECK_EQ(p.transform, kSurfaceIdentity);
+  CHECK_EQ(p.rotation, 0);
+  // Retroid Pocket 5 (Adreno): a portrait panel turned 90 degrees for landscape, the extent reported in
+  // the window's orientation (1920 x 1080) with the 90 degree transform (seen on the device).
+  p = planSurface(caps(1920, 1080, kSurfaceRotate90), 1920, 1080);
+  CHECK_EQ(p.width, 1920u);
+  CHECK_EQ(p.height, 1080u);
+  CHECK_EQ(p.transform, kSurfaceIdentity);
+  // Another driver reports the panel's 1080 x 1920 for the same window: the same plan.
+  p = planSurface(caps(1080, 1920, kSurfaceRotate90), 1920, 1080);
+  CHECK_EQ(p.width, 1920u);
+  CHECK_EQ(p.height, 1080u);
+  CHECK_EQ(p.transform, kSurfaceIdentity);  // the compositor rotates, not the frames
+  CHECK_EQ(p.rotation, 90);
+  // Turned the other way (270), and a landscape panel as it is (identity).
+  p = planSurface(caps(1080, 1920, kSurfaceRotate270), 1920, 1080);
+  CHECK_EQ(p.width, 1920u);
+  CHECK_EQ(p.height, 1080u);
+  p = planSurface(caps(2400, 1080, kSurfaceIdentity), 2400, 1080);
+  CHECK_EQ(p.width, 2400u);
+  CHECK_EQ(p.height, 1080u);
+  // Upside down (180): no swap.
+  p = planSurface(caps(1080, 2400, kSurfaceRotate180), 1080, 2400);
+  CHECK_EQ(p.width, 1080u);
+  CHECK_EQ(p.height, 2400u);
+  CHECK_EQ(p.transform, kSurfaceIdentity);
+  // A window smaller than the display (bars, a cutout): the window's size.
+  p = planSurface(caps(1920, 1080, kSurfaceRotate90), 1920, 972);
+  CHECK_EQ(p.height, 972u);
+  // A surface without identity: its own transform and extent (pre-rotated frames are its business).
+  p = planSurface(caps(1080, 1920, kSurfaceRotate90, kSurfaceRotate90), 1920, 1080);
+  CHECK_EQ(p.transform, kSurfaceRotate90);
+  CHECK_EQ(p.width, 1080u);
+  CHECK_EQ(p.height, 1920u);
+  // Minimised.
+  CHECK_EQ(planSurface(caps(0, 0, kSurfaceIdentity), 0, 0).width, 0u);
+  CHECK_EQ(planSurface(caps(kSurfaceUndefinedExtent, kSurfaceUndefinedExtent, kSurfaceIdentity), 0, 0).width, 0u);
+}
+
+TEST_CASE("backdrop setting: the older levels read as none or the default, the newer key wins, saved as backdrop2") {
+  CHECK_EQ(Settings::parse("").backdrop, 2);
+  CHECK_EQ(Settings::parse("backdrop=0\n").backdrop, 0);
+  for (const char* old : {"backdrop=1\n", "backdrop=2\n", "backdrop=3\n"}) CHECK_EQ(Settings::parse(old).backdrop, 2);
+  CHECK_EQ(Settings::parse("backdrop2=1\n").backdrop, 1);
+  CHECK_EQ(Settings::parse("backdrop2=4\nbackdrop=0\n").backdrop, 4);
+  CHECK_EQ(Settings::parse("backdrop=0\nbackdrop2=3\n").backdrop, 3);
+  CHECK_EQ(Settings::parse("backdrop2=9\n").backdrop, 4);
+  Settings s;
+  s.backdrop = 1;
+  const std::string text = s.serialize();
+  CHECK(text.find("backdrop2=1\n") != std::string::npos);
+  CHECK(text.find("\nbackdrop=") == std::string::npos);
 }

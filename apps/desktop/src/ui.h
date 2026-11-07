@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "dialogs.h"
+#include "rom_finder.h"
 #include "imgui.h"
 #include "mp4_export.h"
 #include "osk.h"
@@ -78,10 +79,13 @@ class UI : public DialogHost {
     SDL_Window* window;
     UpdateService* updates = nullptr;    // in-app updates (Linux: Flatpak portal; Windows: WinSparkle); null: none
     LibraryThumbs* libraryThumbs = nullptr;
+    bool touchControls = false;  // the on-screen controller (PlatformHooks::touchControls): its settings page
   };
   explicit UI(Deps d);
   ~UI() override;
   void setApp(AppModel* app) { d_.app = app; }
+  /// The window lost or got the focus (another app came in front, or went).
+  void focusChanged(bool focused);
 
   // Hooks from main.
   std::function<void()> onQuit;              // the user chose Quit
@@ -111,6 +115,10 @@ class UI : public DialogHost {
 
   /// Whether ImGui / the UI have the controller and keyboard (menus, library, seek bar, dialogs).
   bool interactive() const;
+  /// The face button check (docs/design/FACE_CHECK.md) is on screen: it takes the controllers' events
+  /// (App::handleFaceCheck) - the button at the lit position held for a second, south then east.
+  bool faceCheckActive() const;
+  void faceCheckButton(int sdlButton, bool down, double now);  // a face button as SDL reported it (before any swap)
   /// Settings > Controls > Confirm Button: the south button confirms (default: east).
   bool southConfirm() const;
   /// Text input active (keys go to the text field, not the game).
@@ -120,6 +128,14 @@ class UI : public DialogHost {
   void inputLayoutChanged();
   void setMenu(bool open);
   bool menuOpen() const { return menuOpen_; }
+  /// The picture's area (pixels) while the touch controller shows (TouchControls::pictureArea), else the window.
+  void setPictureArea(std::optional<ImVec4> a) { pictureArea_ = a; }
+  /// The Quick Menu or a dialog covers the game (the touch controller hides).
+  bool playCovered() const { return menuOpen_ || popupOpen(); }
+  /// The touch controller shows (its MENU button replaces the Menu pill, as on the iPhone).
+  void setTouchControlsShown(bool on) { touchControlsShown_ = on; }
+  /// The bottom bar and the seek bar inside the touch controller's overlay area (pixels); empty: the window.
+  void setOverlayArea(const LRect& r) { overlay_ = metrics_.overlay = r; }
   /// Id of the menu page shown ("" when the menu is closed); script / test hooks.
   std::string shownMenuPage() const { return menuOpen_ ? menuPageId() : std::string(); }
   /// L / R in the UI (InputRouter::onUiShoulder): previous / next page.
@@ -312,6 +328,13 @@ class UI : public DialogHost {
   /// and for a few seconds after a controller joins, leaves or changes player.
   void buildPlayers(double now);
   void buildPlayerOrder();
+  void buildFaceCheck();
+  // The face check: which position is asked (0 south, 1 east), the button held at the south position,
+  // the button held now and since when, whether the last two answers disagreed; for this controller.
+  int faceStep_ = 0, faceAtSouth_ = -1, faceHeld_ = -1, faceSlot_ = -1;
+  double faceHeldSince_ = 0;
+  bool faceMismatch_ = false;
+  void faceCheckReset(int slot);
   void buildScreensaver();  // the demo dimmed, one faint line (docs/design/SCREENSAVER.md)  // Settings > Controls > Controller > Player Order: whose press is which player
   bool playerOrderOffered_ = true;
   float playersW_ = 0;  // its width this frame (the flash badge goes after it)
@@ -346,6 +369,9 @@ class UI : public DialogHost {
   UiMetrics metrics_;
   ImFont* font_ = nullptr;
   bool menuOpen_ = false;
+  std::optional<ImVec4> pictureArea_;
+  bool touchControlsShown_ = false;
+  LRect overlay_{0, 0, 0, 0};
   std::string inputCatalog_;
   rnf_menu* menu_ = nullptr;
   uint32_t menuFeatures_ = 0;
@@ -410,6 +436,31 @@ class UI : public DialogHost {
     bool focusName = false;
   };
   std::optional<Chooser> chooser_;
+  // Settings > App > Folders & License: the ROM / Projects folder's choices, a change, a reset
+  // (ui_settings.cpp); pendingFolder_: the folder a system picker is choosing (0: none, 1: ROM, 2: Projects).
+  void folderChoices(bool roms);
+  void changeFolder(bool roms);
+  void setFolder(bool roms, const std::string& path);
+  void pollChosenFolder();
+  int pendingFolder_ = 0;
+  // Add ROMs (ui_settings.cpp; docs/design/ANDROID.md, "Finding ROMs anywhere"): Search the Device (all-files
+  // access, the walk, the list, the copy) or Choose Files (the system's picker).
+  void addRoms();
+  void searchDevice();
+  void pollRomFinder(double now);
+  /// Open Folder for the ROM folder. Where the device can be searched (Android), coming back from the Files
+  /// app to a ROM folder still empty offers Search the Device: the Files app's Documents, Images and the
+  /// like list some kinds of files only, never a zip (docs/design/ANDROID.md).
+  bool openRomFolder();
+  void pollRomFolderVisit(double now);
+  // By the window's focus events (App::handleEvent): on Android no frame runs while another app is in front,
+  // so the frame loop never sees the focus gone.
+  enum class RomVisit { none, opened, away, returned, back, scanned };
+  RomVisit romVisit_ = RomVisit::none;
+  double romVisitAt_ = 0;
+  std::unique_ptr<RomFinder> romFinder_;
+  bool awaitingAccess_ = false, searching_ = false, copying_ = false;
+  double findNoticeAt_ = 0;
   void chooserList();
   struct Rename {
     std::string title;

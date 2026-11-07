@@ -151,8 +151,25 @@ const std::vector<const LibraryROM*>& LibraryModel::arranged(const std::string& 
   return arranged_;
 }
 
-std::string LibraryModel::romDir() const { return root_ + "/" + RNF_LIBRARY_ROM_DIR; }
-std::string LibraryModel::projectsDir() const { return root_ + "/" + RNF_LIBRARY_PROJECTS_DIR; }
+std::string LibraryModel::romDir() const { return romFolder_.empty() ? root_ + "/" + RNF_LIBRARY_ROM_DIR : romFolder_; }
+std::string LibraryModel::projectsDir() const {
+  return projectsFolder_.empty() ? root_ + "/" + RNF_LIBRARY_PROJECTS_DIR : projectsFolder_;
+}
+
+void LibraryModel::setFolders(const std::string& romFolder, const std::string& projectsFolder) {
+  if (romFolder == romFolder_ && projectsFolder == projectsFolder_) return;
+  if (worker_.joinable()) worker_.join();  // the scan reads the folders
+  romFolder_ = romFolder;
+  projectsFolder_ = projectsFolder;
+  ensureFolders();
+  refresh();
+}
+
+std::string LibraryModel::chooserRoot(const std::string& dir) const {
+  const fs::path rel = fs::u8path(dir).lexically_normal().lexically_relative(fs::u8path(root_).lexically_normal());
+  const bool inside = !rel.empty() && *rel.begin() != "..";
+  return inside ? root_ : dir;
+}
 
 bool LibraryModel::ensureFolders() {
   char* failed = nullptr;
@@ -165,16 +182,43 @@ bool LibraryModel::ensureFolders() {
                                                : TRF("Can’t create the folder: %@\n%@", {where, std::string(rnf_last_error())});
   }
   rnf_string_free(failed);
+  // Chosen folders: made when missing (a card taken out leaves the error, not a silent empty library).
+  for (const std::string* chosen : {&romFolder_, &projectsFolder_}) {
+    if (chosen->empty()) continue;
+    std::error_code ec;
+    fs::create_directories(fs::u8path(*chosen), ec);
+    if (ec || !fs::is_directory(fs::u8path(*chosen), ec)) {
+      folderError_ = TRF("Can’t create the folder: %@\n%@", {*chosen, ec.message()});
+      st = RN_ERR_IO;
+    }
+  }
   return st == RN_OK;
 }
 
+// The folders' times and every ROM file's time and size: a file written in place after it was created (a
+// file manager or a documents provider copying into the ROM folder: the name first, then the bytes) leaves
+// the folder's time as it was, and a scan in between would keep the half-written file's size and identity.
 std::map<std::string, double> LibraryModel::folderTimes() const {
   std::map<std::string, double> t;
   t[romDir()] = mtime(romDir());
   t[projectsDir()] = mtime(projectsDir());
+  auto files = [&t](const fs::path& dir) {
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+      std::error_code fe;
+      if (!it->is_regular_file(fe)) continue;
+      const std::string p = it->path().string();
+      t[p] = mtime(p);
+      t[p + "\n#size"] = double(it->file_size(fe));
+    }
+  };
+  files(romDir());
   std::error_code ec;
   for (fs::directory_iterator it(romDir(), ec), end; !ec && it != end; it.increment(ec))
-    if (it->is_directory(ec)) t[it->path().string()] = mtime(it->path().string());
+    if (it->is_directory(ec)) {
+      t[it->path().string()] = mtime(it->path().string());
+      files(it->path());  // one level of sub-folders, as the scan
+    }
   return t;
 }
 
@@ -235,8 +279,10 @@ void LibraryModel::scanThread() {
         r.roms.push_back(std::move(rom));
       }
       rnf_rom_list_free(roms);
+      std::fprintf(stderr, "library: %zu ROMs in %s\n", r.roms.size(), romDir().c_str());
     } else {
       r.error = TRF("Can’t read the folder: %@\n%@", {romDir(), std::string(rnf_last_error())});
+      std::fprintf(stderr, "library: cannot read %s: %s\n", romDir().c_str(), rnf_last_error());
     }
     rnf_project_list* projects = nullptr;
     if (rnf_library_scan_projects(projectsDir().c_str(), &projects) == RN_OK) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "replaynes/product.h"
 #include "vk_renderer.h"
+#include "render/surface_plan.h"
 
 #include <SDL3/SDL_vulkan.h>
 
@@ -8,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <cstring>
 
 #include "host_clock.h"
@@ -59,6 +61,23 @@ const char* resultName(VkResult r) {
 constexpr uint64_t kDisplayTimeoutNs = 1'000'000'000ull;
 }  // namespace
 
+#ifdef __ANDROID__
+namespace {
+std::mutex gLiveMutex;
+VkRenderer* gLive = nullptr;  // the one set up by init, until shutdown
+}  // namespace
+
+void androidSurfaceGoing() {
+  std::lock_guard<std::mutex> lk(gLiveMutex);
+  if (gLive) gLive->surfaceGoing(2.0);
+}
+
+void androidSurfaceBack() {
+  std::lock_guard<std::mutex> lk(gLiveMutex);
+  if (gLive) gLive->surfaceBack();
+}
+#endif
+
 bool VkRenderer::init(SDL_Window* window, std::string* error) {
   window_ = window;
   Uint32 n = 0;
@@ -92,7 +111,12 @@ bool VkRenderer::init(SDL_Window* window, std::string* error) {
     *error = std::string("SDL_Vulkan_CreateSurface: ") + SDL_GetError();
     return false;
   }
-  return initDevice(error);
+  if (!initDevice(error)) return false;
+#ifdef __ANDROID__
+  std::lock_guard<std::mutex> lk(gLiveMutex);
+  gLive = this;
+#endif
+  return true;
 }
 
 bool VkRenderer::initDevice(std::string* error) {
@@ -155,15 +179,20 @@ bool VkRenderer::createDevice(std::string* error) {
   vkEnumerateDeviceExtensionProperties(phys_, nullptr, &en, avail.data());
   std::vector<const char*> exts{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+  // A feature struct goes into the query only when the device has its extension (Vulkan's rule): the Android
+  // emulator's API 33 image aborted on a PRESENT_ID struct it did not know, and a driver may do the same.
   VkPhysicalDevicePresentIdFeaturesKHR idF{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
   VkPhysicalDevicePresentWaitFeaturesKHR waitF{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR};
-  idF.pNext = &waitF;
-  VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-  f2.pNext = &idF;
-  vkGetPhysicalDeviceFeatures2(phys_, &f2);
+  const bool hasIdWait = hasExtension(avail, VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
+                         hasExtension(avail, VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
+  if (hasIdWait) {
+    idF.pNext = &waitF;
+    VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    f2.pNext = &idF;
+    vkGetPhysicalDeviceFeatures2(phys_, &f2);
+  }
   bool disable = std::getenv(productEnvName("NO_PRESENT_WAIT").c_str()) != nullptr;
-  presentWait_ = !disable && hasExtension(avail, VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
-                 hasExtension(avail, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) && idF.presentId && waitF.presentWait;
+  presentWait_ = !disable && hasIdWait && idF.presentId && waitF.presentWait;
   if (presentWait_) {
     exts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
     exts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
@@ -208,10 +237,14 @@ bool VkRenderer::createDevice(std::string* error) {
 
   VkPhysicalDeviceProperties p;
   vkGetPhysicalDeviceProperties(phys_, &p);
+  // The driver's name: core in Vulkan 1.2, an extension before (a Vulkan 1.1 device without it must not see the
+  // struct, as above).
   VkPhysicalDeviceDriverProperties drv{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-  VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-  p2.pNext = &drv;
-  vkGetPhysicalDeviceProperties2(phys_, &p2);
+  if (p.apiVersion >= VK_API_VERSION_1_2 || hasExtension(avail, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+    VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+    p2.pNext = &drv;
+    vkGetPhysicalDeviceProperties2(phys_, &p2);
+  }
   description_ = std::string(p.deviceName) + " / " + drv.driverName + " " + drv.driverInfo +
                  " / present_wait=" + (presentWait_ ? "yes" : "no") +
                  " present_timing(ext)=" + (hasExtension(avail, "VK_EXT_present_timing") ? "yes" : "no") +
@@ -285,12 +318,27 @@ bool VkRenderer::createSwapchain() {
   SDL_GetWindowSizeInPixels(window_, &w, &h);
   VkSurfaceCapabilitiesKHR caps;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps);
-  VkExtent2D ext = caps.currentExtent;
-  if (ext.width == 0xFFFFFFFFu) {
-    ext.width = uint32_t(std::clamp(w, int(caps.minImageExtent.width), int(caps.maxImageExtent.width)));
-    ext.height = uint32_t(std::clamp(h, int(caps.minImageExtent.height), int(caps.maxImageExtent.height)));
+  // The device's orientation and size (render/surface_plan.h): Android panels come in either
+  // orientation, turned any way, with windows smaller than the display.
+  SurfaceCaps surf;
+  surf.width = caps.currentExtent.width;
+  surf.height = caps.currentExtent.height;
+  surf.minWidth = caps.minImageExtent.width;
+  surf.minHeight = caps.minImageExtent.height;
+  surf.maxWidth = caps.maxImageExtent.width;
+  surf.maxHeight = caps.maxImageExtent.height;
+  surf.currentTransform = caps.currentTransform;
+  surf.supportedTransforms = caps.supportedTransforms;
+  const SurfacePlan plan = planSurface(surf, w, h);
+  if (plan.width != surfaceLogged_.width || plan.height != surfaceLogged_.height || plan.rotation != surfaceLogged_.rotation) {
+    std::fprintf(stderr, "video: surface %ux%u turned %d, window %dx%d -> swapchain %ux%u%s\n", surf.width, surf.height,
+                 plan.rotation, w, h, plan.width, plan.height,
+                 plan.transform == kSurfaceIdentity && plan.rotation ? " (the compositor rotates)" : "");
+    surfaceLogged_ = plan;
   }
+  VkExtent2D ext{plan.width, plan.height};
   if (ext.width == 0 || ext.height == 0) { extent_ = {0, 0}; return true; }  // minimised
+  const auto transform = VkSurfaceTransformFlagBitsKHR(plan.transform);
 
   if (renderPass_ == VK_NULL_HANDLE) {
     uint32_t fn = 0;
@@ -350,7 +398,7 @@ bool VkRenderer::createSwapchain() {
   swapchainCopyable_ = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
   if (swapchainCopyable_) sci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
   sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  sci.preTransform = caps.currentTransform;
+  sci.preTransform = transform;
   sci.compositeAlpha = alpha;
   sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;  // display-locked: one picture per vblank, never torn
   sci.clipped = VK_TRUE;
@@ -587,6 +635,63 @@ uint64_t VkRenderer::drawFrameAndPresent(const rn_video_frame_info* frame, const
 }
 
 uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui, const FrameSignal* signal) {
+  bool release = false;
+  {
+    std::unique_lock<std::mutex> lk(gateMutex_);
+    if (gateClosed_) {
+      surfaceGone_ = false;
+      lk.unlock();
+      releaseSurfaceNow();  // nothing touches the old window's surface any more
+      lastHealthy_ = false;
+      return 0;
+    }
+    release = surfaceGone_;
+    surfaceGone_ = false;
+    inFrame_ = true;
+  }
+  if (release) releaseSurfaceNow();  // a new window already: drawFrame makes its surface
+  uint64_t id = drawFrame(newPicture, rect, ui, signal);
+  {
+    std::lock_guard<std::mutex> lk(gateMutex_);
+    inFrame_ = false;
+  }
+  gateCv_.notify_all();
+  return id;
+}
+
+// Android tears the window's surface down on its UI thread (SurfaceHolder.Callback.surfaceDestroyed) while
+// the frame loop may be drawing: SDL waits for the loop only with OpenGL, and after surfaceDestroyed returns
+// the surface must not be touched. Vulkan kept acquiring and presenting on it until its next event pump
+// (the log: "surface: destroyed", then vkAcquireNextImageKHR failed); a driver may block there for good.
+void VkRenderer::surfaceGoing(double timeoutSeconds) {
+  std::unique_lock<std::mutex> lk(gateMutex_);
+  gateClosed_ = true;
+  surfaceGone_ = true;
+  if (!gateCv_.wait_for(lk, std::chrono::duration<double>(timeoutSeconds), [this] { return !inFrame_; }))
+    std::fprintf(stderr, "%s: display: a frame still drawing as the surface went\n", RN_PRODUCT_NAME);
+}
+
+void VkRenderer::surfaceBack() {
+  std::lock_guard<std::mutex> lk(gateMutex_);
+  gateClosed_ = false;
+}
+
+void VkRenderer::releaseSurfaceNow() {
+  if (surface_ == VK_NULL_HANDLE) return;
+  if (device_) {
+    vkDeviceWaitIdle(device_);
+    std::lock_guard<std::mutex> lk(swapMutex_);
+    destroySwapchain();
+    swapGen_ += 1;
+  }
+  extent_ = {0, 0};
+  SDL_Vulkan_DestroySurface(instance_, surface_, nullptr);
+  surface_ = VK_NULL_HANDLE;
+  surfaceLost_ = true;  // the next frame after surfaceBack(): recreateSurface()
+  std::fprintf(stderr, "%s: display: Vulkan surface released (the window's surface went)\n", RN_PRODUCT_NAME);
+}
+
+uint64_t VkRenderer::drawFrame(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui, const FrameSignal* signal) {
   lastHealthy_ = false;
   // A lost device / surface (seen by an earlier call): recreated before anything else.
   if (deviceLost_ || !device_) {
@@ -678,8 +783,11 @@ uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& 
     hasPicture_ = true;
   }
   // The blurred backdrop's copy: of each new picture, or the first after it was turned on / resized.
-  if (post_.backdrop && hasPicture_ &&
-      (newPicture || !backdrop_.ready() || backdrop_.width() != int(frame_.width) || backdrop_.height() != int(frame_.height)))
+  // With the CRT on (the GPU's heavy load) every other picture: the blur at 30 fps is enough.
+  if (newPicture) backdropPictures_ += 1;
+  const bool backdropDue = newPicture && (!crtOn || (backdropPictures_ & 1) == 0);
+  if (post_.backdrop > 0 && hasPicture_ &&
+      (backdropDue || !backdrop_.ready() || backdrop_.width() != int(frame_.width) || backdrop_.height() != int(frame_.height)))
     backdrop_.update(cmd, gameImage_, frame_.width, frame_.height);
   recordAtlasUploads(cmd, slot_);
   // CRT: a new picture (or a changed size / setting / tube plan) is built by its compute passes,
@@ -711,12 +819,12 @@ uint64_t VkRenderer::drawAndPresent(const uint32_t* newPicture, const GameRect& 
   rbi.pClearValues = &clear;
   vkCmdBeginRenderPass(cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
   const bool crtShows = crtOn && rect.visible && crt_.canShow() && !plain;
-  if (post_.backdrop && rect.visible && hasPicture_ && backdrop_.ready()) {
+  if (post_.backdrop > 0 && rect.visible && hasPicture_ && backdrop_.ready()) {
     // Under the picture, where it leaves the screen empty (render/backdrop.h).
     const float px = crtShows ? rect.crt.x : rect.x, py = crtShows ? rect.crt.y : rect.y;
     const float pw = crtShows ? rect.crt.w : rect.w, ph = crtShows ? rect.crt.h : rect.h;
     BackdropPlan plan = planBackdrop(px, py, pw, ph, int(extent_.width), int(extent_.height), backdrop_.width(),
-                                     backdrop_.height());
+                                     backdrop_.height(), post_.backdrop);
     float uv[8] = {float(rect.crop) / frame_.width, float(rect.crop) / frame_.height,
                    float(frame_.width - rect.crop) / frame_.width, float(frame_.height - rect.crop) / frame_.height,
                    float(media_.rotation), 0, 0, 0};
@@ -852,6 +960,12 @@ void VkRenderer::waitLastSubmit() {
 }
 
 void VkRenderer::shutdown() {
+#ifdef __ANDROID__
+  {
+    std::lock_guard<std::mutex> lk(gLiveMutex);
+    if (gLive == this) gLive = nullptr;
+  }
+#endif
   if (!device_ && !instance_) return;
   releaseDevice();
   if (surface_) SDL_Vulkan_DestroySurface(instance_, surface_, nullptr);

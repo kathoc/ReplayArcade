@@ -5,7 +5,7 @@
 // (picture of the last session of the game, else a tile made from its name; the title from the
 // game database in the UI language, "maker · year" under it, a star on favourites).
 // A plays the focused game (a new project), Y marks it as a favourite, X lists its projects,
-// View / Select (Tab) cycles the sort, L / R turn the pages, the Menu pill (L+R / Esc) opens
+// View / Select (Tab) cycles the sort, L / R (or a swipe) turn the pages, the Menu pill (L+R / Esc) opens
 // Settings. An empty library is one card saying where the games go. "Add Test Cartridge" (the last
 // item of the row; Y on the empty card) writes the ReplayNES Test Cartridge into the ROM folder (once)
 // and focuses it. Nothing scrolls: the cards of the neighbouring pages peek in at the screen edges.
@@ -13,6 +13,7 @@
 #include "replaynes/product.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <optional>
 
@@ -188,6 +189,22 @@ void UI::handleLibraryInput(double now, size_t cardCount, size_t pages, bool her
   if (pressed(ImGuiKey_GamepadDpadDown, true) || pressed(ImGuiKey_DownArrow, true)) dy = 1;
   if (pressed(ImGuiKey_PageUp, false)) shoulder(-1);
   if (pressed(ImGuiKey_PageDown, false)) shoulder(1);
+  // A swipe turns the page (a finger on a touch screen, or a mouse dragged): right to left or bottom to top =
+  // next, either way it goes further than a tap wanders. The press it began is let go before the cards are
+  // made, so the card under the finger does not open. Without it a phone had no way to the next page but the
+  // dimmed edge of the neighbouring one (2026-11-06: "can't scroll with many ROMs").
+  {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+      const float sx = io.MousePos.x - io.MouseClickedPos[0].x, sy = io.MousePos.y - io.MouseClickedPos[0].y;
+      if (std::max(std::fabs(sx), std::fabs(sy)) >= S(64)) {
+        const float along = std::fabs(sx) >= std::fabs(sy) ? sx : sy;
+        std::fprintf(stderr, "library: swipe %.0f,%.0f: page %s\n", sx, sy, along < 0 ? "next" : "back");
+        shoulder(along < 0 ? 1 : -1);
+        ImGui::ClearActiveID();
+      }
+    }
+  }
   // The mouse wheel turns the pages too (down / right = next), a page a notch, one per frame.
   libWheel_ -= ImGui::GetIO().MouseWheel + ImGui::GetIO().MouseWheelH;
   if (ImGui::GetIO().MouseWheel == 0 && ImGui::GetIO().MouseWheelH == 0 && std::fabs(libWheel_) < 1) libWheel_ = 0;
@@ -240,7 +257,8 @@ void UI::handleLibraryInput(double now, size_t cardCount, size_t pages, bool her
       d_.app->playFromLibrary(*focused);
     } else if (n == 0 && d_.library->roms().empty()) {
       d_.library->ensureFolders();
-      openFolder(d_.library->romDir());
+      if (canImportFiles()) addRoms();
+      else openRomFolder();
     }
   } else if (keyX) {
     if (focused) {
@@ -453,34 +471,43 @@ void UI::buildLibrary(double now) {
     textCentered(dl, m.hint(), inset(r, S(24)), r.y + r.h * 0.40f + m.title() * 1.5f + m.label() * 1.6f, kTextFaint,
                  RN_PRODUCT_NES ? TR(".nes files; they appear here by themselves")
                                 : TR("ROM zips (FinalBurn Neo set names); they appear here by themselves"));
-    // Buttons: Open Folder (A), Reload (X), Add Test Cartridge (Y).
-    constexpr int buttons = RN_PRODUCT_NES ? 3 : 2;
-    float gap = S(16), bw = std::min(S(220), (r.w - S(48) - gap * (buttons - 1)) / buttons), bh = m.label() * 2.2f;
-    float bx = r.x + (r.w - bw * buttons - gap * (buttons - 1)) / 2;
-    static const char* const kIcon[3] = {"folder-open", "refresh", "plus"};
+    // Buttons: Add ROMs where the system has a file picker (A: Android, docs/design/ANDROID.md), Open Folder
+    // (A, else none), Reload (X), Add Test Cartridge (Y).
+    enum EmptyAction { kAddRoms, kOpenFolder, kReload, kTestCartridge };
+    EmptyAction actions[4];
+    int buttons = 0;
+    if (canImportFiles()) actions[buttons++] = kAddRoms;
+    actions[buttons++] = kOpenFolder;
+    actions[buttons++] = kReload;
+    if (RN_PRODUCT_NES) actions[buttons++] = kTestCartridge;
+    float gap = S(16), bw = std::min(S(220), (r.w - S(48) - gap * float(buttons - 1)) / float(buttons)), bh = m.label() * 2.2f;
+    float bx = r.x + (r.w - bw * float(buttons) - gap * float(buttons - 1)) / 2;
+    static const char* const kIcon[4] = {"file-plus", "folder-open", "refresh", "plus"};
     for (int i = 0; i < buttons; ++i) {
+      const EmptyAction a = actions[i];
       const LRect br_{bx + float(i) * (bw + gap), r.bottom() - bh - S(24), bw, bh};
       ImGui::SetCursorScreenPos(tl(br_));
       ImGui::PushID(i);
       bool clicked = ImGui::InvisibleButton("##emptybtn", ImVec2(br_.w, br_.h));
       ImGui::PopID();
       dl->AddRectFilled(tl(br_), br(br_), i == 0 ? kBrand : kTile, br_.h / 2);
-      const char* label = i == 0 ? TR("Open Folder") : i == 1 ? TR("Reload") : TR("Add Test Cartridge");
-      std::string t = std::string(icons::glyph(kIcon[i])) + "  " + label;
+      const char* label = a == kAddRoms ? TR("Add ROMs") : a == kOpenFolder ? TR("Open Folder") : a == kReload ? TR("Reload") : TR("Add Test Cartridge");
+      std::string t = std::string(icons::glyph(kIcon[a])) + "  " + label;
       textFit(dl, m.label(), ImVec2(br_.x + S(12) + std::max(0.0f, (br_.w - S(24) - measure(m.label(), t.c_str()).x) / 2), br_.y + (br_.h - m.label()) / 2),
               br_.w - S(24), kText, t);
       if (clicked) {
-        if (i == 2) {
+        if (a == kTestCartridge) {
           addTestCartridge(now);
           continue;
         }
         lib->ensureFolders();
-        if (i == 0) openFolder(lib->romDir());
+        if (a == kAddRoms) addRoms();
+        else if (a == kOpenFolder) openRomFolder();
         else lib->refresh();
       }
     }
     if (!lib->folderError().empty()) description_ = lib->folderError();
-    prompt({"ui.confirm"}, TR("Open Folder"));
+    prompt({"ui.confirm"}, canImportFiles() ? TR("Add ROMs") : TR("Open Folder"));
     prompt({"face.west"}, TR("Reload"));
     if (RN_PRODUCT_NES) prompt({"face.north"}, TR("Add Test Cartridge"));
   } else {

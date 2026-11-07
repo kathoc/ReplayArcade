@@ -119,6 +119,8 @@ class AppModel {
 
   bool hasSession() const { return emu_->session() != nullptr; }
   bool isTempSession() const { return current_ && current_->isTemp; }
+  /// The open game's ROM (SHA-256), "" when none or unknown.
+  std::string currentRomSHA256() const { return current_ ? current_->romSHA256 : std::string(); }
   std::string windowTitle() const;
   std::string romName() const;  // of the current session
   const Paths& paths() const { return paths_; }
@@ -166,7 +168,12 @@ class AppModel {
   std::optional<ResumeRec> lastResume_;
   bool screensaver_ = false, screensaverLeftSession_ = false;
   std::string screensaverRom_;
-  uint64_t screensaverSeed_ = 0;
+  // The demos' order: a shuffled round of the library, each game once before any again, kept in
+  // <config>/screensaver-order.txt across launches (picking at random each time repeated games: 30
+  // demos from 255 games repeat one with a chance of 83 %, and others never came).
+  std::vector<std::string> screensaverBag_;
+  bool screensaverBagLoaded_ = false;
+  std::string takeScreensaverRom(const std::vector<std::string>& library);
   std::optional<ResumeRec> pendingResume_;  // the launch's resume record, offered by "Continue"
   // Play history (library.json): the session's ROM, its start and the time not yet recorded.
   std::string playSHA_;

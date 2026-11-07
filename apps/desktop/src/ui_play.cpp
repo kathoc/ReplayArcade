@@ -8,6 +8,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -20,6 +21,7 @@
 #include "l10n.h"
 #include "settings.h"
 #include "thumbnails.h"
+#include "face_layout.h"
 #include "ui.h"
 #include "ui_theme.h"
 #include "ui_widgets.h"
@@ -685,6 +687,86 @@ void UI::buildPlayerOrder() {
   }
   y += box + S(18);
   centered(hs, foot, kTextDim);
+}
+
+// The face button check (docs/design/FACE_CHECK.md): the four face buttons as four circles, one lit
+// (south, then east); the button at that position held a second answers - a ring fills meanwhile. From
+// the two buttons SDL reported, whether this controller reports its face buttons swapped. No choosing,
+// no brand names.
+void UI::buildFaceCheck() {
+  const int slot = d_.input->faceCheckSlot();
+  if (slot != faceSlot_) {
+    faceCheckReset(slot);
+    faceMismatch_ = false;
+  }
+  constexpr double kHold = 1.0;
+  const double now = ImGui::GetTime();
+  float held = faceHeld_ >= 0 ? float(std::min(1.0, (now - faceHeldSince_) / kHold)) : 0.0f;
+  if (faceHeld_ >= 0 && held >= 1.0f) {
+    const int answer = faceHeld_;
+    faceHeld_ = -1;  // the next answer is a new press
+    held = 0;
+    if (faceStep_ == 0) {
+      faceAtSouth_ = answer;
+      faceStep_ = 1;
+      faceMismatch_ = false;
+    } else {
+      const int layout = faceLayoutFromHolds(faceAtSouth_, answer);
+      std::fprintf(stderr, "input: face check: south reports %d, east reports %d -> %s\n", faceAtSouth_, answer,
+                   layout < 0 ? "no match, again" : layout ? "swapped" : "where they are");
+      faceCheckReset(slot);
+      faceMismatch_ = layout < 0;
+      if (layout >= 0) {
+        d_.input->setFaceLayout(slot, layout == 1);
+        return;
+      }
+    }
+  }
+  const UiMetrics& m = metrics_;
+  ImGuiIO& io = ImGui::GetIO();
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 170));
+  const std::string title = TR("ABXY Button Positions");
+  const std::string ask = TRF("On %@, hold the button at the lit circle for a second.", {d_.input->pad(slot).name});
+  const std::string again = faceMismatch_ ? TR("They did not match. Once more from the first.") : std::string();
+  const std::string step = faceStep_ == 0 ? "1 / 2" : "2 / 2";
+  const float fs = m.label(), hs = m.hint(), r = fs * 0.9f, pic = r * 6.2f;
+  const float w = std::max({pic, measure(fs * 1.2f, title.c_str()).x, measure(fs, ask.c_str()).x,
+                            measure(hs, again.c_str()).x}) + S(64);
+  const float h = S(24) + fs * 1.2f + S(14) + fs + S(10) + hs + S(22) + pic + S(14) + hs + S(22);
+  const ImVec2 p0((io.DisplaySize.x - w) / 2, (io.DisplaySize.y - h) / 2);
+  dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(22, 22, 25, 245), S(16));
+  dl->AddRect(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(255, 255, 255, 40), S(16), 0, 1.0f);
+  float y = p0.y + S(24);
+  auto centered = [&](float size, const std::string& t, ImU32 col, float after) {
+    dl->AddText(ImGui::GetFont(), size, ImVec2(p0.x + (w - measure(size, t.c_str()).x) / 2, y), col, t.c_str());
+    y += size + after;
+  };
+  centered(fs * 1.2f, title, kText, S(14));
+  centered(fs, ask, kText, S(10));
+  centered(hs, again, kBrand, S(22));
+  // Four circles in a diamond (north, west, east, south); the asked one lit, its ring filling while held.
+  const ImVec2 c(p0.x + w / 2, y + pic / 2);
+  const char* asked = faceStep_ == 0 ? "face.south" : "face.east";
+  const struct { const char* el; float dx, dy; } pos[] = {
+      {"face.north", 0, -1}, {"face.west", -1, 0}, {"face.east", 1, 0}, {"face.south", 0, 1}};
+  for (const auto& q : pos) {
+    const ImVec2 at(c.x + q.dx * r * 1.9f, c.y + q.dy * r * 1.9f);
+    if (std::string(asked) != q.el) {
+      dl->AddCircle(at, r, IM_COL32(242, 242, 246, 90), 32, S(2.0f));
+      continue;
+    }
+    // Lit, pulsing gently until held.
+    const float pulse = held > 0 ? 1.0f : 0.75f + 0.25f * std::sin(float(now) * 4.0f);
+    dl->AddCircleFilled(at, r, (kBrand & 0x00FFFFFF) | (ImU32(255 * pulse) << 24), 32);
+    if (held > 0) {
+      const float a0 = -IM_PI / 2;
+      dl->PathArcTo(at, r + S(7), a0, a0 + held * 2 * IM_PI, 48);
+      dl->PathStroke(kText, 0, S(4.0f));
+    }
+  }
+  y += pic + S(14);
+  centered(hs, step, kTextDim, 0);
 }
 
 std::string UI::statusLabelText(bool practicePart) const {

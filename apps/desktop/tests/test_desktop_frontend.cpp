@@ -11,6 +11,8 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -19,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <set>
 #include <sstream>
 #include <thread>
 
@@ -26,6 +29,7 @@
 #include "cadence.h"
 #include "display_scheduler.h"
 #include "dialogs.h"
+#include "face_layout.h"
 #include "display_health.h"
 #include "emulation.h"
 #include "export/export_frame.h"
@@ -34,6 +38,7 @@
 #include "export/mp4_retime.h"
 #include "l10n.h"
 #include "library.h"
+#include "rom_finder.h"
 #include "library_thumbs.h"
 #include "manifest.h"
 #include "osk.h"
@@ -195,12 +200,24 @@ TEST_CASE("settings round trip and tolerant parsing") {
   s.diagramFamily = "4";
   s.timelineSlot = 5;
   s.checkForUpdates = false;
-  s.backdrop = false;
+  s.backdrop = 3;
   Settings t = Settings::parse(s.serialize());
   CHECK_FALSE(t.checkForUpdates);
   CHECK(Settings::parse("").checkForUpdates);  // on by default
-  CHECK_FALSE(t.backdrop);
-  CHECK(Settings::parse("").backdrop);  // the blurred sides: on by default
+  CHECK_EQ(t.backdrop, 3);
+  CHECK_EQ(Settings::parse("").backdrop, 2);  // the blurred sides: low by default (2026-11-03: 0 none ... 4 high)
+  CHECK_EQ(Settings::parse("backdrop=0\n").backdrop, 0);
+  CHECK_EQ(Settings::parse("backdrop2=9\n").backdrop, 4);
+  // The ROM / Projects folders chosen in Settings ("": the library's own).
+  CHECK(Settings::parse("").romFolder.empty());
+  {
+    Settings f;
+    f.romFolder = "/media/card/ROMs";
+    f.projectsFolder = "/home/me/Replays";
+    Settings g = Settings::parse(f.serialize());
+    CHECK_EQ(g.romFolder, std::string("/media/card/ROMs"));
+    CHECK_EQ(g.projectsFolder, std::string("/home/me/Replays"));
+  }
   CHECK_FALSE(t.integerScale);
   CHECK(t.par87);
   CHECK_EQ(t.flash, RN_PRODUCT_FLASH_FILTER ? 3 : 0);
@@ -623,6 +640,105 @@ TEST_CASE("library search") {
   CHECK(librarySearchMatches("nintendo/", r));
   CHECK(librarySearchMatches("\xEF\xBC\xAD\xEF\xBD\x81\xEF\xBD\x92\xEF\xBD\x89\xEF\xBD\x8F", r));  // full-width "Mario"
   CHECK_FALSE(librarySearchMatches("zelda", r));
+}
+
+// Settings > App > Folders & License (docs/design/ANDROID.md, "Choosing the folders"; 2026-11-04).
+TEST_CASE("library: chosen ROM / Projects folders, back to the library's own; the chooser's root") {
+  const std::string root = tmpDir("chosen-folders") + "/" RN_PRODUCT_DATA_DIR;
+  const std::string chosen = tmpDir("chosen-folders-roms");
+  const std::string rom = std::string("game.") + (RN_PRODUCT_NES ? "nes" : "zip");
+  { std::ofstream(fs::u8path(chosen + "/" + rom), std::ios::binary) << "not a real ROM"; }
+  LibraryModel lib(root);
+  auto scan = [&] {
+    for (int i = 0; i < 300 && lib.scanning(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    lib.poll();
+  };
+  REQUIRE(lib.ensureFolders());
+  lib.refresh();
+  scan();
+  CHECK(lib.roms().empty());
+  CHECK_FALSE(lib.romFolderChosen());
+  lib.setFolders(chosen, "");
+  CHECK(lib.romFolderChosen());
+  CHECK(LibraryModel::samePath(lib.romDir(), chosen));
+  CHECK(LibraryModel::samePath(lib.projectsDir(), root + "/" RNF_LIBRARY_PROJECTS_DIR));
+  scan();
+  REQUIRE_EQ(lib.roms().size(), size_t(1));
+  CHECK(LibraryModel::samePath(lib.roms().front().path, chosen + "/" + rom));
+  // The in-app chooser stays in the library, or in a chosen folder outside it.
+  CHECK(LibraryModel::samePath(lib.chooserRoot(lib.projectsDir()), root));
+  CHECK(LibraryModel::samePath(lib.chooserRoot(chosen), chosen));
+  // A chosen folder that is missing is made.
+  const std::string fresh = tmpDir("chosen-folders-new") + "/Replays";
+  lib.setFolders(chosen, fresh);
+  CHECK(fs::is_directory(fs::u8path(fresh)));
+  CHECK(lib.folderError().empty());
+  lib.setFolders("", "");
+  CHECK(LibraryModel::samePath(lib.romDir(), root + "/" RNF_LIBRARY_ROM_DIR));
+  scan();
+  CHECK(lib.roms().empty());
+}
+
+// Add ROMs > Search the Device (rom_finder.h; docs/design/ANDROID.md, "Finding ROMs anywhere"): every folder,
+// at any depth, hidden ones, any case of the extension, names in any script; the game database decides.
+TEST_CASE("rom finder: playable ROMs anywhere under the roots, the unknown ones counted, the ROM folder and skips left out") {
+  if (!RN_PRODUCT_NES) return;  // the walk is the same; the NES Test Cartridge is a ROM the database knows
+  const std::string root = tmpDir("rom-finder");
+  const std::string romDir = root + "/Android/data/app/ROM";
+  for (const char* d : {"/Documents/a/b/c/d/e", "/.hidden", "/ROMs フォルダ 日本語", "/Android/data/other", "/Android/data/app/ROM"})
+    fs::create_directories(fs::u8path(root + d));
+  auto cart = [&](const std::string& path) { REQUIRE(rn_write_test_cartridge((root + path).c_str()) == RN_OK); };
+  cart("/top.nes");
+  cart("/Documents/a/b/c/d/e/deep.nes");
+  cart("/.hidden/hidden.nes");
+  cart("/ROMs フォルダ 日本語/UPPER.NES");
+  cart("/Android/data/other/closed.nes");      // a folder the search must leave alone (skip)
+  cart("/Android/data/app/ROM/already.nes");   // the ROM folder itself
+  { std::ofstream(fs::u8path(root + "/Documents/junk.nes"), std::ios::binary) << "not a ROM"; }
+  std::atomic<size_t> folders{0};
+  RomSearch r = RomFinder::walk({root}, romDir, {root + "/Android/data/other"}, &folders);
+  std::vector<std::string> names;
+  for (const FoundRom& f : r.roms) names.push_back(f.name);
+  std::sort(names.begin(), names.end());
+  CHECK((names == std::vector<std::string>{"UPPER.NES", "deep.nes", "hidden.nes", "top.nes"}));
+  CHECK_EQ(r.unknown, size_t(1));
+  CHECK(folders.load() >= 8);
+  // The copy: ".<name>.part" renamed when complete, the source left in place.
+  RomFinder finder;
+  finder.copy(r.roms, romDir);
+  size_t copied = 0;
+  std::vector<std::string> failed;
+  for (int i = 0; i < 300 && !finder.takeCopy(&copied, &failed); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  CHECK_EQ(copied, size_t(4));
+  CHECK(failed.empty());
+  CHECK(fs::exists(fs::u8path(romDir + "/UPPER.NES")));
+  CHECK(fs::exists(fs::u8path(root + "/ROMs フォルダ 日本語/UPPER.NES")));
+  CHECK_FALSE(fs::exists(fs::u8path(romDir + "/.UPPER.NES.part")));
+  // Searched again: everything is in the ROM folder now.
+  RomSearch again = RomFinder::walk({root}, romDir, {root + "/Android/data/other"}, nullptr);
+  CHECK(again.roms.empty());
+  CHECK_EQ(again.alreadyThere, size_t(4));
+}
+
+// A file manager or a documents provider makes the file, then writes it: the folder's time stays as it was.
+TEST_CASE("library: the watch sees a ROM written after it was created") {
+  LibraryModel lib(tmpDir("watch-written") + "/" RN_PRODUCT_DATA_DIR);
+  REQUIRE(lib.ensureFolders());
+  const std::string path = lib.romDir() + "/game." + (RN_PRODUCT_NES ? "nes" : "zip");
+  { std::ofstream(fs::u8path(path), std::ios::binary); }  // created, empty
+  auto scan = [&] {
+    for (int i = 0; i < 300 && lib.scanning(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    lib.poll();
+  };
+  lib.refresh();
+  scan();
+  REQUIRE_EQ(lib.roms().size(), size_t(1));
+  CHECK_EQ(lib.roms().front().size, int64_t(0));
+  { std::ofstream(fs::u8path(path), std::ios::binary | std::ios::app) << std::string(4096, 'x'); }  // the bytes
+  lib.watch(1000.0);
+  scan();
+  REQUIRE_EQ(lib.roms().size(), size_t(1));
+  CHECK_EQ(lib.roms().front().size, int64_t(4096));
 }
 
 TEST_CASE("library: Add Test Cartridge writes it once, the game database names it") {
@@ -2052,6 +2168,87 @@ TEST_CASE("screensaver: live demos of library games, nothing recorded; a paused 
   CHECK(w.emu->paused());
 }
 
+TEST_CASE("face layouts: a model's swapped face buttons, remembered; which controllers are asked") {
+  std::string dir = tmpDir("faces");
+  const std::string file = dir + "/config/face-layouts.txt";
+  {
+    FaceLayouts f(file);
+    CHECK_FALSE(f.known("guid/Retroid Pocket Controller"));
+    f.set("guid/Retroid Pocket Controller", true);
+    f.set("guid2/Other Pad", false);
+  }
+  FaceLayouts f(file);  // the next launch
+  CHECK(f.known("guid/Retroid Pocket Controller"));
+  CHECK(f.swapped("guid/Retroid Pocket Controller"));
+  CHECK(f.known("guid2/Other Pad"));
+  CHECK_FALSE(f.swapped("guid2/Other Pad"));
+  f.forget("guid2/Other Pad");
+  CHECK_FALSE(FaceLayouts(file).known("guid2/Other Pad"));
+  // Swapped: south <-> east, west <-> north; the rest as it is.
+  CHECK_EQ(faceButtonAt(0, true), 1);
+  CHECK_EQ(faceButtonAt(1, true), 0);
+  CHECK_EQ(faceButtonAt(2, true), 3);
+  CHECK_EQ(faceButtonAt(3, true), 2);
+  CHECK_EQ(faceButtonAt(4, true), 4);  // back
+  CHECK_EQ(faceButtonAt(0, false), 0);
+  CHECK_EQ(std::string(faceElementAt("face.south", true)), std::string("face.east"));
+  CHECK(faceElementAt("face.south", false) == nullptr);
+  // The check: the button held at the south position, then at the east position.
+  CHECK_EQ(faceLayoutFromHolds(0, 1), 0);   // south reports south: where they are
+  CHECK_EQ(faceLayoutFromHolds(1, 0), 1);   // south reports east: swapped
+  CHECK_EQ(faceLayoutFromHolds(1, 1), -1);  // the same button twice
+  CHECK_EQ(faceLayoutFromHolds(0, 0), -1);
+  CHECK_EQ(faceLayoutFromHolds(2, 1), -1);  // a west / north button at the south position
+  // Asked: no known family, not Steam's virtual pad.
+  CHECK(faceLayoutUncertain(RNF_FAMILY_GENERIC, false));
+  CHECK_FALSE(faceLayoutUncertain(RNF_FAMILY_GENERIC, true));
+  CHECK_FALSE(faceLayoutUncertain(RNF_FAMILY_XBOX, false));
+  CHECK_FALSE(faceLayoutUncertain(RNF_FAMILY_NINTENDO, false));
+  CHECK_FALSE(faceLayoutUncertain(RNF_FAMILY_STEAM_DECK, false));
+}
+
+TEST_CASE("screensaver: a shuffled round, each game once before any again, kept across launches") {
+  RN_REQUIRE_NESTOPIA();
+  std::string dir = tmpDir("screensaver-round");
+  std::set<std::string> games;
+  std::string last;
+  {
+    World w(dir + "/w", true);
+    for (const char* n : {"Game A", "Game B", "Game C", "Game D"}) testRom(w.library->romDir(), n + testRomExtension());
+    w.library->refresh();
+    for (int i = 0; i < 200 && !w.library->poll(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    REQUIRE_EQ(w.library->roms().size(), size_t(4));
+    REQUIRE(w.app->startScreensaver());
+    games.insert(w.app->screensaverRom());
+    w.app->nextScreensaverDemo();
+    games.insert(w.app->screensaverRom());
+    last = w.app->screensaverRom();
+    w.app->stopScreensaver();
+  }
+  {
+    // The next launch goes on with the same round: the two games not shown yet.
+    World w(dir + "/w", false);
+    w.library->refresh();
+    for (int i = 0; i < 200 && !w.library->poll(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    REQUIRE_EQ(w.library->roms().size(), size_t(4));
+    REQUIRE(w.app->startScreensaver());
+    games.insert(w.app->screensaverRom());
+    w.app->nextScreensaverDemo();
+    games.insert(w.app->screensaverRom());
+    CHECK_EQ(games.size(), size_t(4));  // all four, none twice
+    // A new round never starts with the game just shown; its four come once each again.
+    std::set<std::string> round;
+    for (int i = 0; i < 4; ++i) {
+      last = w.app->screensaverRom();
+      w.app->nextScreensaverDemo();
+      CHECK(w.app->screensaverRom() != last);
+      round.insert(w.app->screensaverRom());
+    }
+    CHECK_EQ(round.size(), size_t(4));
+    w.app->stopScreensaver();
+  }
+}
+
 TEST_CASE("session: Reset Project backs a saved project up to the Trash") {
   RN_REQUIRE_NESTOPIA();
   std::string dir = tmpDir("reset");
@@ -2222,7 +2419,11 @@ TEST_CASE("thumbnails: live capture and background batches") {
   emu.install(s);
   CHECK_FALSE(bool(thumbs.imageAt(rnf_thumb_picture_frame(1, step))));
   thumbs.layout(1000, 64, rn_take_length(s), 0);
-  for (int i = 0; i < 400 && !thumbs.imageAt(rnf_thumb_picture_frame(2, step)); ++i) {
+  // Until the batch is done, bounded by wall time: the workers run at idle priority (SCHED_IDLE), so with
+  // the other tests filling every CPU (ctest -j8) they wait for those (measured: 0.3 s alone, 22-26 s there).
+  auto t0 = std::chrono::steady_clock::now();
+  for (int i = 0; !thumbs.imageAt(rnf_thumb_picture_frame(2, step)) &&
+                  std::chrono::steady_clock::now() - t0 < std::chrono::seconds(120); ++i) {
     thumbs.pump(s, 1.0 + i * 0.01);
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
@@ -2883,8 +3084,11 @@ TEST_CASE("library thumbs: ROMs not on screen get their pictures later, never wh
   std::string rom2 = d + "/roms/second.nes";
   fs::copy_file(rom, rom2);
   LibraryThumbs thumbs(d + "/thumbs");
+  // Wall time. The picture worker runs at the lowest priority and rests as long as each frame took: with the
+  // other tests (ctest -j8) and emulators on the host filling the CPUs, 20 s was not enough (2026-11-05).
   auto waitArrival = [&](int ms) {
-    for (int i = 0; i < ms / 10; ++i) {
+    const auto t0 = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(ms)) {
       if (thumbs.pollRomPictures()) return true;
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -2897,7 +3101,7 @@ TEST_CASE("library thumbs: ROMs not on screen get their pictures later, never wh
   CHECK_FALSE(fs::exists(thumbs.fileFor("r:" + rom)));
   // Closed: made, written, and not kept in memory until a card asks (then read from the file).
   thumbs.setPicturesPaused(false);
-  REQUIRE(waitArrival(20000));
+  REQUIRE(waitArrival(120000));
   CHECK(fs::exists(thumbs.fileFor("r:" + rom)));
   ThumbRef img = thumbs.forRom(rom);
   REQUIRE(img);
@@ -2923,7 +3127,7 @@ TEST_CASE("library thumbs: ROMs not on screen get their pictures later, never wh
   CHECK_FALSE(thumbs.forRom(rom2));
   thumbs.requestRomPicture(rom2);
   thumbs.setPicturesPaused(false);
-  REQUIRE(waitArrival(20000));
+  REQUIRE(waitArrival(120000));
   ThumbRef img2 = thumbs.forRom(rom2);
   REQUIRE(img2);
   CHECK(img2.get()->px == want.get()->px);

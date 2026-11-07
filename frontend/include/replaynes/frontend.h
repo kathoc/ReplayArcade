@@ -739,7 +739,11 @@ typedef enum rnf_menu_feature {
   RNF_MENU_FEATURE_CORE = 1u << 11,       /* System > Core (a second core is built in) */
   RNF_MENU_FEATURE_LAYOUT_TURBO = 1u << 12, /* Non-NES layout: global and per-button Turbo pages */
   RNF_MENU_FEATURE_BACKGROUND = 1u << 13,   /* System > More > Play in the background (RN_PRODUCT_FOCUS_PAUSE) */
-  RNF_MENU_FEATURE_MOUSE = 1u << 14         /* Controls > More > Mouse (non-NES layout: the mouse plays analog controls) */
+  RNF_MENU_FEATURE_MOUSE = 1u << 14,        /* Controls > More > Mouse (non-NES layout: the mouse plays analog controls) */
+  RNF_MENU_FEATURE_TOUCH = 1u << 15,        /* Controls > Touch Controls (a touch screen to play on: Android; in Keyboard's place) */
+  RNF_MENU_FEATURE_IMPORT = 1u << 16,       /* App > Folders > Add ROMs (a system file picker copies into the ROM folder: Android) */
+  RNF_MENU_FEATURE_SHARE_LOG = 1u << 17,    /* App > Folders > Share Log (the app's log file to another app: Android) */
+  RNF_MENU_FEATURE_ORIENTATION = 1u << 18   /* App > Screen Orientation (Automatic / Landscape / Portrait: Android) */
 } rnf_menu_feature;
 typedef enum rnf_menu_page_kind {
   RNF_MENU_PAGE_TILES = 0,    /* one row of large icon tiles (Quick Menu, Retry, Share, Game) */
@@ -1126,6 +1130,9 @@ void rnf_set_content_id_provider(rnf_content_id_fn fn, void* ctx);
  * extension. */
 typedef int (*rnf_rom_filter_fn)(const char* path, void* ctx);
 void rnf_set_rom_filter(rnf_rom_filter_fn fn, void* ctx);
+/* 1 when the library would list this file: a ROM extension of the product (any case) and the product's
+ * filter (rnf_set_rom_filter). Only the name is read. */
+int rnf_library_is_rom_file(const char* path);
 
 /* Content IDs (file SHA-256 by default), cached by path + size + modification date. Thread-safe. */
 typedef struct rnf_rom_hash_cache rnf_rom_hash_cache;

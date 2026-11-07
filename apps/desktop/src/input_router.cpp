@@ -16,6 +16,7 @@
 #include "../../../engine/src/util/Json.h"
 #include "host_clock.h"
 #include "settings.h"
+#include "touch/touch_layout.h"
 
 namespace rnl {
 
@@ -33,6 +34,8 @@ std::string slotPrefix(int slot) { return "gc" + std::to_string(slot) + ":"; }
 InputRouter::InputRouter(std::string bindingsFile, Settings* settings)
     : in_(rn_input_new()), file_(std::move(bindingsFile)), baseFile_(file_), settings_(settings), chord_(rnf_chord_new(0)),
       undoChord_(rnf_chord_new(0)) {
+  // After baseFile_ is set (faces_ is declared before it).
+  faces_ = FaceLayouts((std::filesystem::path(baseFile_).parent_path() / "face-layouts.txt").string());
   debugInput_ = std::getenv(productEnvName("DEBUG_INPUT").c_str()) ||
                 std::filesystem::exists(std::filesystem::path(baseFile_).parent_path() / "debug-input");
   profiles_[0] = rn_input_new();
@@ -187,6 +190,7 @@ void InputRouter::rebuildRuntime() {
   }
   rn_input_release_all(in_);
   rn_input_load_json(in_, runtime.dump().c_str());
+  bindTouch();
   setMouseAxes();
   pressed_.clear();
   stickState_.clear();
@@ -221,6 +225,7 @@ void InputRouter::setLayout(const char* json) {
   pressed_.clear();
   stickState_.clear();
   load();
+  bindTouch();
 }
 
 bool InputRouter::buttonTurbo(const std::string& action, int& period, int& duty) const {
@@ -1027,6 +1032,44 @@ void InputRouter::describe(PadInfo& p) {
   SDL_GetJoystickGUIDInfo(g, &vendor, &product, nullptr, nullptr);
   p.steamSlot = vendor == 0x28de && product == 0x11ff ? SDL_GetGamepadPlayerIndex(p.pad) : -1;
   p.steamHandle = SDL_GetGamepadSteamHandle(p.pad);
+  // The face layout the user checked for this model (docs/design/FACE_CHECK.md): its labels where they are.
+  p.model = p.guid + "/" + p.name;
+  p.faceUncertain = faceLayoutUncertain(p.family, p.steamSlot >= 0);
+  p.facesSwapped = faces_.swapped(p.model);
+  if (p.facesSwapped) {
+    std::map<std::string, std::string> at;
+    for (const auto& [el, label] : p.labels) at[faceElementAt(el, true) ? faceElementAt(el, true) : el] = label;
+    p.labels.swap(at);
+  }
+}
+
+int InputRouter::faceCheckSlot() const {
+  for (int s = 0; s < kSlots; ++s) {
+    const PadInfo& p = pads_[s];
+    if (p.pad && (faceRecheck_.count(p.model) || (p.faceUncertain && !faces_.known(p.model)))) return s;
+  }
+  return -1;
+}
+
+void InputRouter::setFaceLayout(int slot, bool swapped) {
+  if (slot < 0 || slot >= kSlots || !pads_[slot].pad) return;
+  const std::string model = pads_[slot].model;
+  faces_.set(model, swapped);
+  faceRecheck_.erase(model);
+  std::fprintf(stderr, "input: %s reports its face buttons %s\n", pads_[slot].name.c_str(), swapped ? "swapped" : "where they are");
+  for (PadInfo& p : pads_)
+    if (p.pad && p.model == model) describe(p);
+  if (standby_.pad && standby_.model == model) describe(standby_);
+}
+
+bool InputRouter::recheckFaceLayouts() {
+  bool any = false;
+  for (const PadInfo& p : pads_)
+    if (p.pad && p.steamSlot < 0) {
+      faceRecheck_.insert(p.model);
+      any = true;
+    }
+  return any;
 }
 
 void InputRouter::syncPads() {
@@ -1182,6 +1225,66 @@ void InputRouter::playerOrderPress(SDL_JoystickID id) {
   ++orderNext_;
   playersMoved();
   if (orderNext_ >= kSlots || orderNext_ >= connectedCount() + (standby_.pad ? 1 : 0)) endPlayerOrder();
+}
+
+SDL_Event InputRouter::atFacePosition(const SDL_Event& e) const {
+  if ((e.type != SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.type != SDL_EVENT_GAMEPAD_BUTTON_UP) ||
+      e.gbutton.button > SDL_GAMEPAD_BUTTON_NORTH)
+    return e;
+  const SDL_JoystickID id = e.gbutton.which;
+  const int s = slotOf(id);
+  const PadInfo* p = s >= 0 ? &pads_[s] : standby_.pad && standby_.id == id ? &standby_ : nullptr;
+  for (const PadInfo& w : overflow_)
+    if (!p && w.id == id) p = &w;
+  if (!p || !p->facesSwapped) return e;
+  SDL_Event moved = e;
+  moved.gbutton.button = Uint8(faceButtonAt(e.gbutton.button, true));
+  return moved;
+}
+
+void InputRouter::setTouchEnabled(bool on) {
+  if (touch_ == on) return;
+  touch_ = on;
+  bindTouch();
+}
+
+// The touch inputs' bindings (the iPhone's TouchBindings): the NES pad's table, or another core's from its
+// layout's actions (B / A = buttons 1 / 2, C / D, coin, start, the turbo of 1 / 2, rewind / fast-forward). An
+// arcade session's runtime table is rebuilt from the profiles and never saved, so they are added each time;
+// the NES table is saved: only the missing ones (a customised touch binding is kept, as on the iPhone).
+void InputRouter::bindTouch() {
+  if (!touch_) return;
+  std::vector<touch::TouchBinding> want;
+  if (nesLayout_) {
+    std::vector<touch::TouchBinding> existing;
+    for (const rnf_binding& b : bindings()) existing.push_back({b.input, b.action});
+    want = touch::TouchBindings::missing(existing);
+  } else {
+    std::set<std::string> actions;
+    for (size_t i = 0, n = rnf_input_action_count(); i < n; ++i) {
+      rnf_action_info a{};
+      if (rnf_input_action_get(i, &a) && a.id) actions.insert(a.id);
+    }
+    want = touch::TouchBindings::forLayout(actions);
+  }
+  for (const auto& b : want) rn_input_bind(in_, b.input.c_str(), b.action.c_str());
+}
+
+void InputRouter::setTouch(const std::string& id, bool down) {
+  if (!touch_) return;
+  rn_input_set_pressed(in_, id.c_str(), down ? 1 : 0);
+}
+
+int InputRouter::fireButtons() const {
+  if (nesLayout_) return 2;
+  int n = 0;
+  for (size_t i = 0, c = rnf_input_action_count(); i < c; ++i) {
+    rnf_action_info a{};
+    if (!rnf_input_action_get(i, &a) || !a.id) continue;
+    for (int k = 1; k <= 8; ++k)
+      if (std::string(a.id) == "p1.b" + std::to_string(k)) n = std::max(n, k);
+  }
+  return std::max(2, n);
 }
 
 void InputRouter::padButton(int slot, int button, bool down, double t) {

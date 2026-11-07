@@ -57,6 +57,7 @@
 #include "script.h"
 #include "settings.h"
 #include "thumbnails.h"
+#include "touch_controls.h"
 #include "ui.h"
 #include "update_service.h"
 
@@ -102,6 +103,7 @@ class App {
   std::unique_ptr<LibraryThumbs> libraryThumbs_;
   std::unique_ptr<LibraryModel> library_;
   std::unique_ptr<UI> ui_;
+  std::unique_ptr<TouchControls> touch_;  // the on-screen controller (PlatformHooks::touchControls)
   std::unique_ptr<AppModel> app_;
   std::unique_ptr<UpdateService> updates_;
   bool restart_ = false;  // quit, then start the newest installed version (an update)
@@ -119,6 +121,9 @@ class App {
   double lastInput_ = 0, screensaverDemoAt_ = 0;
   void updateScreensaver(double now);
   void updateOverlay(int scripted);
+  bool handleFaceCheck(const SDL_Event& e);
+  // The input's paused-in-play mode from the emulation's state, every frame (not only on a change).
+  void syncPausedStepMode() { input_->setPausedStepMode(emu_->paused()); }
   int lastHeight_ = 0;
   float lastUIScale_ = 0;
   int lastWidth_ = 0;
@@ -136,6 +141,11 @@ void App::applyFullscreen(bool on) {
 }
 
 void App::applySettings() {
+  // The ROM / Projects folders chosen in Settings (a rescan when they change; Share's ROMs go there).
+  const std::string romsBefore = library_->romDir();
+  library_->setFolders(settings_.romFolder, settings_.projectsFolder);
+  if (library_->romDir() != romsBefore) setImportFolder(library_->romDir());
+  setScreenOrientation(settings_.orientation);  // Android: MainActivity keeps it (a repeat changes nothing)
   emu_->pauseAfterRewind = settings_.pauseAfterRewind;
   emu_->autosaveInterval = settings_.autosaveInterval;
   emu_->setFlashLevel(rn_flash_level(settings_.flash));
@@ -166,6 +176,7 @@ void App::applyPostProcess() {
 void App::updateNavigation() {
   bool inter = ui_->interactive();
   input_->setUIMode(inter);
+  syncPausedStepMode();
   // The mouse plays a game that binds it while it runs (not paused, no menu, the window focused):
   // relative mode keeps the pointer in the window and hides it. Esc (the menu) gives it back.
   const bool capture = input_->mouseGame() && !inter && emu_->session() && !emu_->paused() &&
@@ -243,14 +254,46 @@ void App::updateOverlay(int scripted) {
   input_->releaseControllers();
 }
 
-void App::handleEvent(const SDL_Event& e, double now) {
-  if (isUserInput(e)) {
+// The face button check on screen (docs/design/FACE_CHECK.md): the controllers are its own. The checked
+// controller's face buttons go to the check as SDL reports them (before any swap); the one at the lit
+// position held a second answers. Nothing reaches the UI or a game meanwhile.
+bool App::handleFaceCheck(const SDL_Event& e) {
+  const bool button = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP;
+  const bool axis = e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION;
+  if (!button && !axis) return false;
+  const int slot = input_->faceCheckSlot();
+  const SDL_JoystickID which = button ? e.gbutton.which : e.gaxis.which;
+  if (slot < 0 || input_->slotOfPad(which) != slot) return true;  // another controller: nothing
+  if (button && e.gbutton.button <= SDL_GAMEPAD_BUTTON_NORTH)
+    ui_->faceCheckButton(e.gbutton.button, e.gbutton.down, ImGui::GetTime());
+  return true;
+}
+
+void App::handleEvent(const SDL_Event& reported, double now) {
+  if (isUserInput(reported)) {
     lastInput_ = now;
     if (app_->screensaverActive()) {  // the input that ends it does nothing else
       app_->stopScreensaver();
       std::fprintf(stderr, "screensaver: off\n");
       return;
     }
+  }
+  if (ui_->faceCheckActive() && handleFaceCheck(reported)) return;  // the check needs SDL's own numbers
+  // From here on a face button is where it is (docs/design/FACE_CHECK.md): the one place the user's check
+  // applies, so the menus (PadNavFeed), the on-screen keyboard, ImGui, the player order and the game all
+  // see the same button. (The menus read SDL's numbers before: on a swapped controller the east button
+  // was the south one there - confirm and cancel the other way round - while the game and the hints
+  // had it right.)
+  const SDL_Event e = input_->atFacePosition(reported);
+  // The on-screen controller takes the fingers on it (and the mouse events SDL makes from them).
+  if (touch_ && touch_->visible()) {
+    const bool finger = e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION || e.type == SDL_EVENT_FINGER_UP ||
+                        e.type == SDL_EVENT_FINGER_CANCELED;
+    if (finger && touch_->handleFinger(e, now * 1000)) {
+      ui_->touchUsed();
+      return;
+    }
+    if (touch_->takesTouchMouse(e)) return;
   }
   // Another window in front (RN_PRODUCT_FOCUS_PAUSE): unless Play in the Background is on (Settings > System > More), the
   // game pauses and the controllers reach neither the game nor the menus until the window is back.
@@ -262,6 +305,8 @@ void App::handleEvent(const SDL_Event& e, double now) {
       std::fprintf(stderr, "input: SDL gamepad %u button %d down (focused %d, play in background %d)\n", unsigned(e.gbutton.which),
                    int(e.gbutton.button), int(focused_), int(settings_.playInBackground));
   }
+  if (ui_ && (e.type == SDL_EVENT_WINDOW_FOCUS_LOST || e.type == SDL_EVENT_WINDOW_FOCUS_GAINED))
+    ui_->focusChanged(e.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
   if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
     focused_ = false;
     if (RN_PRODUCT_FOCUS_PAUSE && !settings_.playInBackground) {
@@ -299,6 +344,11 @@ void App::handleEvent(const SDL_Event& e, double now) {
     input_->handleEvent(e, now - double(SDL_GetTicksNS() - e.common.timestamp) * 1e-9, ui_->wantsKeyboard());
     return;
   }
+  // A press or release says where it is: ImGui's backend takes the position from motion events only, and
+  // after another app was in front (the window left: ImGui's mouse "nowhere") a tap where the last one was makes
+  // no motion - the button under it never saw the press (Android: Add ROMs did nothing after the picker).
+  if (!textEntry && (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP))
+    ImGui::GetIO().AddMousePosEvent(e.button.x, e.button.y);
   if (!textEntry) ImGui_ImplSDL3_ProcessEvent(&e);
   padNav_.setSuppressed(ui_->textEntryOwnsPad());
   padNav_.handle(e);
@@ -415,6 +465,9 @@ int App::run(const AppOptions& opt) {
   library_ = std::make_unique<LibraryModel>(paths_.libraryRoot);
   // Favourites / history / order: the settings folder (a scratch --session-root keeps its own).
   library_->setPrefsFile((opt.sessionRoot.empty() ? paths_.configDir : paths_.sessionRoot) + "/" + RNF_LIBRARY_PREFS_FILE);
+  library_->setFolders(settings_.romFolder, settings_.projectsFolder);
+  setImportFolder(library_->romDir());
+  setScreenOrientation(settings_.orientation);
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -427,6 +480,7 @@ int App::run(const AppOptions& opt) {
   UI::Deps deps{nullptr,          emu_.get(), library_.get(), input_.get(), thumbs_.get(), renderer_.get(), &settings_, window_,
                 updates_.get(), libraryThumbs_.get()};
   // The UI is the app model's dialog host and shows its state.
+  deps.touchControls = platform_.touchControls;
   ui_ = std::make_unique<UI>(deps);
   app_ = std::make_unique<AppModel>(paths_, emu_.get(), library_.get(), ui_.get());
   ui_->setApp(app_.get());
@@ -458,10 +512,28 @@ int App::run(const AppOptions& opt) {
       rn_input_bind(input_->input(), "inject:b", rnf_input_button_id(0));
     ui_->inputLayoutChanged();
   };
+  // At once on a change (a press later in the same frame), and every frame from the state itself
+  // (syncPausedStepMode): a session opened paused while the emulation already was paused (the library's
+  // Continue right after the start: paused_ starts true) never sent a change, the input stayed in play
+  // and the cancel button's "Continue" did nothing.
   emu_->onPausedChanged = [this](bool p) { input_->setPausedStepMode(p); };
   emu_->pressSequence = [this] { return input_->pressSequence(); };
   emu_->beforeSample = [this] { input_->beginMouseFrame(); };
   input_->onMenuButton = [this] { ui_->toggleMenu(); };
+  if (platform_.touchControls) {  // docs/design/TOUCH_ANDROID.md
+    input_->setTouchEnabled(true);
+    TouchControls::Host th;
+    th.press = [this](const std::string& id, bool down) { input_->setTouch(id, down); };
+    th.toggleMenu = [this] { ui_->toggleMenu(); };
+    th.togglePause = [this] { emu_->togglePause(); };
+    th.toggleSlow = [this] { emu_->toggleSlow(); };
+    th.haptic = platform_.haptic;
+    th.setWays = [this](int ways) {
+      setTouchWaysFor(settings_, ways);
+      settings_.save(paths_.settingsFile());
+    };
+    touch_ = std::make_unique<TouchControls>(std::move(th));
+  }
   input_->onPausedStep = [this](int dir, bool down) { emu_->pausedStep(dir, down); };
   input_->onPausedResume = [this] { ui_->resumeFromSeekBar(); };
   input_->onPracticeStop = [this] { ui_->stopPracticeFromPad(); };
@@ -586,6 +658,8 @@ int App::run(const AppOptions& opt) {
   double lastRate = 0;
   uint64_t lastMediaGeneration = UINT64_MAX;
   double hostNext = 0;  // host-clock pacing: the next sample time
+  constexpr double kHousekeepingGap = 0.25;
+  double lastHousekeeping = 0;  // the slack's tasks below, at least this often
   recentLatency_.assign(60, 0.0);
 
   std::map<int, int> waitFailures;  // VkResult -> count (diagnostics)
@@ -608,8 +682,14 @@ int App::run(const AppOptions& opt) {
     if (perfMode) perf.add(rec);
   };
 
+  double lastWake = 0;
   while (running_) {
     double wake = nowSeconds();
+    // A gap of more than a second between two frames in the log: a stall, or the loop paused while another app
+    // was in front (Android: no frame runs then; read it with the "activity:" lines, as the focus events wait
+    // for the loop too). Kept for logs from devices that "stop reacting" (2026-11-06, Android 13).
+    if (lastWake > 0 && wake - lastWake > 1.0) std::fprintf(stderr, "frame: %.1f s since the last one\n", wake - lastWake);
+    lastWake = wake;
     // 1. Pictures confirmed on screen since the last frame (in present order).
     for (const PresentDone& d : renderer_->takeCompleted()) {
       while (!inflight.empty() && inflight.front().presentId < d.id) { settle(inflight.front(), nullptr); inflight.pop_front(); }
@@ -663,9 +743,14 @@ int App::run(const AppOptions& opt) {
       extraPicture = emu_->tick().newPicture || extraPicture;
     }
     // Housekeeping in the slack, then wait for the sample point.
+    // A frame loop that never has slack (every frame late: the Android emulator's software Vulkan ran at
+    // 22 fps with none in 2 s) still does it every kHousekeepingGap: otherwise a ROM added to the folder
+    // never showed (the scan's result waited for library_->poll), nor did the thumbnails or the resume
+    // record move on. Each task keeps its own limits (autosave needs 8 ms of slack unless paused).
     double slack = sampleAt - nowSeconds();
-    if (slack > 0.004) {
+    if (slack > 0.004 || nowSeconds() - lastHousekeeping >= kHousekeepingGap) {
       double now = nowSeconds();
+      lastHousekeeping = now;
       emu_->afterFrame(slack);
       app_->update(now);
       ui_->slack(now);
@@ -700,6 +785,7 @@ int App::run(const AppOptions& opt) {
     lap("SDL_UpdateJoysticks");
     input_->syncPads();  // which controller is which player: what is connected now, every frame
     lap("syncPads");
+    syncPausedStepMode();  // before this frame's presses (a tap needs it at its press and its release)
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, rec.sample);
     lap("events");
@@ -742,11 +828,49 @@ int App::run(const AppOptions& opt) {
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;  // fed from the events (PadNavFeed)
     padNav_.setSuppressed(ui_->textEntryOwnsPad());
     if (padNav_.takeActivity()) ui_->padUsed();
+    if (touch_) {
+      TouchControls::Frame tf;
+      tf.widthPx = w;
+      tf.heightPx = h;
+      const float ds = SDL_GetWindowDisplayScale(window_);
+      tf.density = ds > 0 ? ds : 1;
+      int ww = 0, wh = 0;
+      SDL_GetWindowSize(window_, &ww, &wh);
+      tf.windowToPx = ww > 0 ? double(w) / ww : 1;
+      SDL_Rect safe{};
+      if (ww > 0 && wh > 0 && SDL_GetWindowSafeArea(window_, &safe) && safe.w > 0 && safe.h > 0) {
+        const double k = tf.windowToPx / tf.density;  // window coordinates -> points
+        tf.safe = touch::TouchInsets{safe.y * k, safe.x * k, (wh - safe.y - safe.h) * k, (ww - safe.x - safe.w) * k};
+      }
+      tf.show = emu_->session() && !ui_->playCovered() &&
+                !(settings_.touchHideWithPad && input_->connectedCount() > 0);
+      tf.fireButtons = input_->fireButtons();
+      const rn_media_info& m = emu_->media();
+      const rn_video_frame_info vf = emu_->videoFrame();
+      if (vf.width && vf.height) {
+        double par = gamePixelAspect(settings_) && m.pixel_aspect_num && m.pixel_aspect_den ? double(m.pixel_aspect_num) / m.pixel_aspect_den : 1.0;
+        double aspect = vf.width * par / vf.height;
+        tf.pictureAspect = (m.rotation & 1) ? 1 / aspect : aspect;
+      }
+      tf.fill = !settings_.integerScale;
+      tf.nowMs = nowSeconds() * 1000;
+      settings_.touchWaysRom = emu_->session() ? app_->currentRomSHA256() : std::string();
+      tf.ways = touchWaysFor(settings_);
+      tf.playing = emu_->session() && !emu_->paused();
+      tf.sessionKey = emu_->session() ? emu_->status().romPath + "|" + settings_.touchWaysRom : std::string();
+      touch_->update(tf, settings_);
+      ui_->setPictureArea(touch_->pictureArea());
+      ui_->setTouchControlsShown(touch_->visible());
+      const auto ov = touch_->overlayArea();
+      ui_->setOverlayArea(ov ? LRect{ov->x, ov->y, ov->z, ov->w} : LRect{0, 0, 0, 0});
+    }
     ImGui::NewFrame();
     ui_->build(rec.sample);
+    if (touch_) touch_->draw(ImGui::GetForegroundDrawList(), emu_->paused(), emu_->status().slow > 1);
     ImGui::Render();
     rec.ui = nowSeconds();
     GameRect rect = ui_->gameRect(w, h);
+    if (touch_) touch_->setPicture(rect.x, rect.y, rect.w, rect.h);
     bool newPicture = tick.newPicture || extraPicture;
     const EmulationController::Signal& es = emu_->signal();
     FrameSignal sig{es.codes, es.burstPhase, es.ordinal, es.flashAltered, es.receptionStep, es.receptionCounter, es.flashReduced};

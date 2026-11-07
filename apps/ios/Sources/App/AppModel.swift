@@ -159,7 +159,8 @@ final class AppModel: ObservableObject {
     var flashLevel: FlashLevel { FlashLevel(rawValue: flashReduction) ?? .standard }
 
     var displayOptions: DisplayOptions {
-        DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan, geometry: status.geometry, backdrop: backdrop)
+        DisplayOptions(integerScale: integerScale, pixelAspect87: displayPAR87, hideOverscan: hideOverscan, geometry: status.geometry,
+                       backdrop: backdrop ? 2 : 0)  // the switch keeps on / off; on = the default level (low)
     }
 
     /// The picture's displayed width / height (pixel aspect, rotation); nil for the NES picture.

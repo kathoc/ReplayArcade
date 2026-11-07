@@ -29,6 +29,7 @@
 
 #include "replaynes/frontend.h"
 #include "replaynes/replaynes.h"
+#include "face_layout.h"
 #include "stick_shape.h"
 #include "ui_logic.h"
 
@@ -58,6 +59,9 @@ struct PadInfo {
   int steamSlot = -1;
   Uint64 steamHandle = 0;  // Steam's controller behind it now (SteamVirtualGamepadInfo), 0 when none
   std::string key;         // this controller's identity across a disconnect (serial, or guid + name)
+  std::string model;       // its model (guid + name): its face layout (FaceLayouts)
+  bool facesSwapped = false;  // the model reports its face buttons swapped (the user's check)
+  bool faceUncertain = false;  // its layout is the user's to check (faceLayoutUncertain)
   double lastPress = -1e9;  // CLOCK_MONOTONIC s of its last button (the player indicator)
 };
 
@@ -160,6 +164,23 @@ class InputRouter {
 
   // Settings diagram / bindings UI.
   const PadInfo& pad(int slot) const { return pads_[slot]; }
+  /// A slot whose controller's face layout has not been checked (docs/design/FACE_CHECK.md), or -1.
+  int faceCheckSlot() const;
+  /// The check's answer: the model reports its face buttons swapped (south <-> east, west <-> north).
+  void setFaceLayout(int slot, bool swapped);
+  /// Settings > Controls > ABXY Buttons: the connected controllers (not Steam's virtual pads) are
+  /// checked again. False: none to check.
+  bool recheckFaceLayouts();
+  int slotOfPad(SDL_JoystickID id) const { return slotOf(id); }
+  /// Touch controls (docs/design/TOUCH_ANDROID.md): "touch:<name>" inputs bound to the game's actions as on
+  /// the iPhone (TouchBindings), pressed by TouchControls. Off: no touch bindings.
+  void setTouchEnabled(bool on);
+  void setTouch(const std::string& id, bool down);
+  /// The game's fire buttons (p1.b1 ... p1.b8 in the layout; the NES: 2), for the touch layout's discs.
+  int fireButtons() const;
+  /// The event with a face button where it is on its controller (the user's check, docs/design/FACE_CHECK.md);
+  /// other events as they are. App::handleEvent applies it once, before anything reads the event.
+  SDL_Event atFacePosition(const SDL_Event& e) const;
   /// Which player each controller is (docs/design/UI_REDESIGN.md, "Controllers and players"): a controller
   /// connected while player 1 is the machine's own controls (or nobody) becomes player 1, the built-in ones
   /// wait aside; it gives player 1 back to them when disconnected. Players 2 to 4 keep their controllers
@@ -217,6 +238,10 @@ class InputRouter {
   std::string kindFile(DeviceKind kind) const;
   void rebuildRuntime();
   void loadKindOverrides();
+  FaceLayouts faces_;
+  std::set<std::string> faceRecheck_;
+  bool touch_ = false;
+  void bindTouch();  // models to check again although certain (recheckFaceLayouts)
   void persistKindOverrides();
   void configureRuntimeBindings();
   void refreshBindings(bool configureRuntime = true);

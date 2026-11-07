@@ -1,6 +1,750 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Search the whole device for ROMs (every folder, the memory card too), or choose the files yourself.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末の中のすべてのフォルダ（メモリーカードも）から ROM を探すか、ファイルを自分で選びます。"
+          }
+        }
+      }
+    },
+    "Search the Device": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末の中を探す"
+          }
+        }
+      }
+    },
+    "Choose Files": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイルを選ぶ"
+          }
+        }
+      }
+    },
+    "Without access to all files the app can't search the device: choose the files instead": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのファイルへのアクセスがないと端末の中を探せません。ファイルを選んでください"
+          }
+        }
+      }
+    },
+    "Searching the device for ROMs… (%@ folders)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末の中の ROM を探しています…（%@ フォルダ）"
+          }
+        }
+      }
+    },
+    "Adding ROMs… (%@)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROM を追加しています…（%@）"
+          }
+        }
+      }
+    },
+    "%@ already in the ROM folder.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 個はすでに ROM フォルダにあります。"
+          }
+        }
+      }
+    },
+    "%@ other files with a ROM's extension are no game the app knows (not added).": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ほかに、ROM の拡張子のファイルが %@ 個ありましたが、アプリの知らないゲームです（追加しません）。"
+          }
+        }
+      }
+    },
+    "No new ROMs found": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しい ROM は見つかりませんでした"
+          }
+        }
+      }
+    },
+    "Searched %@ folders.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 個のフォルダを探しました。"
+          }
+        }
+      }
+    },
+    "ROMs inside another app's own folder (Android/data) can't be read: copy them elsewhere first, or choose the files.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ほかのアプリ専用のフォルダ（Android/data）の中は読めません。別の場所へコピーするか、ファイルを選んでください。"
+          }
+        }
+      }
+    },
+    "%@ ROMs found": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 本の ROM が見つかりました"
+          }
+        }
+      }
+    },
+    "… and %@ more": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "…ほか %@ 本"
+          }
+        }
+      }
+    },
+    "They are copied into the ROM folder (the files stay where they are).": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROM フォルダにコピーします（元のファイルはそのまま残ります）。"
+          }
+        }
+      }
+    },
+    "Add All": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべて追加"
+          }
+        }
+      }
+    },
+    "%@ ROMs added": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 本の ROM を追加しました"
+          }
+        }
+      }
+    },
+    "%@ ROMs added; could not add: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 本の ROM を追加しました。追加できなかったもの: %@"
+          }
+        }
+      }
+    },
+    "(the default)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（既定）"
+          }
+        }
+      }
+    },
+    "Change…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "変更…"
+          }
+        }
+      }
+    },
+    "Back to the Default": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既定に戻す"
+          }
+        }
+      }
+    },
+    "Can’t open the folder: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダを開けません: %@"
+          }
+        }
+      }
+    },
+    "Choose the ROM Folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROM フォルダを選ぶ"
+          }
+        }
+      }
+    },
+    "Choose the Projects Folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトフォルダを選ぶ"
+          }
+        }
+      }
+    },
+    "Allow access to all files to use a folder outside the app": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリの外のフォルダを使うには、すべてのファイルへのアクセスを許可してください"
+          }
+        }
+      }
+    },
+    "Choose a folder on the device or its memory card": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端末本体かメモリーカードのフォルダを選んでください"
+          }
+        }
+      }
+    },
+    "Can’t choose a folder: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダを選べません: %@"
+          }
+        }
+      }
+    },
+    "Can’t write to the folder: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダに書き込めません: %@"
+          }
+        }
+      }
+    },
+    "Back to the default folder: %@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既定のフォルダに戻しました: %@"
+          }
+        }
+      }
+    },
+    "Now using %@ (the files in the previous folder stay there)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ を使います（前のフォルダのファイルはそのまま残ります）"
+          }
+        }
+      }
+    },
+    "Use This Folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このフォルダを使う"
+          }
+        }
+      }
+    },
+    "Share Log": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "記録を共有"
+          }
+        }
+      }
+    },
+    "Send the app's log to the developer (to find a problem)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不具合を調べるため、アプリの記録を開発者に送ります"
+          }
+        }
+      }
+    },
+    "Add ROMs": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMを追加"
+          }
+        }
+      }
+    },
+    "Choose ROM files to copy into the ROM folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROM ファイルを選んで ROM フォルダにコピーします"
+          }
+        }
+      }
+    },
+    "Sharp": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "くっきり"
+          }
+        }
+      }
+    },
+    "Medium": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中"
+          }
+        }
+      }
+    },
+    "The empty sides show the game enlarged and dimmed: sharp or blurred": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の空いた部分に、ゲーム画面を拡大して少し暗く表示します（くっきり、またはぼかして）"
+          }
+        }
+      }
+    },
+    "Play (settings page)": {
+      "comment": "Settings page title (pausing, rewinding, resuming, saving)",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プレイ"
+          }
+        }
+      }
+    },
+    "App (settings page)": {
+      "comment": "Settings page title (language, updates, folders)",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリ"
+          }
+        }
+      }
+    },
+    "Looks like a CRT TV: scanlines, afterglow, signal": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブラウン管のテレビの見た目（走査線・残光・電波）"
+          }
+        }
+      }
+    },
+    "Input Details": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力の詳細"
+          }
+        }
+      }
+    },
+    "Opposite directions, stick, button positions, reset": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "逆方向の同時押し、スティック、ボタンの位置、リセット"
+          }
+        }
+      }
+    },
+    "How fast turbo buttons repeat": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連射ボタンの速さ"
+          }
+        }
+      }
+    },
+    "Updates": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデート"
+          }
+        }
+      }
+    },
+    "Version and updates": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョンとアップデート"
+          }
+        }
+      }
+    },
+    "ROM and project folders, license": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROM とプロジェクトのフォルダ、ライセンス"
+          }
+        }
+      }
+    },
+    "Display, controls, sound, play and app": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面、操作、音、プレイ、アプリ"
+          }
+        }
+      }
+    },
+    "4-way ignores diagonals (remembered per game)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "4方向では斜めを無視します（ゲームごとに記憶）"
+          }
+        }
+      }
+    },
+    "CRT settings are back to the defaults": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブラウン管の設定を既定に戻しました"
+          }
+        }
+      }
+    },
+    "Touch Controls": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タッチ操作"
+          }
+        }
+      }
+    },
+    "D-pad size and follow, opacity, turbo buttons and vibration of the on-screen controls": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面のコントローラーの十字キー（大きさ・追従）、不透明度、連射ボタン、振動"
+          }
+        }
+      }
+    },
+    "Opacity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不透明度"
+          }
+        }
+      }
+    },
+    "How visible the on-screen controls are": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面上のボタンの見やすさ"
+          }
+        }
+      }
+    },
+    "Size, follow and directions of the on-screen D-pad": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の十字キーの大きさ、追従、方向数"
+          }
+        }
+      }
+    },
+    "Turbo Buttons": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連射ボタン"
+          }
+        }
+      }
+    },
+    "Show AA / BB (Turbo A / Turbo B) up-left of A / B": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A / B の左斜め上に AA / BB（連射A / 連射B）を表示します"
+          }
+        }
+      }
+    },
+    "Vibration": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "振動"
+          }
+        }
+      }
+    },
+    "A short vibration when a button is pressed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ボタンを押したときに短く振動します"
+          }
+        }
+      }
+    },
+    "Hide With Controller": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コントローラ接続時に隠す"
+          }
+        }
+      }
+    },
+    "Hide the on-screen controls while a controller is connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コントローラが接続されている間は画面上のボタンを隠します"
+          }
+        }
+      }
+    },
+    "Size of the on-screen D-pad": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の十字キーの大きさ"
+          }
+        }
+      }
+    },
+    "Follow Up / Down": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追従（上下）"
+          }
+        }
+      }
+    },
+    "How fast the D-pad follows your thumb up and down": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーが親指の上下のずれに追従する速さ"
+          }
+        }
+      }
+    },
+    "Follow Left / Right": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追従（左右）"
+          }
+        }
+      }
+    },
+    "How fast the D-pad follows your thumb left and right": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーが親指の左右のずれに追従する速さ"
+          }
+        }
+      }
+    },
+    "D-pad Directions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーの方向数"
+          }
+        }
+      }
+    },
+    "Match the hints to where the connected controllers' buttons are": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の案内を、つないでいるコントローラーのボタンの位置に合わせます"
+          }
+        }
+      }
+    },
+    "The confirm button, where the buttons are": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "決定ボタンと、ボタンの位置"
+          }
+        }
+      }
+    },
+    "ABXY Buttons": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ABXYボタン"
+          }
+        }
+      }
+    },
+    "ABXY Button Positions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ABXYボタンの位置合わせ"
+          }
+        }
+      }
+    },
+    "They did not match. Once more from the first.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 回目と合いませんでした。最初からもう一度お願いします"
+          }
+        }
+      }
+    },
+    "On %@, hold the button at the lit circle for a second.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ の、光っている○の位置にあるボタンを 1 秒押し続けてください"
+          }
+        }
+      }
+    },
+    "Blurred sides": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ぼかし背景"
+          }
+        }
+      }
+    },
     "8:7 pixels, blurred sides": {
       "localizations": {
         "ja": {
@@ -8631,6 +9375,66 @@
           "stringUnit": {
             "state": "translated",
             "value": "スクリーンセーバー · 何か押すと戻ります"
+          }
+        }
+      }
+    },
+    "No ROMs in the ROM folder yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROM フォルダにまだ ROM がありません"
+          }
+        }
+      }
+    },
+    "In the Files app, Documents, Images and the like show some kinds of files only: ROM zips never appear there. Search the whole device for ROMs, or choose the files yourself.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイルアプリの「ドキュメント」「画像」などは、決まった種類のファイルだけを集めた表示で、ROM の zip はそこには出てきません。端末全体から ROM を探すか、ファイルを自分で選んでください。"
+          }
+        }
+      }
+    },
+    "Screen Orientation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の向き"
+          }
+        }
+      }
+    },
+    "Automatic turns with the device (and its rotation lock)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動は端末の向き（と回転のロック）に合わせます"
+          }
+        }
+      }
+    },
+    "Landscape": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "横"
+          }
+        }
+      }
+    },
+    "Portrait": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "縦"
           }
         }
       }

@@ -20,7 +20,7 @@ struct DisplayOptions: Equatable {
     /// overscan crop are for the NES picture; another core's picture uses its own pixel aspect.
     var geometry = PictureGeometry.nes
     /// The empty sides show the picture enlarged, blurred and dimmed (docs/design/BACKDROP.md).
-    var backdrop = true
+    var backdrop = 2  // 0 none, 1 sharp, 2 low, 3 medium, 4 high (render/backdrop.h backdropTexels)
 }
 
 /// GPU execution of a new frame's command buffers (host-clock seconds, earliest start to latest
@@ -111,7 +111,8 @@ final class GameRenderer {
                 c += k * tex.sample(s, in.uv + float2(x, y) * p.zw, level(p.x)).rgb;
                 w += k;
             }
-        return float4(c / w * p.y, 1.0);
+        float3 mean = tex.sample(s, float2(0.5), level(64.0)).rgb;  // contrast 40 % lower (kBackdropContrast)
+        return float4(mix(mean, c / w, 0.6) * p.y, 1.0);
     }
     """
 
@@ -462,7 +463,7 @@ final class GameRenderer {
                 bcb.commit()
             }
             if crt.hasOutput, let enc = cb.makeRenderCommandEncoder(descriptor: rpd) {
-                if options.backdrop { drawBackdrop(enc, size: size, picture: dst, crop: 0, geometry: textureGeometry) }
+                if options.backdrop > 0 { drawBackdrop(enc, size: size, picture: dst, crop: 0, geometry: textureGeometry, level: options.backdrop) }
                 crt.encodeShow(enc, targetSize: size, dst: dst, cropFraction: cropFraction)
                 drawCountdown(enc, size: size, picture: Self.pictureRect(size: size, options: options, crtOn: true))
                 drawPill(enc, size: size, pill)
@@ -493,7 +494,7 @@ final class GameRenderer {
                                     Float(r.width / size.width * 2), Float(r.height / size.height * 2))
             var uvr = SIMD4<Float>(Float(Double(crop) / tw), Float(Double(crop) / th), Float(srcW / tw), Float(srcH / th))
             var rot = UInt32(g.rotation % 4)
-            if options.backdrop { drawBackdrop(enc, size: size, picture: r, crop: crop, geometry: g) }
+            if options.backdrop > 0 { drawBackdrop(enc, size: size, picture: r, crop: crop, geometry: g, level: options.backdrop) }
             enc.setRenderPipelineState(pipeline)
             enc.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
             enc.setVertexBytes(&uvr, length: MemoryLayout<SIMD4<Float>>.size, index: 1)
@@ -679,9 +680,10 @@ final class GameRenderer {
 
     /// The blurred backdrop under the picture `r` (pixels): where it leaves the screen empty, the picture
     /// enlarged to cover the screen (centered, the part on screen drawn), blurred, dimmed - the rules of
-    /// apps/desktop/src/render/backdrop.h (kBackdropTexels 12, kBackdropDim 0.6). `g`: the picture in
+    /// apps/desktop/src/render/backdrop.h (backdropTexels by level, kBackdropDim 0.6). `g`: the picture in
     /// `texture` (its size and rotation; a rotated picture's source axes are the screen's swapped).
-    private func drawBackdrop(_ enc: MTLRenderCommandEncoder, size: CGSize, picture r: CGRect, crop: Int, geometry g: PictureGeometry) {
+    private func drawBackdrop(_ enc: MTLRenderCommandEncoder, size: CGSize, picture r: CGRect, crop: Int, geometry g: PictureGeometry,
+                              level: Int) {
         let sw = Double(size.width), sh = Double(size.height)
         guard let backdrop, r.width >= 1, r.height >= 1, sw >= 1, sh >= 1 else { return }
         guard r.minX > 1 || r.minY > 1 || r.maxX < sw - 1 || r.maxY < sh - 1 else { return }
@@ -696,8 +698,12 @@ final class GameRenderer {
         var uvr = SIMD4<Float>(Float((Double(crop) + srcW * (1 - cu) / 2) / tw), Float((Double(crop) + srcH * (1 - cv) / 2) / th),
                                Float(srcW * cu / tw), Float(srcH * cv / th))
         var rotation = rot
-        let lod = max(0, log2(Double(max(g.width, g.height)) / 12)), texel = exp2(lod)
-        var p = SIMD4<Float>(Float(lod), 0.6, Float(texel / tw), Float(texel / th))
+        // The blur's texels across the picture by level (the picture's size, not the texture's: another core's
+        // picture may fill only part of it; for the NES picture the two are the same).
+        let texels: Double = level >= 4 ? 48 : level == 3 ? 96 : 160
+        let lod = level == 1 ? 0 : max(0, log2(Double(max(g.width, g.height)) / texels)), texel = exp2(lod)
+        let spread: Double = level == 1 ? 0 : 1  // sharp: no tent
+        var p = SIMD4<Float>(Float(lod), 0.6, Float(texel * spread / tw), Float(texel * spread / th))
         enc.setRenderPipelineState(backdropPipeline)
         enc.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
         enc.setVertexBytes(&uvr, length: MemoryLayout<SIMD4<Float>>.size, index: 1)

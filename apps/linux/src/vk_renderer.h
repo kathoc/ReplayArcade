@@ -25,6 +25,7 @@
 #include "render/post_process.h"
 #include "renderer.h"
 #include "vk_backdrop.h"
+#include "render/surface_plan.h"
 
 struct ImDrawData;
 
@@ -47,6 +48,13 @@ class VkRenderer final : public Renderer {
 
   uint64_t drawAndPresent(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui,
                           const FrameSignal* signal = nullptr) override;
+
+  /// The window's surface is going (Android: SurfaceHolder.Callback.surfaceDestroyed, on the UI thread): no
+  /// frame draws to it after this returns. Waits for a frame in progress (at most `timeoutSeconds`); the next
+  /// frame releases the swapchain and the Vulkan surface, and frames draw nothing until surfaceBack().
+  void surfaceGoing(double timeoutSeconds);
+  /// A new surface is there (surfaceCreated): the next frame creates its Vulkan surface and swapchain.
+  void surfaceBack();
 
   void configureMedia(const rn_media_info& media, bool nesPicture = true) override;
   uint64_t drawFrameAndPresent(const rn_video_frame_info* frame, const GameRect& rect, ImDrawData* ui,
@@ -88,6 +96,14 @@ class VkRenderer final : public Renderer {
   void requestScreenshot(const std::string& path) override;
 
  private:
+  uint64_t drawFrame(const uint32_t* newPicture, const GameRect& rect, ImDrawData* ui, const FrameSignal* signal);
+  void releaseSurfaceNow();
+  // surfaceGoing / surfaceBack (another thread) against the frames (docs/design/ANDROID.md, "Black screen").
+  std::mutex gateMutex_;
+  std::condition_variable gateCv_;
+  // surfaceGone_: the window's surface went and no frame has released ours yet (SDL may have paused the loop
+  // at once: then the first frame after surfaceBack() releases it before drawing).
+  bool gateClosed_ = false, inFrame_ = false, surfaceGone_ = false;
   void waiterLoop();
   /// Everything on the logical device (init(): after the instance and surface).
   bool initDevice(std::string* error);
@@ -188,6 +204,8 @@ class VkRenderer final : public Renderer {
   VkPipelineLayout pipeLayout_ = VK_NULL_HANDLE;
   VkPipeline pipeline_ = VK_NULL_HANDLE;
   VkBackdrop backdrop_;  // the blurred backdrop (DisplayPostProcess::backdrop)
+  SurfacePlan surfaceLogged_;  // the last swapchain plan logged (render/surface_plan.h)
+  uint64_t backdropPictures_ = 0;
   bool imguiReady_ = false;
   bool imguiWanted_ = false;  // initImGui() was called (the backend comes back with a new device)
   double lastAcquireWait_ = 0;
@@ -225,5 +243,12 @@ class VkRenderer final : public Renderer {
   VkDeviceSize shotBytes_ = 0;
   VkExtent2D shotExtent_{0, 0};
 };
+
+#ifdef __ANDROID__
+/// The running VkRenderer's surfaceGoing / surfaceBack, for MainActivity's surface callbacks (JNI in
+/// main_android.cpp); nothing when there is none.
+void androidSurfaceGoing();
+void androidSurfaceBack();
+#endif
 
 }  // namespace rnl
