@@ -12,7 +12,8 @@ configFiles:
   Release: Config/Signing.xcconfig
 settings:
   base:
-    MARKETING_VERSION: "0.3.4"
+    # scripts/build-ios.sh passes the release's version (cmake/product.cmake) and the commit count.
+    MARKETING_VERSION: "0.3.16"
     CURRENT_PROJECT_VERSION: "1"
     RN_IOS_DIR: "${REPLAYNES_IOS_DIR}"
     RN_ENGINE_BUILD_DIR: "$(SRCROOT)/../../build-ios"

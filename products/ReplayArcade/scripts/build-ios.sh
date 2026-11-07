@@ -24,6 +24,13 @@ XCODEGEN="$(command -v xcodegen || echo "$HOME/.local/bin/xcodegen")"
 echo "==> project: $HERE/ReplayArcade.xcodeproj (ReplayNES: $REPLAYNES_DIR)"
 [ "$WHAT" = generate ] && exit 0
 
+# The version is ReplayArcade's (cmake/product.cmake), the build number the commit count: project.yml's
+# MARKETING_VERSION had stayed 0.3.4 through every release (2026-11-07: 0.3.16's code installed as 0.3.4).
+VERSION="$(sed -n 's/^set(RN_PRODUCT_VERSION "\(.*\)")/\1/p' "$ROOT/cmake/product.cmake")"
+BUILD="$(git -C "$ROOT" rev-list --count HEAD)"
+VERSION_ARGS="MARKETING_VERSION=$VERSION CURRENT_PROJECT_VERSION=$BUILD"
+echo "==> version $VERSION ($BUILD)"
+
 BID="$(sed -n 's/^PRODUCT_BUNDLE_IDENTIFIER *= *//p' "$HERE/Config/Signing.local.xcconfig" 2>/dev/null | tail -1)"
 [ -n "$BID" ] || BID="$(sed -n 's/^PRODUCT_BUNDLE_IDENTIFIER *= *//p' "$HERE/Config/Signing.xcconfig" | tail -1)"
 
@@ -31,7 +38,7 @@ case "$WHAT" in
   device)
     DERIVED="$ROOT/build-ios/dd-device"
     xcodebuild -project "$HERE/ReplayArcade.xcodeproj" -scheme ReplayNES -configuration Release \
-      -destination generic/platform=iOS -derivedDataPath "$DERIVED" -allowProvisioningUpdates build
+      -destination generic/platform=iOS -derivedDataPath "$DERIVED" -allowProvisioningUpdates $VERSION_ARGS build
     APP="$DERIVED/Build/Products/Release-iphoneos/ReplayArcade.app"
     echo "==> built $APP"
     [ "$INSTALL" = 1 ] || exit 0
@@ -59,7 +66,7 @@ c = [(int(m.group(1)), x["udid"]) for k, v in d.items() if "iOS" in k for x in v
      for m in [re.match(r"iPhone (\d+)", x["name"])] if m]
 print(max(c)[1])')"
     xcodebuild -project "$HERE/ReplayArcade.xcodeproj" -scheme ReplayNES -configuration Release \
-      -sdk iphonesimulator -destination "id=$SIM" -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO build
+      -sdk iphonesimulator -destination "id=$SIM" -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO $VERSION_ARGS build
     APP="$DERIVED/Build/Products/Release-iphonesimulator/ReplayArcade.app"
     echo "==> built $APP (simulator $SIM)"
     [ "$INSTALL" = 1 ] || exit 0
