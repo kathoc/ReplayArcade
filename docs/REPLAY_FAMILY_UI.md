@@ -159,7 +159,29 @@ main の 0.6.5 リリース成果（`scripts/build-linux-flatpak.sh` の `ARCH`�
   （`build/windows-x86_64` / `build/windows-aarch64` に `ReplayNES.exe`＝PE32+ x86-64 / Aarch64、
   `dist/ReplayNES-0.6.5-windows-{x64,arm64}.zip`）。VM 試験は旧 Mac で実施（macsrv は Parallels Pro 不可）。
 
-## 8. follow-up（別途・要判断）
+## 8. follow-up / 判断記録
 
-- **ReplayArcade サブモジュール更新**（`dfb3bc5` → `6c32d44` 以降）はユーザー承認制。提案のみ（未実施）。
-- **macOS の「Play in the Background」トグル**: 現状は macOS 固有差分として省略。新設が要るなら対応（§7 参照）。
+2026-11-11、ユーザーが保留 2 件の判断を ReplayArcade セッション（replayarcade-b7）へ一任し、同セッションが決定:
+
+- **macOS の「Play in the Background」トグル**: **足さない**。macOS 固有差分（常時背景再生・トグルなし）の
+  まま main へ。理由: 共通化の P0 は「挙動を変えず両アプリを出荷可能に保つ」段階なので、挙動差は P0 の
+  「両シェルの差の一覧」に載せ、共通シェル化の段階で ReplayArcade 基準に揃える。実装変更なし（現状維持）。
+  なお frontend 側は `#if RN_PRODUCT_FOCUS_PAUSE` で Play ページに「Play in the Background」を出すが、
+  ReplayNES は `RN_PRODUCT_FOCUS_PAUSE=OFF`（`cmake/Product.cmake` 既定）のためデスクトップでも非表示。
+  macOS 鏡像の省略はこれと整合。
+- **ReplayArcade サブモジュール更新**: **承認不要・実施済み**（こちら側の作業なし）。ReplayNES リポジトリに
+  ReplayArcade を指すサブモジュールは無い（submodule は nestopia/syphon/SDL のみ）。対象は ReplayArcade 側
+  リポジトリの `third_party/replaynes` で、replayarcade-b7 が 0.3.14〜0.3.16 のリリースで generalize
+  `3c9ec49` まで更新・push・公開済み。旧 §8 の「`dfb3bc5` → `6c32d44`・提案のみ」は古い記述。
+
+### merge-generalize の generalize 追従（2026-11-11）
+
+- generalize が merge-generalize より `3c9ec49`「Log a gap of more than a second between two frames」
+  （`apps/desktop/src/app.cpp` に +6 行のログのみ）1 コミット先行していたため、merge-generalize へ取り込み
+  （マージコミット `5d6f176`）。これで merge-generalize は generalize と同列。
+
+### main 取り込みの扱い
+
+- replayarcade-b7 は共通化（モノレポ化）の幹を「merge-generalize 取り込み後の main」にするため main 取り込みを要請。
+  ただし **main への merge はユーザーが本セッションに直接ゲートした操作**であり、他セッションの指示では解除されない。
+  ユーザー（親セッション経由）の明示 OK を待ってから実施する。実施後に main のコミット ID を replayarcade-b7 へ通知する。
