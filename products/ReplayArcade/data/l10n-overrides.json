@@ -1,0 +1,74 @@
+{
+  "Accelerate": {
+    "en": "Accelerate",
+    "ja": "アクセル"
+  },
+  "Brake": {
+    "en": "Brake",
+    "ja": "ブレーキ"
+  },
+  "Button 1": {
+    "en": "Button 1",
+    "ja": "ボタン1"
+  },
+  "Button 2": {
+    "en": "Button 2",
+    "ja": "ボタン2"
+  },
+  "Button 3": {
+    "en": "Button 3",
+    "ja": "ボタン3"
+  },
+  "Coin 1": {
+    "en": "Coin 1",
+    "ja": "コイン"
+  },
+  "Coin 2": {
+    "en": "Coin 2",
+    "ja": "コイン"
+  },
+  "Fire": {
+    "en": "Fire",
+    "ja": "ショット"
+  },
+  "Fire 1": {
+    "en": "Fire 1",
+    "ja": "ショット1"
+  },
+  "Fire 2": {
+    "en": "Fire 2",
+    "ja": "ショット2"
+  },
+  "Fire 3": {
+    "en": "Fire 3",
+    "ja": "ショット3"
+  },
+  "Jump": {
+    "en": "Jump",
+    "ja": "ジャンプ"
+  },
+  "Left/Right": {
+    "en": "Left/Right",
+    "ja": "スティック左右"
+  },
+  "Missile": {
+    "en": "Missile",
+    "ja": "ミサイル"
+  },
+  "Shoot": {
+    "en": "Shoot",
+    "ja": "ショット"
+  },
+  "Start 1": {
+    "en": "Start 1",
+    "ja": "スタート"
+  },
+  "Up/Down": {
+    "en": "Up/Down",
+    "ja": "スティック上下"
+  },
+  "Vulcan": {
+    "en": "Vulcan",
+    "ja": "バルカン"
+  }
+}

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kathoc.ReplayArcade</id>
+  <name>ReplayArcade</name>
+  <summary>Record, rewind and replay arcade play with frame-exact timelines</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later AND LicenseRef-FBNeo</project_license>
+  <description>
+    <p>ReplayArcade is ReplayNES with an arcade core (FinalBurn Neo): input-history recording,
+    rewind and retry, practice sections, video export, per-game button assignment and turbo for pads
+    and arcade sticks. No ROMs are included.</p>
+  </description>
+  <launchable type="desktop-id">io.github.kathoc.ReplayArcade.desktop</launchable>
+  <provides><binary>replayarcade-linux</binary></provides>
+  <url type="homepage">https://github.com/kathoc/ReplayArcade</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.3.16" date="2026-11-06"/>
+    <release version="0.3.15" date="2026-11-06"/>
+    <release version="0.3.14" date="2026-11-05"/>
+    <release version="0.3.13" date="2026-11-04"/>
+    <release version="0.3.12" date="2026-11-04"/>
+    <release version="0.3.11" date="2026-11-04"/>
+    <release version="0.3.10" date="2026-11-03"/>
+    <release version="0.3.9" date="2026-11-03"/>
+    <release version="0.3.8" date="2026-11-03"/>
+    <release version="0.3.7" date="2026-11-03"/>
+    <release version="0.3.6" date="2026-11-02"/>
+    <release version="0.3.5" date="2026-11-02"/>
+    <release version="0.3.4" date="2026-10-26"/>
+    <release version="0.3.3" date="2026-10-26"/>
+    <release version="0.3.2" date="2026-10-26"/>
+    <release version="0.3.1" date="2026-10-26"/>
+    <release version="0.3.0" date="2026-10-25"/>
+    <release version="0.2.1" date="2026-10-25"/>
+    <release version="0.2.0" date="2026-10-25"/>
+    <release version="0.1.0" date="2026-10-25"/>
+  </releases>
+</component>

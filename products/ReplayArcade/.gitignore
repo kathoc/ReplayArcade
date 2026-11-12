@@ -1,0 +1,18 @@
+*.o
+*.so
+__pycache__/
+build-*/
+build-linux-sdk.*.log
+build-linux-sdk/
+build/
+# Game data never goes into this repository (ROMs, BIOS, CHDs, NVRAM, projects).
+*.zip
+*.7z
+*.chd
+*.nes
+*.fs
+*.nv
+*.arcrec/
+roms/
+ROM/
+dist/
