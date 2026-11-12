@@ -35,6 +35,7 @@ run() {
 
 EXCLUDES=(
   --exclude=/.git --exclude=/.claude --exclude=/roms/ --exclude=/dist/ --exclude=/build/ --exclude='/build-*/'
+  --exclude=/products/   # the monorepo's other apps (ReplayArcade): not ReplayNES's sources
   --exclude=/.flatpak-builder/ --exclude=/third_party/nestopia/ --exclude=/third_party/syphon/ --exclude=/third_party/SDL/
   --exclude=/apps/macos/ReplayNES.xcodeproj/ --exclude=DerivedData/ --exclude=.DS_Store
   --exclude='*.[nN][eE][sS]' --exclude='*.[fF][dD][sS]' --exclude='*.[uU][nN][iI][fF]' --exclude='*.unf'

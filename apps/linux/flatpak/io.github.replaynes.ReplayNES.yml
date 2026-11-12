@@ -59,6 +59,7 @@ modules:
           - third_party/nestopia
           - third_party/syphon
           - third_party/SDL
+          - products   # the monorepo's other apps (ReplayArcade)
       # Nestopia UE core at the pinned commit (cmake/NestopiaCore.cmake checks the pin).
       - type: git
         url: https://github.com/0ldsk00l/nestopia.git
