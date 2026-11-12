@@ -35,6 +35,9 @@ Status removeFile(const std::string& path);  // missing file is not an error
 Status removeAll(const std::string& path);
 Status listDir(const std::string& path, std::vector<std::string>& names);  // file names only, sorted
 Status syncDir(const std::string& path);
+// Copies the regular files under src into dst (created; subdirectories too), each one written
+// atomically. `last` (a file name directly in src, may be empty) is copied after everything else.
+Status copyTree(const std::string& src, const std::string& dst, const std::string& last);
 int64_t fileSize(const std::string& path);  // -1 if missing
 
 // Test hook: after `bytes` more bytes are written through this layer, writes fail with

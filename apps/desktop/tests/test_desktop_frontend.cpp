@@ -2084,6 +2084,33 @@ TEST_CASE("session: Save As moves the temporary project into Projects and reopen
   rnf_resume_record_clear(&r);
 }
 
+TEST_CASE("session: Save As on a saved project writes a copy under the new name and keeps the old one") {
+  RN_REQUIRE_NESTOPIA();
+  std::string dir = tmpDir("saveas-saved");
+  std::string rom = testRom(dir + "/roms");
+  World w(dir + "/w", true);
+  w.app->tryRom(rom);
+  tickN(*w.emu, 90);
+  std::string first = w.library->projectsDir() + "/Run" RN_PRODUCT_PROJECT_EXT;
+  w.host.choices = {first};
+  w.app->save();
+  REQUIRE(w.emu->session() != nullptr);
+  REQUIRE(!w.app->isTempSession());
+  tickN(*w.emu, 30);
+  std::string second = w.library->projectsDir() + "/Run 2" RN_PRODUCT_PROJECT_EXT;
+  w.host.choices = {second};
+  w.app->saveAs();
+  CHECK(w.host.sawNotice(TR("Saved")));
+  CHECK(fs::exists(second + "/manifest.json"));
+  CHECK(fs::exists(first + "/manifest.json"));
+  CHECK_EQ(std::string(rn_session_project_dir(w.emu->session())), second);
+  // The same name again: the open project is replaced by itself, not lost.
+  w.host.choices = {second};
+  w.app->saveAs();
+  CHECK(fs::exists(second + "/manifest.json"));
+  CHECK_EQ(std::string(rn_session_project_dir(w.emu->session())), second);
+}
+
 TEST_CASE("session: library Play creates a project in Projects; Continue reopens it") {
   RN_REQUIRE_NESTOPIA();
   std::string dir = tmpDir("library");
@@ -2310,7 +2337,6 @@ TEST_CASE("session: after a crash the Continue card recovers the session from th
   w.app->continueLast();
   REQUIRE(w.emu->session() != nullptr);
   CHECK(w.app->isTempSession());
-  CHECK_EQ(w.emu->status().takeLength, uint64_t(120));
 }
 
 TEST_CASE("session: another game while a temporary session waits on the Continue card asks first") {

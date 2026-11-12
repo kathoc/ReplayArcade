@@ -1123,9 +1123,9 @@ Status Session::autosave(bool waitForStates) {
 Status Session::saveAs(const std::string& dir) {
   clearRewindCache();
   if (mode_ == Mode::Live) return Error(Err::UnsupportedFormat, "recording, persistence and timeline operations are unavailable in live mode");
-  if (store_) return Error(Err::AlreadyExists, "session already has a project directory");
   std::unique_ptr<ProjectStore> st;
-  RN_TRY(ProjectStore::create(dir, *this, st));
+  if (store_) RN_TRY(store_->copyTo(dir, *this, st));  // a saved project: a copy, which it continues in
+  else RN_TRY(ProjectStore::create(dir, *this, st));
   store_ = std::move(st);
   savedSeq_ = changeSeq_;
   return Status::Ok();

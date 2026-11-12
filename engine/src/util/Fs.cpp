@@ -209,5 +209,31 @@ Status listDir(const std::string& path, std::vector<std::string>& names) {
   return Status::Ok();
 }
 
+Status copyTree(const std::string& src, const std::string& dst, const std::string& last) {
+  RN_TRY(createDirs(dst));
+  std::vector<std::string> dirs;
+  std::error_code ec;
+  for (auto it = stdfs::directory_iterator(stdfs::u8path(src), ec); !ec && it != stdfs::directory_iterator();
+       it.increment(ec))
+    if (it->is_directory(ec)) dirs.push_back(it->path().filename().u8string());
+  if (ec) return Error(Err::Io, "list failed: " + src + ": " + ec.message());
+  std::sort(dirs.begin(), dirs.end());
+  for (const std::string& d : dirs) RN_TRY(copyTree(join(src, d), join(dst, d), ""));
+  std::vector<std::string> names;
+  RN_TRY(listDir(src, names));
+  bool haveLast = false;
+  std::vector<uint8_t> b;
+  for (const std::string& n : names) {
+    if (!last.empty() && n == last) { haveLast = true; continue; }
+    RN_TRY(readFile(join(src, n), b));
+    RN_TRY(writeFileAtomic(join(dst, n), b.data(), b.size()));
+  }
+  if (haveLast) {
+    RN_TRY(readFile(join(src, last), b));
+    RN_TRY(writeFileAtomic(join(dst, last), b.data(), b.size()));
+  }
+  return syncDir(dst);
+}
+
 }  // namespace fs
 }  // namespace rn

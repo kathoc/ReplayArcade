@@ -411,7 +411,49 @@ TEST_CASE("persist: refuses to create into a non-empty directory; in-memory save
   CHECK_EQ(int(s->save().code), int(Err::InvalidArg));
   CHECK_EQ(int(s->saveAs(root).code), int(Err::AlreadyExists));
   REQUIRE(s->saveAs(fs::join(root, "ok.nesrec")).ok());
-  CHECK_EQ(int(s->saveAs(fs::join(root, "again.nesrec")).code), int(Err::AlreadyExists));
+  CHECK_EQ(int(s->saveAs(root).code), int(Err::AlreadyExists));  // a saved project: also not into a non-empty dir
+}
+
+TEST_CASE("persist: Save As of a saved project copies it and continues in the copy; the original stays") {
+  std::string root = tempDir("saveas-copy");
+  std::string rom = writeTestRom(root);
+  std::string a = fs::join(root, "a.nesrec"), b = fs::join(root, "b.nesrec");
+  auto s = createProject(a, rom, CoreKind::Mock);
+  REQUIRE(s);
+  REQUIRE(recordScript(*s, DeterminismHarness::randomScript(1000, 1)).ok());
+  REQUIRE(s->save().ok());
+  REQUIRE(recordScript(*s, DeterminismHarness::randomScript(500, 2)).ok());
+  uint64_t bm;
+  REQUIRE(s->bookmarkAdd("before copy", &bm).ok());
+  REQUIRE(s->autosave().ok());  // journal records not yet folded in
+  auto atCopy = s->timeline().flattenActive();
+  REQUIRE(s->saveAs(b).ok());
+  CHECK_EQ(s->projectDir(), b);
+  CHECK_FALSE(s->unsavedChanges());
+  REQUIRE(recordScript(*s, DeterminismHarness::randomScript(100, 3)).ok());
+  REQUIRE(s->save().ok());  // into the copy only
+  auto expected = s->timeline().flattenActive();
+  uint64_t hash = s->stateHash();
+  CHECK_EQ(int(s->saveAs(a).code), int(Err::AlreadyExists));
+  s.reset();
+
+  std::unique_ptr<Session> r;
+  OpenReport rep;
+  REQUIRE(reopen(a, r, "", &rep).ok());
+  CHECK_FALSE(rep.journalApplied);
+  CHECK(r->timeline().flattenActive() == atCopy);
+  CHECK_EQ(r->takeLength(), uint64_t(1500));
+  CHECK_EQ(r->bookmarks().size(), size_t(1));
+  r.reset();
+  REQUIRE(reopen(b, r, "", &rep).ok());
+  CHECK_FALSE(rep.journalApplied);
+  CHECK(r->timeline().flattenActive() == expected);
+  CHECK_EQ(r->takeLength(), uint64_t(1600));
+  CHECK_EQ(r->stateHash(), hash);
+  REQUIRE_EQ(r->bookmarks().size(), size_t(1));
+  CHECK_EQ(r->bookmarks()[0].name, std::string("before copy"));
+  REQUIRE(r->seek(700).ok());  // a checkpoint state read from the copy's own files
+  CHECK_EQ(r->frame(), uint64_t(700));
 }
 
 TEST_CASE("persist: autosave sparse states restore without replaying from zero and fold into full save") {

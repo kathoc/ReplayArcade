@@ -47,6 +47,10 @@ class ProjectStore {
   static Status readManifest(const std::string& dir, std::string& json);
 
   Status fullSave(Session& s);
+  /// Save As for a session that already has a project: a full save here, then this package copied
+  /// to dir (must not exist or be empty; manifest.json last), and a store for the copy. This
+  /// project stays as it was saved; on failure a partly written dir is removed.
+  Status copyTo(const std::string& dir, Session& s, std::unique_ptr<ProjectStore>& out);
   /// The journal append. New sparse states are written by writer_ meanwhile and referenced by a later
   /// autosave (waitForStates: by this one, after waiting for them).
   Status autosave(Session& s, bool waitForStates);

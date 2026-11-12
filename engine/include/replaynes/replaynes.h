@@ -167,7 +167,9 @@ rn_status rn_session_autosave(rn_session* s);  /* cheap journal append + fsync (
 /* The same without waiting for new sparse state files: they are written on another thread (a large
  * state took tens of ms on the frame thread) and referenced by a later autosave of either kind. */
 rn_status rn_session_autosave_background(rn_session* s);
-rn_status rn_session_save_as(rn_session* s, const char* project_dir); /* in-memory -> project */
+/* in-memory -> project; a session with a project: saved there, copied to project_dir, and continued
+ * in the copy (the original stays as saved). project_dir must not exist or be an empty directory. */
+rn_status rn_session_save_as(rn_session* s, const char* project_dir);
 /* "Reset Project": starts the project over from power-on (frame 0, RECORD, empty timeline: all
  * takes, bookmarks, checkpoints and the take undo history are dropped); same ROM and project
  * directory. keep_practice_slots != 0 keeps the A/B slots (A states stay valid; their take

@@ -383,6 +383,32 @@ Status ProjectStore::create(const std::string& dir, Session& s, std::unique_ptr<
   return Status::Ok();
 }
 
+Status ProjectStore::copyTo(const std::string& dir, Session& s, std::unique_ptr<ProjectStore>& out) {
+  if (dir.empty()) return Error(Err::InvalidArg, "empty project path");
+  const bool existed = fs::exists(dir);
+  if (existed) {
+    std::vector<std::string> names;
+    if (!fs::isDir(dir)) return Error(Err::AlreadyExists, "path exists and is not a directory: " + dir);
+    RN_TRY(fs::listDir(dir, names));
+    if (!names.empty() || fs::exists(fs::join(dir, "timeline")))
+      return Error(Err::AlreadyExists, "project directory is not empty: " + dir);
+  }
+  RN_TRY(fullSave(s));  // the package is now complete and its journal empty
+  Status st = fs::copyTree(dir_, dir, "manifest.json");
+  if (!st.ok()) {
+    if (!existed) fs::removeAll(dir);
+    return st;
+  }
+  std::unique_ptr<ProjectStore> ps(new ProjectStore(dir));
+  ps->gen_ = gen_;
+  ps->journalBase_ = journalBase_;
+  ps->lastMeta_ = lastMeta_;
+  ps->practicePool_ = practicePool_;
+  ps->slotErr_ = slotErr_;
+  out = std::move(ps);
+  return Status::Ok();
+}
+
 Status ProjectStore::resetJournal() {
   ByteWriter w;
   w.u32(kJrnMagic);

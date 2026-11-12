@@ -22,7 +22,7 @@ enum QMPage: String, CaseIterable, Hashable {
     /// Matches the shared frontend's "Settings by purpose" order (frontend/src/menu.cpp).
     #if os(iOS)
     // iPhone keeps its pages (Play's and Turbo's rows where they were) until its menu follows the frontend's
-    // "Settings by purpose" order: the monorepo's P0 changes no behaviour (docs/unification/SHELL_DIFF.md).
+    // "Settings by purpose" order: the monorepo's P0 changes no behaviour.
     static let settingsTabs: [QMPage] = [.display, .controls, .sound, .system]
     #else
     static let settingsTabs: [QMPage] = [.display, .controls, .sound, .play, .system]

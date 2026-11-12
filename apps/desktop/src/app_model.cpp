@@ -451,7 +451,9 @@ void AppModel::askProjectDestination(const std::string& name, std::function<void
       error(TR("Couldn’t save"), TR("You can’t save to the temporary location."));
       return;
     }
-    if (exists(dest)) {
+    // The open project itself is not replaced: Save As under its own name saves it (AppModel::saveAs).
+    const bool openProject = current_ && !current_->isTemp && LibraryModel::samePath(dest, current_->projectPath);
+    if (!openProject && exists(dest)) {
       std::string err;
       if (!trash(dest, &err)) {
         error(TR("Couldn’t save"), TRF("Couldn’t replace the existing item: %@", {dest}) + "\n" + err);
@@ -773,6 +775,10 @@ void AppModel::saveAs() {
   askProjectDestination(romName(), [this](const std::string& dir) {
     rn_session* s = emu_->session();
     if (!s) return;
+    if (LibraryModel::samePath(dir, rn_session_project_dir(s))) {
+      if (emu_->save()) host_->notice(TR("Saved"));
+      return;
+    }
     if (rn_session_save_as(s, dir.c_str()) != RN_OK) {
       error(TR("Couldn’t save"), rn_last_error());
       return;

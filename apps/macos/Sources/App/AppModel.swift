@@ -841,6 +841,10 @@ final class AppModel: ObservableObject {
         save.nameFieldStringValue = (URL(fileURLWithPath: status.romPath).deletingPathExtension().lastPathComponent) + ".nesrec"
         save.allowedContentTypes = [.nesrec]
         guard save.runModal() == .OK, let dir = save.url else { return false }
+        // The open project under its own name: saved, not replaced (trashing it would lose the session's files).
+        if let c = current, !c.isTemp, URL(fileURLWithPath: c.projectPath).standardizedFileURL == dir.standardizedFileURL {
+            return saveSync()
+        }
         if FileManager.default.fileExists(atPath: dir.path) {
             if (try? FileManager.default.trashItem(at: dir, resultingItemURL: nil)) == nil {
                 showError(String(localized: "Couldn’t save"), String(localized: "Couldn’t replace the existing item: \(dir.path)")); return false
