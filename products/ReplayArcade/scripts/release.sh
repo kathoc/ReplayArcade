@@ -24,7 +24,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MONO="$(cd "$ROOT/../.." && pwd)"  # the monorepo's root: ReplayNES's sources (ReplayArcade is products/ReplayArcade)
 VERSION="${1:?usage: scripts/release.sh <version>}"
-REPO=kathoc/ReplayArcade
+REPO=kathoc/ReplayArcade  # the release, gh-pages and the v* tag: where installed copies look for updates
+SRC_REPO=kathoc/ReplayNES  # the monorepo: the sources and the Flatpak workflow's runs
 APP_ID=io.github.kathoc.ReplayArcade
 ED_KEY="${ED_KEY:-$HOME/.config/replayarcade/sparkle-ed25519.pem}"
 GPG_HOME="${GPG_HOME:-$HOME/.config/replayarcade/gnupg}"
@@ -32,7 +33,8 @@ GPG_KEY="${GPG_KEY:-968E487DC2C059FD6CAB167787E76CBC7CBAEFFE}"
 DIST="$ROOT/dist"
 WORK="$ROOT/build/release"
 PAGES_URL="https://kathoc.github.io/ReplayArcade/flatpak/"
-TAG="v$VERSION"
+TAG="v$VERSION"                    # in $REPO
+MONO_TAG="replayarcade-v$VERSION"  # in the monorepo (ReplayNES's own tags are v*)
 export PATH="$HOME/.local/bin:$PATH"
 git_gh() { git -c credential.helper= -c credential.helper='!gh auth git-credential' "$@"; }
 ostree() { flatpak run --filesystem=home --command=ostree org.flatpak.Builder "$@"; }
@@ -47,10 +49,10 @@ grep -q "<release version=\"$VERSION\"" "$ROOT/packaging/linux/$APP_ID.metainfo.
 # A new Flatpak permission stops the in-app update (the portal installs no update that asks for one): the
 # users must update once by hand (Discover / flatpak update). Say so in CHANGES, then NEW_PERMISSIONS=1.
 MANIFEST="packaging/linux/$APP_ID.yml"
-PREV_TAG="$(git -C "$ROOT" describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+PREV_TAG="$(git -C "$ROOT" describe --tags --abbrev=0 --match 'replayarcade-v*' 2>/dev/null || true)"
 if [ -n "$PREV_TAG" ]; then
   perms() { sed -n '/^finish-args:/,/^[a-z]/p' | grep -E '^ *- --' | sed 's/^ *- //' | sort; }
-  ADDED="$(comm -13 <(git -C "$ROOT" show "$PREV_TAG:$MANIFEST" 2>/dev/null | perms) <(perms < "$ROOT/$MANIFEST"))"
+  ADDED="$(comm -13 <(git -C "$ROOT" show "$PREV_TAG:./$MANIFEST" 2>/dev/null | perms) <(perms < "$ROOT/$MANIFEST"))"
   if [ -n "$ADDED" ] && [ "${NEW_PERMISSIONS:-}" != 1 ]; then
     echo "new Flatpak permissions since $PREV_TAG (the in-app update will refuse this version):"
     echo "$ADDED" | sed 's/^/  /'
@@ -119,6 +121,7 @@ e.g. gradius.zip) in Documents\\ReplayArcade\\ROM, then start ReplayArcade.exe. 
 code-signed: if SmartScreen warns, choose "More info" and "Run anyway". Updates are checked in the app
 (signed feed).
 
+Source: https://github.com/$SRC_REPO/tree/$MONO_TAG (\`products/ReplayArcade\`, with ReplayNES's sources around it).
 Licences: GPL-2.0-or-later with an additional permission for FinalBurn Neo (COPYING.md, LICENSE.txt);
 FinalBurn Neo under its own non-commercial licence (LICENSE-FBNeo.txt); THIRD_PARTY_NOTICES.md.
 EOF
@@ -161,12 +164,12 @@ echo "==> Flatpak"
 flatpak_from_actions() {  # <repository dir>
   local R="$1" HEAD_SHA RUN
   HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
-  RUN="${FLATPAK_RUN:-$(gh run list --repo "$REPO" --workflow replayarcade-flatpak.yml --commit "$HEAD_SHA" --status success \
+  RUN="${FLATPAK_RUN:-$(gh run list --repo "$SRC_REPO" --workflow replayarcade-flatpak.yml --commit "$HEAD_SHA" --status success \
     --limit 1 --json databaseId -q '.[0].databaseId')}"
   [ -n "$RUN" ] || { echo "no successful Flatpak run on GitHub Actions for $HEAD_SHA (push it, wait for the run)"; exit 1; }
   echo "    x86_64 from GitHub Actions run $RUN"
   rm -rf "$WORK/flatpak-ci" "$R" && mkdir -p "$WORK/flatpak-ci"
-  gh run download "$RUN" --repo "$REPO" -n flatpak-repo-x86_64 -D "$WORK/flatpak-ci"
+  gh run download "$RUN" --repo "$SRC_REPO" -n flatpak-repo-x86_64 -D "$WORK/flatpak-ci"
   tar -C "$WORK/flatpak-ci" -xf "$WORK/flatpak-ci/flatpak-repo.tar"
   mv "$WORK/flatpak-ci/repo" "$R"
   [ "$(cat "$R/replayarcade-commit")" = "$HEAD_SHA" ] || { echo "run $RUN built $(cat "$R/replayarcade-commit"), not HEAD"; exit 1; }
@@ -282,8 +285,9 @@ cd "$ROOT"
 fi  # RELEASE_ONLY
 echo "==> GitHub release $TAG"
 if [ "${RELEASE_ONLY:-0}" != 1 ]; then
-  git -C "$ROOT" tag -f "$TAG" HEAD
-  git_gh -C "$ROOT" push -f "https://github.com/$REPO.git" "refs/tags/$TAG"
+  git -C "$ROOT" tag -f "$MONO_TAG" HEAD
+  git_gh -C "$ROOT" push -f "https://github.com/$SRC_REPO.git" "refs/tags/$MONO_TAG"
+  git_gh -C "$ROOT" push -f "https://github.com/$REPO.git" "refs/tags/$MONO_TAG:refs/tags/$TAG"
 fi
 ANDROID_ASSET=()
 if [ -n "${ANDROID_APK:-}" ]; then
