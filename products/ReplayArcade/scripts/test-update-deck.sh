@@ -23,13 +23,17 @@ ostree() { flatpak run --filesystem=home --command=ostree org.flatpak.Builder "$
 echo "==> build $TEST_VERSION from the current tree"
 mkdir -p "$W"
 rm -rf "$W/src" "$W/repo"
-rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
-  --exclude='/third_party/replaynes/build/' --exclude='/third_party/fbneo/src/dep/mingw/' \
-  --exclude='*.o' --exclude='*.a' --exclude='*.d' "$ROOT/" "$W/src/"
-sed -i "s/^set(RN_PRODUCT_VERSION \".*\")/set(RN_PRODUCT_VERSION \"$TEST_VERSION\")/" "$W/src/cmake/product.cmake"
-sed -i "s|<releases>|<releases>\n    <release version=\"$TEST_VERSION\" date=\"$(date -u +%F)\"/>|" "$W/src/packaging/linux/$APP_ID.metainfo.xml"
+# The monorepo's root (the manifest builds from it; ReplayArcade is products/ReplayArcade in it).
+MONO="$(cd "$ROOT/../.." && pwd)"
+rsync -a --exclude='.git' --exclude='/.claude/' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' \
+  --exclude='/.flatpak-builder/' --exclude='/products/ReplayArcade/build/' --exclude='/products/ReplayArcade/build-*' \
+  --exclude='/products/ReplayArcade/dist/' --exclude='/products/ReplayArcade/third_party/fbneo/src/dep/mingw/' \
+  --exclude='*.o' --exclude='*.a' --exclude='*.d' "$MONO/" "$W/src/"
+A="$W/src/products/ReplayArcade"
+sed -i "s/^set(RN_PRODUCT_VERSION \".*\")/set(RN_PRODUCT_VERSION \"$TEST_VERSION\")/" "$A/cmake/product.cmake"
+sed -i "s|<releases>|<releases>\n    <release version=\"$TEST_VERSION\" date=\"$(date -u +%F)\"/>|" "$A/packaging/linux/$APP_ID.metainfo.xml"
 flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$W/state" \
-  --repo="$W/build-repo" "$W/build" "$W/src/packaging/linux/$APP_ID.yml" >"$W/flatpak.log" 2>&1 || { tail -30 "$W/flatpak.log"; exit 1; }
+  --repo="$W/build-repo" "$W/build" "$A/packaging/linux/$APP_ID.yml" >"$W/flatpak.log" 2>&1 || { tail -30 "$W/flatpak.log"; exit 1; }
 cp -a "$ROOT/build/gh-pages/flatpak" "$W/repo"
 flatpak build-commit-from --src-repo="$W/build-repo" --gpg-sign="$GPG_KEY" --gpg-homedir="$GPG_HOME" \
   --no-update-summary --subject="ReplayArcade $TEST_VERSION (update test)" "$W/repo" "app/$APP_ID/x86_64/master"

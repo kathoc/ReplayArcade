@@ -7,3 +7,7 @@
 [submodule "third_party/SDL"]
 	path = third_party/SDL
 	url = https://github.com/libsdl-org/SDL.git
+[submodule "products/ReplayArcade/third_party/fbneo"]
+	path = products/ReplayArcade/third_party/fbneo
+	url = https://github.com/libretro/FBNeo.git
+	ignore = untracked

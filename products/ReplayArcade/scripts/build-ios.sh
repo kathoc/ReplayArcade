@@ -5,12 +5,12 @@
 #   scripts/build-ios.sh device [--install]      the connected iPhone (automatic signing)
 #   scripts/build-ios.sh sim [--install]         the newest iPhone simulator (unsigned)
 #   scripts/build-ios.sh generate                only the Xcode project
-# REPLAYNES_DIR: the ReplayNES tree with apps/ios (branch ios; default: the submodule).
+# REPLAYNES_DIR: the ReplayNES tree with apps/ios (default: the monorepo's root).
 # Signing: packaging/ios/Config/Signing.local.xcconfig (DEVELOPMENT_TEAM, PRODUCT_BUNDLE_IDENTIFIER).
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$ROOT/packaging/ios"
-REPLAYNES_DIR="$(cd "${REPLAYNES_DIR:-$ROOT/third_party/replaynes}" && pwd)"
+REPLAYNES_DIR="$(cd "${REPLAYNES_DIR:-$ROOT/../..}" && pwd)"  # the monorepo's root
 export REPLAYNES_IOS_DIR="$REPLAYNES_DIR/apps/ios"
 [ -f "$REPLAYNES_IOS_DIR/common.yml" ] || { echo "error: $REPLAYNES_IOS_DIR/common.yml not found (REPLAYNES_DIR: a ReplayNES tree with the iPhone app)"; exit 1; }
 WHAT="${1:-sim}"; shift || true

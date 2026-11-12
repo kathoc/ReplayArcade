@@ -1,0 +1,3 @@
+# Paths check-no-roms.sh lets through although their names look like game data: made here, from no ROM.
+# One path per line, exact. Add a line only for a file made in this repository (a fixture from the Test Cartridge).
+tests/fixtures/golden/project-v2.nesrec/journal/journal.bin

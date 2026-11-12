@@ -4,9 +4,9 @@ project(ReplayArcade C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ReplayNES's sources (engine, shared frontend, apps): the submodule third_party/replaynes, pinned to a
-# ReplayNES commit. -DREPLAYNES_DIR=<another ReplayNES tree> builds against a working copy instead.
-set(REPLAYNES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/replaynes" CACHE PATH "ReplayNES source tree")
+# ReplayNES's sources (engine, shared frontend, apps): the monorepo's root (this is products/ReplayArcade in it;
+# until the unification's P0 they were the submodule third_party/replaynes). -DREPLAYNES_DIR=<another tree>.
+set(REPLAYNES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." CACHE PATH "ReplayNES source tree")
 set(RN_PRODUCT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/product.cmake" CACHE FILEPATH "Product profile" FORCE)
 option(REPLAYARCADE_BUILD_TESTS "Build ReplayArcade's tests" ON)
 set(REPLAYNES_BUILD_TESTS OFF CACHE BOOL "" FORCE)

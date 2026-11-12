@@ -1,6 +1,6 @@
 # ReplayArcade for Steam Deck / Linux (Flatpak), built from ReplayNES's sources with ReplayArcade's
-# product profile. Use scripts/build-deck-flatpak.sh: it copies ReplayArcade and ReplayNES's tree
-# (third_party/replaynes) to the Deck and runs flatpak-builder there. Private build, not published.
+# product profile, from the monorepo (ReplayNES at its root, ReplayArcade in products/ReplayArcade). Releases:
+# scripts/release.sh; on the Deck: scripts/build-deck-flatpak.sh (copies the monorepo there).
 id: io.github.kathoc.ReplayArcade
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
@@ -36,18 +36,25 @@ finish-args:
 modules:
   - name: replayarcade
     buildsystem: cmake-ninja
-    subdir: third_party/replaynes/apps/linux
+    subdir: apps/linux
     builddir: true
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DRNL_BUILD_TESTS=OFF
-      - -DRN_PRODUCT_FILE=/run/build/replayarcade/cmake/product.cmake
+      - -DRN_PRODUCT_FILE=/run/build/replayarcade/products/ReplayArcade/cmake/product.cmake
     sources:
+      # The monorepo's root: ReplayNES's sources at the root, ReplayArcade in products/ReplayArcade.
       - type: dir
-        path: ../..
+        path: ../../../..
         skip:
           - .git
+          - .claude
           - build
           - build-linux-sdk
           - .flatpak-builder
           - dist
+          - products/ReplayArcade/build
+          - products/ReplayArcade/build-ios
+          - products/ReplayArcade/build-mac
+          - products/ReplayArcade/build-linux-sdk
+          - products/ReplayArcade/dist

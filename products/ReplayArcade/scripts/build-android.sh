@@ -4,11 +4,11 @@
 #   scripts/build-android.sh [debug|release]   (default debug) -> build/android/ReplayArcade-<variant>.apk
 #   release: signed with the key in ~/.config/replayarcade/android-signing.env (RN_ANDROID_KEYSTORE ...;
 #   never printed or copied) -> also build/android/ReplayArcade-<version>-android-arm64.apk
-# Env: REPLAYNES_DIR (default: the submodule third_party/replaynes). Needs the Android SDK / NDK 30
+# Env: REPLAYNES_DIR (default: the monorepo's root). Needs the Android SDK / NDK 30
 # (ANDROID_HOME), Java 21 and Gradle 9.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RN="${REPLAYNES_DIR:-$ROOT/third_party/replaynes}"
+RN="$(cd "${REPLAYNES_DIR:-$ROOT/../..}" && pwd)"  # the monorepo's root
 VARIANT="${1:-debug}"
 "$ROOT/scripts/fbneo-patches.sh" --check >/dev/null || "$ROOT/scripts/fbneo-patches.sh"
 TASK="assemble$(tr '[:lower:]' '[:upper:]' <<< "${VARIANT:0:1}")${VARIANT:1}"

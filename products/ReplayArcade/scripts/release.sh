@@ -22,6 +22,7 @@
 # Game data never ships: every artefact's file list is checked (.githooks/check-no-roms.sh rules).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MONO="$(cd "$ROOT/../.." && pwd)"  # the monorepo's root: ReplayNES's sources (ReplayArcade is products/ReplayArcade)
 VERSION="${1:?usage: scripts/release.sh <version>}"
 REPO=kathoc/ReplayArcade
 APP_ID=io.github.kathoc.ReplayArcade
@@ -106,7 +107,7 @@ cp "$B/ReplayArcade.exe" "$STAGE/"
 cp "$B/WinSparkle.dll" "$STAGE/"
 cp "$ROOT/LICENSE" "$STAGE/LICENSE.txt"
 cp "$ROOT/COPYING.md" "$ROOT/LICENSE-FBNeo.txt" "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/"
-cp "$ROOT/third_party/replaynes/THIRD_PARTY_NOTICES.md" "$STAGE/ReplayNES-THIRD_PARTY_NOTICES.md"
+cp "$MONO/THIRD_PARTY_NOTICES.md" "$STAGE/ReplayNES-THIRD_PARTY_NOTICES.md"
 cat > "$STAGE/README.txt" <<EOF
 ReplayArcade $VERSION for Windows (x64)
 https://github.com/$REPO
@@ -160,7 +161,7 @@ echo "==> Flatpak"
 flatpak_from_actions() {  # <repository dir>
   local R="$1" HEAD_SHA RUN
   HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
-  RUN="${FLATPAK_RUN:-$(gh run list --repo "$REPO" --workflow flatpak.yml --commit "$HEAD_SHA" --status success \
+  RUN="${FLATPAK_RUN:-$(gh run list --repo "$REPO" --workflow replayarcade-flatpak.yml --commit "$HEAD_SHA" --status success \
     --limit 1 --json databaseId -q '.[0].databaseId')}"
   [ -n "$RUN" ] || { echo "no successful Flatpak run on GitHub Actions for $HEAD_SHA (push it, wait for the run)"; exit 1; }
   echo "    x86_64 from GitHub Actions run $RUN"
@@ -169,24 +170,24 @@ flatpak_from_actions() {  # <repository dir>
   tar -C "$WORK/flatpak-ci" -xf "$WORK/flatpak-ci/flatpak-repo.tar"
   mv "$WORK/flatpak-ci/repo" "$R"
   [ "$(cat "$R/replayarcade-commit")" = "$HEAD_SHA" ] || { echo "run $RUN built $(cat "$R/replayarcade-commit"), not HEAD"; exit 1; }
-  [ "$(cat "$R/replaynes-commit")" = "$(git -C "$ROOT/third_party/replaynes" rev-parse HEAD)" ] ||
-    { echo "run $RUN built another ReplayNES commit"; exit 1; }
+  # One monorepo commit holds both ReplayArcade and ReplayNES's sources: replayarcade-commit names it.
   no_game_data < "$R/replayarcade-files"
 }
 flatpak_local() {  # <arch> <repository dir>: this machine's architecture
   local a="$1" R="$2" SRC="$WORK/flatpak-src"
   echo "    $a built here"
   rm -rf "$SRC" "$R" && mkdir -p "$SRC"
-  # Not copied: build output (also ReplayNES's download cache in third_party/replaynes/build, and the Android
-  # build's CMake / Gradle trees: .cxx/ holds a copy of FBNeo with its Windows SDK archive) and FBNeo's
-  # Windows SDK archive (src/dep/mingw), which the Flatpak does not use.
-  rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
-    --exclude='/third_party/replaynes/build/' --exclude='/third_party/fbneo/src/dep/mingw/' \
-    --exclude='.cxx/' --exclude='.gradle/' --exclude='/third_party/replaynes/apps/android/app/build/' \
-    --exclude='*.o' --exclude='*.a' --exclude='*.d' "$ROOT/" "$SRC/"
+  # The monorepo's root (the manifest builds from it). Not copied: build output (also ReplayNES's download
+  # cache in build/, and the Android build's CMake / Gradle trees: .cxx/ holds a copy of FBNeo with its Windows
+  # SDK archive) and FBNeo's Windows SDK archive (src/dep/mingw), which the Flatpak does not use.
+  rsync -a --exclude='.git' --exclude='/.claude/' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' \
+    --exclude='/.flatpak-builder/' --exclude='/products/ReplayArcade/build/' --exclude='/products/ReplayArcade/build-*' \
+    --exclude='/products/ReplayArcade/dist/' --exclude='/products/ReplayArcade/third_party/fbneo/src/dep/mingw/' \
+    --exclude='.cxx/' --exclude='.gradle/' --exclude='/apps/android/app/build/' \
+    --exclude='*.o' --exclude='*.a' --exclude='*.d' "$MONO/" "$SRC/"
   (cd "$SRC" && find . -type f) | no_game_data
   flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$WORK/flatpak-state" \
-    --repo="$R" "$WORK/flatpak-build-$a" "$SRC/packaging/linux/$APP_ID.yml" >"$WORK/flatpak-$a.log" 2>&1 ||
+    --repo="$R" "$WORK/flatpak-build-$a" "$SRC/products/ReplayArcade/packaging/linux/$APP_ID.yml" >"$WORK/flatpak-$a.log" 2>&1 ||
     { tail -30 "$WORK/flatpak-$a.log"; exit 1; }
   (cd "$WORK/flatpak-build-$a/files" && find . -type f) | no_game_data
 }

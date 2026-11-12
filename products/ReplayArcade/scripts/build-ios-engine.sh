@@ -11,7 +11,7 @@
 # Always Release: the cores are far too slow unoptimized for real-time play.
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REPLAYNES_DIR="$(cd "${REPLAYNES_DIR:-$ROOT/third_party/replaynes}" && pwd)"
+REPLAYNES_DIR="$(cd "${REPLAYNES_DIR:-$ROOT/../..}" && pwd)"  # the monorepo's root
 OUT="${RN_ENGINE_BUILD_DIR:-$ROOT/build-ios}"
 WANT="${1:-${PLATFORM_NAME:-iphonesimulator}}"
 

@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-ReplayArcade is built from ReplayNES's sources (`third_party/replaynes`) and FinalBurn Neo
+ReplayArcade is built from ReplayNES's sources (the Replay monorepo's root) and FinalBurn Neo
 (`third_party/fbneo`). Licensing of the combination: `COPYING.md`.
 
 ## FinalBurn Neo (arcade emulation core)
@@ -20,7 +20,7 @@ ReplayArcade is built from ReplayNES's sources (`third_party/replaynes`) and Fin
 ## Components from ReplayNES
 
 The following are used as in ReplayNES; their full licence texts are in
-`third_party/replaynes/THIRD_PARTY_NOTICES.md`:
+ReplayNES's `THIRD_PARTY_NOTICES.md` (the monorepo's root; shipped as `ReplayNES-THIRD_PARTY_NOTICES.md`):
 
 - Dear ImGui (MIT) - user interface.
 - SDL3 (zlib) - window, audio, gamepads; Vulkan loader on Linux (Apache-2.0).

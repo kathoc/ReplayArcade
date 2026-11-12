@@ -1,7 +1,8 @@
-# Builds the Steam Deck / Linux Flatpak (x86_64) exactly as scripts/release.sh does, but unsigned:
+# ReplayArcade (products/ReplayArcade in the monorepo): builds the Steam Deck / Linux Flatpak (x86_64) exactly as its
+# scripts/release.sh does, but unsigned:
 # the artifact is the OSTree repository flatpak-builder writes. scripts/release.sh signs and publishes it on the
 # release machine (FLATPAK_RUN=<run id>), so no key ever reaches GitHub. No game data is involved.
-name: Flatpak x86_64
+name: ReplayArcade Flatpak x86_64
 
 on:
   workflow_dispatch:
@@ -28,7 +29,7 @@ jobs:
             org.freedesktop.Sdk//25.08 org.freedesktop.Platform//25.08
 
       - name: FBNeo patches
-        run: scripts/fbneo-patches.sh
+        run: products/ReplayArcade/scripts/fbneo-patches.sh
 
       # The source tree is copied as scripts/release.sh copies it (no .git at any depth: a submodule's .git file
       # points outside the build and stops git apply in fbneo-patches.sh), outside the workspace.
@@ -39,12 +40,11 @@ jobs:
           W="$RUNNER_TEMP/flatpak"
           mkdir -p "$W/src"
           rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
-            --exclude='/third_party/replaynes/build/' --exclude='/third_party/fbneo/src/dep/mingw/' \
+            --exclude='/products/ReplayArcade/build/' --exclude='/products/ReplayArcade/third_party/fbneo/src/dep/mingw/' \
             --exclude='*.o' --exclude='*.a' --exclude='*.d' ./ "$W/src/"
           dbus-run-session -- flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$W/state" \
-            --repo="$W/repo" "$W/build" "$W/src/packaging/linux/io.github.kathoc.ReplayArcade.yml"
+            --repo="$W/repo" "$W/build" "$W/src/products/ReplayArcade/packaging/linux/io.github.kathoc.ReplayArcade.yml"
           git rev-parse HEAD > "$W/repo/replayarcade-commit"
-          git -C third_party/replaynes rev-parse HEAD > "$W/repo/replaynes-commit"
           (cd "$W/build/files" && find . -type f | sort) > "$W/repo/replayarcade-files"
           tar -C "$W" -cf "$RUNNER_TEMP/flatpak-repo.tar" repo
 

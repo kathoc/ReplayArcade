@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Refuses game data (ROM images, archives, CHDs, NVRAM, projects) and any file over 5 MB.
-# Used by the pre-commit hook (staged files) and the pre-push hook (every file of the pushed commits).
+# Used by the pre-commit hook (staged files) and the pre-push hook (every file of the pushed commits), for the
+# whole monorepo (ReplayNES and products/ReplayArcade).
 #   check-no-roms.sh <file list on stdin, one path per line> [rev]   (rev: read sizes from that commit)
 set -euo pipefail
 rev="${1:-}"
 bad=0
+allowed="$(dirname "$0")/allowed-game-data.txt"  # exact paths made here from no ROM (a Test Cartridge fixture)
 while IFS= read -r f; do
   [ -z "$f" ] && continue
+  if grep -qxF -- "$f" "$allowed" 2>/dev/null; then continue; fi
   # Lower case by tr: macOS's /bin/bash (3.2) has no ${f,,}.
   case "$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')" in
     *.zip|*.7z|*.rar|*.chd|*.nes|*.fds|*.unf|*.bin|*.rom|*.fs|*.nv|*.arcrec/*|roms/*|*/roms/*|rom/*|*/rom/*)

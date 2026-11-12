@@ -4,8 +4,8 @@ ReplayArcade combines two bodies of code under different licences.
 
 ## ReplayArcade and ReplayNES code: GPL-2.0-or-later with an additional permission
 
-The code in this repository (except `third_party/`) and the ReplayNES code it is built from
-(`third_party/replaynes`, https://github.com/kathoc/ReplayNES) are licensed under the GNU General
+The code of ReplayArcade (`products/ReplayArcade` in the Replay monorepo, except its `third_party/`) and the
+ReplayNES code it is built from (the monorepo's root, https://github.com/kathoc/ReplayNES) are licensed under the GNU General
 Public License, version 2 or (at your option) any later version (`LICENSE`), with the following
 additional permission.
 
