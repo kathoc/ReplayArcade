@@ -88,6 +88,9 @@ enum QuickMenuPages {
         case .about: return QMContent(items: about(m))
         case .game: return QMContent(items: game(m, menu))
         case .reset: return QMContent(items: reset(m, menu))
+        // The frontend's Play and Turbo pages (macOS has them): iPhone's settings tabs leave them out and their
+        // rows stay on iPhone's own pages (QMPage.settingsTabs), so nothing opens these here.
+        case .play, .turbo: return QMContent(items: [])
         }
     }
 

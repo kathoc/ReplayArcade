@@ -20,7 +20,13 @@ enum QMPage: String, CaseIterable, Hashable {
 
     /// The five settings pages (L / R switch between them; the Settings tile opens the first).
     /// Matches the shared frontend's "Settings by purpose" order (frontend/src/menu.cpp).
+    #if os(iOS)
+    // iPhone keeps its pages (Play's and Turbo's rows where they were) until its menu follows the frontend's
+    // "Settings by purpose" order: the monorepo's P0 changes no behaviour (docs/unification/SHELL_DIFF.md).
+    static let settingsTabs: [QMPage] = [.display, .controls, .sound, .system]
+    #else
     static let settingsTabs: [QMPage] = [.display, .controls, .sound, .play, .system]
+    #endif
 
     /// The top level's tiles, in order: the item ids of the shared core's "quick" page
     /// (frontend/src/menu.cpp, rnf_menu_*), which the Linux / Windows frontends draw.
