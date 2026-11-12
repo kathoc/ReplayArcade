@@ -120,10 +120,12 @@ final class EngineSession {
         return o
     }
 
-    /// New session for a ROM. projectDir == nil -> in-memory (save later with saveAs).
-    static func create(rom: URL, projectDir: URL?, core: rn_core_kind = RN_CORE_NESTOPIA) throws -> EngineSession {
+    /// New session for a ROM. projectDir == nil -> in-memory (save later with saveAs). `core` nil: the
+    /// product's default core (RN_PRODUCT_DEFAULT_CORE: Nestopia for ReplayNES, the registered external
+    /// core for ReplayArcade).
+    static func create(rom: URL, projectDir: URL?, core: rn_core_kind? = nil) throws -> EngineSession {
         var opt = defaultOptions()
-        opt.core = core
+        if let core { opt.core = core }
         var out: OpaquePointer?
         let st = rn_session_new(rom.path, projectDir?.path, &opt, &out)
         if st != RN_OK { throw RNError(st) }
@@ -161,6 +163,21 @@ final class EngineSession {
         return info
     }
 
+    /// Another core's layout: the whole input record (its byte 2 = the events).
+    @discardableResult
+    func step(record: rn_input_record) throws -> rn_step_info {
+        var r = record, info = rn_step_info()
+        try rnCheck(rn_step_record(handle, &r, &info))
+        return info
+    }
+
+    @discardableResult
+    func transportStep(record: rn_input_record) throws -> rn_step_info {
+        var r = record, info = rn_step_info()
+        try rnCheck(rnf_transport_step_record(handle, &r, &info))
+        return info
+    }
+
     /// Paused frame step forward (rnf_transport_step): replays the recorded frame inside the take
     /// (never branches), records one frame only at the take end; replay / practice = step.
     @discardableResult
@@ -176,10 +193,34 @@ final class EngineSession {
         var info = rn_video_indices_info()
         return rn_video_indices(handle, &info) == RN_OK && info.codes != nil ? info : nil
     }
+    /// The core's media info (picture capacity, frame rate, audio channels, pixel aspect, rotation):
+    /// fixed for the content (docs/plans/2026-10-24-media-frontend.md).
+    lazy var media: rn_media_info = {
+        var m = rn_media_info()
+        if rn_session_media_info(handle, &m) != RN_OK {
+            m = rn_media_info(max_width: UInt32(RN_VIDEO_WIDTH), max_height: UInt32(RN_VIDEO_HEIGHT), fps_num: UInt64(RN_FPS_NUM),
+                              fps_den: UInt64(RN_FPS_DEN), audio_channels: 1, pixel_aspect_num: 8, pixel_aspect_den: 7, rotation: 0)
+        }
+        return m
+    }()
+    var audioChannels: Int { max(1, Int(media.audio_channels)) }
+    /// The picture of the last frame with its size and stride (`video` is its pixels).
+    var videoFrame: rn_video_frame_info? {
+        var f = rn_video_frame_info()
+        return rn_session_video_frame(handle, &f) == RN_OK && f.pixels != nil && f.width > 0 && f.height > 0 ? f : nil
+    }
+    /// The last frame's geometry (its size; the content's rotation and pixel aspect).
+    var pictureGeometry: PictureGeometry {
+        var g = PictureGeometry(rotation: Int(media.rotation % 4))
+        if let f = videoFrame { g.width = Int(f.width); g.height = Int(f.height) }
+        if media.pixel_aspect_num > 0, media.pixel_aspect_den > 0 { g.pixelAspect = Double(media.pixel_aspect_num) / Double(media.pixel_aspect_den) }
+        return g
+    }
+    /// Interleaved PCM of the last frame: sample frames x audioChannels values.
     func audio() -> UnsafeBufferPointer<Int16> {
         var n = 0
         guard let p = rn_audio(handle, &n), n > 0 else { return UnsafeBufferPointer(start: nil, count: 0) }
-        return UnsafeBufferPointer(start: p, count: n)
+        return UnsafeBufferPointer(start: p, count: n * audioChannels)
     }
 
     var frame: UInt64 { rn_frame(handle) }

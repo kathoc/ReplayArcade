@@ -1,0 +1,86 @@
+# XcodeGen spec for the ReplayNES iPhone prototype (branch `ios`, local only).
+#   cd apps/ios && xcodegen generate      (scripts/build-device.sh does this for you)
+# Like apps/macos, the engine and the shared frontend core are NOT compiled here: the "Engine"
+# aggregate target runs CMake on the same source lists as every other platform (single source of
+# truth; scripts/build-engine.sh) for the SDK being built (iphoneos / iphonesimulator, arm64) and
+# the app links the resulting static library.
+# Swift shared with macOS is referenced in place from apps/macos (no copies): the pure core layer
+# (Sources/Core, all of it) and the platform-neutral parts of the app layer (emulation thread,
+# Metal renderer, audio output, timeline / markers, Quick Menu controller, game controllers).
+# See README.md, "Architecture".
+# This file is ReplayNES's product part; the targets, tests and schemes every product shares are in
+# common.yml (another product, ReplayArcade, includes it from its own spec).
+include:
+  - common.yml
+name: ReplayNES
+options:
+  bundleIdPrefix: io.github.replaynes
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+settings:
+  base:
+    MARKETING_VERSION: "0.6.4"
+    CURRENT_PROJECT_VERSION: "6"
+    RN_IOS_DIR: "$(SRCROOT)"
+    RN_ENGINE_BUILD_DIR: "$(SRCROOT)/../../build/ios-engine"
+    RN_ENGINE_SCRIPT: "$(SRCROOT)/scripts/build-engine.sh"
+
+targets:
+  ReplayNES:
+    sources:
+      - path: Resources/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_NAME: ReplayNES
+        INFOPLIST_KEY_CFBundleDisplayName: ReplayNES
+    entitlements:
+      path: Config/ReplayNES.entitlements
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: ReplayNES
+        NSHumanReadableCopyright: "ReplayNES - GPL-2.0-or-later. Includes Nestopia UE (GPL-2.0-or-later). Personal test build."
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: io.github.replaynes.nesrec
+            UTTypeDescription: ReplayNES Project
+            UTTypeConformsTo: [com.apple.package, public.composite-content]
+            UTTypeTagSpecification:
+              public.filename-extension: [nesrec]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: io.github.replaynes.nes-rom
+            UTTypeDescription: NES ROM
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [nes, NES]
+        # No document type for .nes on purpose: the app's own "Open in" entry would show up in the share
+        # sheet next to the Share Extension (same name and icon) and gets only the first file. The
+        # imported UTI above stays (the picker and the extension use it).
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: ReplayNES Project
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSTypeIsPackage: true
+            LSItemContentTypes: [io.github.replaynes.nesrec]
+
+  ReplayNESShare:
+    settings:
+      base:
+        PRODUCT_NAME: ReplayNESShare
+    entitlements:
+      path: Config/ReplayNESShare.entitlements
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Add to ReplayNES
+        NSExtension:
+          NSExtensionAttributes:
+            # Any number of files: data (ROMs and everything else; the app sorts them out) and
+            # ReplayNES projects (packages).
+            NSExtensionActivationRule: >-
+              SUBQUERY(extensionItems, $extensionItem, SUBQUERY($extensionItem.attachments, $attachment,
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "io.github.replaynes.nes-rom"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "io.github.replaynes.nesrec"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.package"
+              ).@count >= 1).@count >= 1

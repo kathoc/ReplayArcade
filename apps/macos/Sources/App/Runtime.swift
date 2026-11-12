@@ -46,6 +46,8 @@ struct FrameMeta {
     var countdownFraction = 0.0
     /// The resume countdown starts an overwrite: "Retrying from here" under the numeral.
     var countdownNote = false
+    /// Size, rotation and pixel aspect of the picture (the NES picture unless the core says otherwise).
+    var geometry = PictureGeometry.nes
 }
 
 /// Latest-frame mailbox between the emulation thread (writer) and the Metal view (reader).
@@ -56,22 +58,28 @@ final class FrameBuffer {
     private var meta = FrameMeta()
     private var seq: UInt64 = 0
 
-    /// `codes`: raw PPU codes of the same picture (CRT signal path), copied when given.
+    /// `src`: the picture of `meta.geometry`, rows packed (width x height pixels).
+    /// `codes`: raw PPU codes of the same picture (CRT signal path, the NES picture only), copied when given.
     func publish(_ src: UnsafePointer<UInt32>, meta m: FrameMeta, codes c: UnsafePointer<UInt16>? = nil) {
         lock.lock()
-        pixels.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: src, count: $0.count) }
+        let count = m.geometry.width * m.geometry.height
+        if pixels.count < count { pixels = [UInt32](repeating: 0xFF00_0000, count: count) }
+        pixels.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: src, count: count) }
         var m = m
-        if let c { codes.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: c, count: $0.count) } } else { m.hasCodes = false }
+        if let c, m.geometry.isNESPicture {
+            codes.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: c, count: $0.count) }
+        } else { m.hasCodes = false }
         meta = m
         seq &+= 1
         for o in observers { o.signal() }
         lock.unlock()
     }
 
-    /// The latest published picture and its meta (the VTR effect's source when it starts).
+    /// The latest published picture and its meta (the VTR effect's source when it starts: the NES
+    /// picture, `dst` holds 256x240).
     func copyLatest(into dst: UnsafeMutablePointer<UInt32>) -> FrameMeta {
         lock.lock(); defer { lock.unlock() }
-        pixels.withUnsafeBufferPointer { dst.update(from: $0.baseAddress!, count: $0.count) }
+        pixels.withUnsafeBufferPointer { dst.update(from: $0.baseAddress!, count: Int(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT)) }
         return meta
     }
 
@@ -84,7 +92,7 @@ final class FrameBuffer {
     func clear() {
         lock.lock()
         for i in pixels.indices { pixels[i] = 0xFF00_0000 }
-        meta = FrameMeta()
+        meta = FrameMeta(geometry: meta.geometry)
         seq &+= 1
         for o in observers { o.signal() }
         lock.unlock()
@@ -149,15 +157,19 @@ final class AudioOutput {
     private func startOnQueue() {
         engine?.stop()
         let engine = AVAudioEngine()
-        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(RN_SAMPLE_RATE), channels: 1, interleaved: false)!
+        // The ring's channels (configure): mono is pulled to every output channel.
+        let channels = AVAudioChannelCount(rn_ring_channels(ring))
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(RN_SAMPLE_RATE), channels: channels, interleaved: false)!
         let ring = self.ring
         let source = AVAudioSourceNode(format: fmt) { _, _, frameCount, abl -> OSStatus in
             let list = UnsafeMutableAudioBufferListPointer(abl)
-            guard let first = list.first?.mData?.assumingMemoryBound(to: Float.self) else { return noErr }
-            rn_ring_pull(ring, first, frameCount)
-            if list.count > 1 {
-                for i in 1..<list.count {
-                    list[i].mData?.assumingMemoryBound(to: Float.self).update(from: first, count: Int(frameCount))
+            var outs: [UnsafeMutablePointer<Float>] = []
+            outs.reserveCapacity(list.count)
+            for b in list { if let p = b.mData?.assumingMemoryBound(to: Float.self) { outs.append(p) } }
+            guard !outs.isEmpty else { return noErr }
+            outs.withUnsafeBufferPointer { p in
+                p.baseAddress!.withMemoryRebound(to: Optional<UnsafeMutablePointer<Float>>.self, capacity: p.count) {
+                    rn_ring_pull_channels(ring, $0, UInt32(p.count), frameCount)
                 }
             }
             return noErr
@@ -196,6 +208,29 @@ final class AudioOutput {
 
     var outputLatencySeconds: Double { lock.lock(); defer { lock.unlock() }; return _latency }
 
+    /// The session's audio (emulation thread, while muted): `channels` interleaved values per sample
+    /// frame at `sampleRate` samples per second when emulated at `frameRate` frames per second. The
+    /// device stays at RN_SAMPLE_RATE; the stream is resampled by that ratio times the rate control's.
+    func configure(channels: Int, sampleRate: Double, frameRate: Double) {
+        nominalFrameRate = frameRate
+        inputRate = sampleRate > 0 ? sampleRate : Double(RN_SAMPLE_RATE)
+        guard channels != self.channels else { return }
+        self.channels = channels
+        resampler = AudioResampler(channels: channels)
+        rate.reset()
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            self.engine?.stop()
+            rn_ring_set_channels(self.ring, UInt32(channels))
+            self.startOnQueue()
+        }
+    }
+
+    /// Values per sample frame of the pushed PCM (configure).
+    private(set) var channels = 1
+    private var inputRate = Double(RN_SAMPLE_RATE)
+    private var nominalFrameRate = 1 / FramePacing.period
+
     /// Emulation thread only.
     func setMuted(_ m: Bool) {
         if m == muted { return }
@@ -217,16 +252,16 @@ final class AudioOutput {
 
     /// Emulation thread only. `frameRate`: frames per second the emulation currently runs at
     /// (the display-locked rate, or the NTSC rate on the host clock).
-    func push(_ pcm: UnsafeBufferPointer<Int16>, frameRate: Double = 1 / FramePacing.period) {
+    func push(_ pcm: UnsafeBufferPointer<Int16>, frameRate: Double? = nil) {
         guard pcm.baseAddress != nil, pcm.count > 0, !muted else { return }
         var st = rn_audio_ring_stats()
         rn_ring_get_stats(ring, &st)
-        rate.setFrameRate(frameRate)
+        rate.setFrameRate(frameRate ?? nominalFrameRate, nominal: nominalFrameRate)
         ratio = rate.update(fill: Double(st.fill))
         resampled.removeAll(keepingCapacity: true)
-        resampler.process(pcm, ratio: ratio, into: &resampled)
+        resampler.process(pcm, ratio: ratio * Double(RN_SAMPLE_RATE) / inputRate, into: &resampled)
         resampled.withUnsafeBufferPointer { b in
-            if let base = b.baseAddress, b.count > 0 { rn_ring_push(ring, base, UInt32(b.count)) }
+            if let base = b.baseAddress, b.count >= channels { rn_ring_push(ring, base, UInt32(b.count / channels)) }
         }
     }
 

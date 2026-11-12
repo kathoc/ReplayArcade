@@ -12,7 +12,7 @@ import Foundation
 
 struct SessionPaths: Equatable {
     let root: URL
-    // RNF_SESSION_TEMP_PROJECT ("current" RN_PRODUCT_PROJECT_EXT) is a concatenation Swift does not import.
+    // RNF_SESSION_TEMP_PROJECT ("current" RN_PRODUCT_PROJECT_EXT) is a concatenated macro, which Swift does not import.
     var tempProject: URL { root.appendingPathComponent("current" + RN_PRODUCT_PROJECT_EXT, isDirectory: true) }
     var resumeFile: URL { root.appendingPathComponent(RNF_SESSION_RESUME_FILE) }
     var lockFile: URL { root.appendingPathComponent(RNF_SESSION_LOCK_FILE) }
@@ -21,7 +21,7 @@ struct SessionPaths: Equatable {
     static var standard: SessionPaths {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return SessionPaths(root: base.appendingPathComponent("ReplayNES/Session", isDirectory: true))
+        return SessionPaths(root: base.appendingPathComponent(RNProduct.dataDirectory + "/Session", isDirectory: true))
     }
 
     func ensure() throws { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }

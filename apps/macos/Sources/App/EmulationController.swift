@@ -78,6 +78,10 @@ private final class DisplayLinkProxy: NSObject, CAMetalDisplayLinkDelegate {
 
 /// UI-facing snapshot of the emulation state (published ~20 Hz).
 struct EmuStatus: Equatable {
+    /// The session's picture geometry (the viewport's size, rotation and pixel aspect).
+    var geometry = PictureGeometry.nes
+    /// Player 1's fire buttons in the session's layout (the NES: A and B).
+    var fireButtons = 2
     var hasSession = false
     var frame: UInt64 = 0
     var takeLength: UInt64 = 0
@@ -233,6 +237,8 @@ final class EmulationController {
     private let flashFilter = FlashFilter(level: .standard)
     private var displayFrame = [UInt32](repeating: 0xFF00_0000, count: Int(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT))
     private var displayCodes = [UInt16](repeating: 0x0F, count: Int(RN_VIDEO_WIDTH * RN_VIDEO_HEIGHT))
+    /// Another core's picture, rows packed (showPicture).
+    private var picture: [UInt32] = []
     private var flashAltered = false        // last shown frame differs from the emulated one
     private var lastFlashTick: UInt64 = 0   // tick of the last altered frame
     private var flashActiveShown = false
@@ -243,7 +249,9 @@ final class EmulationController {
     private var crtLastFrame: UInt64?                             // frame of the last shown picture
     private var noSignalRepeats = 0                               // snow repeats since the last jump
     private var hissPCM: [Int16] = []
-    private let period: UInt64 = HostClock.ticks(seconds: Double(RN_FPS_DEN) / Double(RN_FPS_NUM))
+    /// The session's frame period (seconds; the NES rate without a session) and in host ticks.
+    private var framePeriod = FramePacing.period
+    private var period: UInt64 = HostClock.ticks(seconds: FramePacing.period)
     // Display-locked pacing (emulation thread).
     private var link: CAMetalDisplayLink?
     private var linkProxy: DisplayLinkProxy?
@@ -313,6 +321,16 @@ final class EmulationController {
         cmdLock.lock(); commands.append(block); cmdLock.unlock()
     }
 
+    /// Runs `block` on the emulation thread, then `completion` with its result on the main queue:
+    /// the non-blocking form of sync() for UI code (the main thread never waits on the emulation
+    /// thread, so there is no hang or priority inversion while a save runs).
+    func perform<T>(_ block: @escaping (EmulationController) -> T, completion: @escaping (T) -> Void) {
+        perform { emu in
+            let out = block(emu)
+            DispatchQueue.main.async { completion(out) }
+        }
+    }
+
     /// Runs `block` on the emulation thread and waits (main thread use only; emulation thread
     /// never waits on main, so this cannot deadlock).
     func sync<T>(timeout: Double = 30, _ block: @escaping (EmulationController) -> T) -> T? {
@@ -343,8 +361,51 @@ final class EmulationController {
 
     // MARK: session lifecycle (emulation thread)
 
+    /// Bindings a frontend adds for another core's layout (iOS: the touch controls), from its game actions.
+    var layoutExtraBindings: ((Set<String>) -> [(input: String, action: String)])?
+    /// The session's input is the NES pads (rn_step with p1 / p2); otherwise whole records of its layout.
+    private var nesLayout = true
+    private var fireButtons = 2
+
+    /// One frame's game input: the NES pads' bytes, or another layout's whole record (byte 2: events).
+    private struct GameInput {
+        var p1: UInt8 = 0, p2: UInt8 = 0
+        var record = rn_input_record()
+        var nes = true
+        /// Any game button held (the events byte aside).
+        var any: Bool {
+            if nes { return p1 | p2 != 0 }
+            return withUnsafeBytes(of: record.bytes) { b in b.enumerated().contains { $0.offset != 2 && $0.element != 0 } }
+        }
+    }
+
+    private func sampleGame(_ clock: UInt64) -> GameInput {
+        var g = GameInput(nes: nesLayout)
+        if nesLayout { rn_input_sample_game(input.handle, clock, &g.p1, &g.p2) } else { rn_input_sample_record(input.handle, clock, &g.record) }
+        return g
+    }
+
     func install(_ s: EngineSession?) {
         session = s
+        // The game input of the session's layout (the Linux app's EmulationController::install).
+        var layout: String?
+        if let s, let p = rn_session_input_layout_json(s.handle) { layout = String(cString: p); rn_string_free(p) }
+        input.useLayout(layout, extra: layoutExtraBindings)
+        nesLayout = !input.layoutActive
+        fireButtons = nesLayout ? 2 : input.fireButtons
+        // The game's frame rate and audio (docs/plans/2026-10-24-media-frontend.md): pacing, the
+        // display cadence and the audio stream follow the core (the NES values without a session).
+        if let s {
+            var m = s.media
+            framePeriod = rnf_frame_period_for_media(&m)
+            let rate = Double(rn_session_samples_before(s.handle, m.fps_num)) / Double(max(1, m.fps_den))
+            audio.configure(channels: s.audioChannels, sampleRate: rate, frameRate: 1 / framePeriod)
+        } else {
+            framePeriod = FramePacing.period
+        }
+        period = HostClock.ticks(seconds: framePeriod)
+        emulationRate = 1 / framePeriod
+        cadence = DisplayCadence(framePeriod: framePeriod)
         // A fresh recording (empty take, frame 0) has nothing to review: run immediately so the
         // game boots. Opened projects with recorded input stay paused at their cursor.
         if let s, s.takeLength == 0, s.frame == 0, (s.mode == RN_MODE_RECORD || s.mode == RN_MODE_LIVE) {
@@ -430,6 +491,12 @@ final class EmulationController {
     /// Hands a frame to the display, through the flash filter unless it is off. The session's own
     /// buffer is only read; the filtered copy is what the viewport (and snapshots) show.
     private func show(_ v: UnsafePointer<UInt32>, meta: FrameMeta) {
+        // Another core's picture (any size, rotation, pixel aspect): shown as it is. The flash filter,
+        // the VTR effect and the CRT model are for the NES picture (as in the Linux app).
+        if let s = session, v == s.video, let f = s.videoFrame {
+            let g = s.pictureGeometry
+            if !g.isNESPicture { showPicture(f, geometry: g, meta: meta); return }
+        }
         // Raw PPU codes of the same picture for the CRT signal path (display only).
         var meta = meta
         meta.tickStart = tickStart
@@ -480,6 +547,30 @@ final class EmulationController {
             displayFrame.withUnsafeBufferPointer { frames.publish($0.baseAddress!, meta: meta, codes: signal?.codes) }
         }
         if vtrOn { displayFrame.withUnsafeBufferPointer { keepVTRBase($0.baseAddress!, meta) } }
+    }
+
+    /// A picture that is not the NES picture: its rows packed and published with its geometry.
+    private func showPicture(_ f: rn_video_frame_info, geometry g: PictureGeometry, meta: FrameMeta) {
+        var meta = meta
+        meta.tickStart = tickStart
+        meta.countdown = countdown
+        meta.countdownFraction = countdownFraction
+        meta.countdownNote = countdownNoteShown
+        meta.geometry = g
+        meta.hasCodes = false
+        crtPowerStep = nil
+        crtLastFrame = meta.frame
+        let w = g.width, h = g.height, stride = Int(f.stride)
+        if picture.count < w * h { picture = [UInt32](repeating: 0xFF00_0000, count: w * h) }
+        guard let src = f.pixels else { return }
+        picture.withUnsafeMutableBufferPointer { out in
+            if stride == w {
+                out.baseAddress!.update(from: src, count: w * h)
+            } else {
+                for y in 0..<h { (out.baseAddress! + y * w).update(from: src + y * stride, count: w) }
+            }
+            frames.publish(out.baseAddress!, meta: meta)
+        }
     }
 
     /// Seek helper used by commands: pauses, mutes, refreshes the picture.
@@ -552,7 +643,7 @@ final class EmulationController {
         let woke = HostClock.now()
         latency.recordTickWake(lateTicks: woke > nextDeadline ? woke - nextDeadline : 0)
         tickStart = woke
-        emulationRate = 1 / FramePacing.period
+        emulationRate = 1 / framePeriod
         probe.mark("host tick")
         runCommands()
         rn_frame_workgroup_start(workgroup, HostClock.now(), nextDeadline &+ period / 2)
@@ -615,7 +706,7 @@ final class EmulationController {
         linkProxy = proxy
         lastUpdateTarget = 0
         presentPath.reset()
-        cadence = DisplayCadence()
+        cadence = DisplayCadence(framePeriod: framePeriod)
         nextDeadline = HostClock.now()
     }
 
@@ -859,6 +950,7 @@ final class EmulationController {
     /// session when the housekeeping (autosave) may run afterwards.
     private func tickFrame() -> (EngineSession?, autosave: Bool) {
         let r = tickFrameCore()
+        ForegroundPlay.playing = session != nil && !paused
         if paused && countdown != 0, let s = session {
             // Paused in the countdown (the seek bar, the menu): the numeral goes; practice's comes back
             // on resume (the resume countdown starts over).
@@ -909,9 +1001,7 @@ final class EmulationController {
             lastTakeoverSeq = takeover
             let winding = uiRewindHeld || uiFastForwardHeld || held & UInt32(RN_HK_REWIND | RN_HK_FAST_FORWARD) != 0
             if s.mode == RN_MODE_REPLAY && !ff.active && !modalHold && !winding {
-                var p1: UInt8 = 0, p2: UInt8 = 0
-                rn_input_sample_game(input.handle, s.frame, &p1, &p2)
-                if p1 | p2 != 0 { playFromHere(s) }
+                if sampleGame(s.frame).any { playFromHere(s) }
             }
         }
         if pressSeq != lastPressSeq {
@@ -941,7 +1031,7 @@ final class EmulationController {
             if sh.fired {
                 if rewinding { rewinding = false; rewindTicks = 0 }
                 practiceRewindStarted = false
-                if slow == .normal { AudioFade.tail(from: s.audio()).withUnsafeBufferPointer { audio.push($0) } }
+                if slow == .normal { AudioFade.tail(from: s.audio(), channels: s.audioChannels).withUnsafeBufferPointer { audio.push($0, frameRate: emulationRate) } }
                 statusDirty = true
             }
             wantRewind = sh.rewind
@@ -1122,8 +1212,8 @@ final class EmulationController {
             if flashAltered && tickCount % UInt64(slow.rawValue) != 0 { publishVideo(continuous: true) }
         case .beginHold:
             // Picture stays; a short decaying tail lets the sound end naturally (no click, no black).
-            let tail = AudioFade.tail(from: s.audio())
-            tail.withUnsafeBufferPointer { audio.push($0) }
+            let tail = AudioFade.tail(from: s.audio(), channels: s.audioChannels)
+            tail.withUnsafeBufferPointer { audio.push($0, frameRate: emulationRate) }
             dropInput()
             statusDirty = true
         case .hold:
@@ -1177,8 +1267,7 @@ final class EmulationController {
     /// The game input of a tick that emulates nothing (hold, sweep, countdown): sampled and dropped,
     /// so a tap there is not latched into the first frame afterwards.
     private func dropInput() {
-        var p1: UInt8 = 0, p2: UInt8 = 0
-        rn_input_sample_game(input.handle, practiceSeq, &p1, &p2)
+        _ = sampleGame(practiceSeq)
         practiceSeq &+= 1
     }
 
@@ -1244,14 +1333,14 @@ final class EmulationController {
         // Type-ahead (docs/design/VTR_UX.md): the game input is sampled and handed to the countdown; a
         // button held through counts from the first frame, one pressed and let go meanwhile is pressed
         // on it (stepOnce: ResumeCountdown.apply).
-        var p1: UInt8 = 0, p2: UInt8 = 0
+        let g: GameInput
         if isPracticing {
-            rn_input_sample_game(input.handle, practiceSeq, &p1, &p2)
+            g = sampleGame(practiceSeq)
             practiceSeq &+= 1
         } else {
-            rn_input_sample_game(input.handle, s.frame, &p1, &p2)
+            g = sampleGame(s.frame)
         }
-        resumeCountdown.input(p1: p1, p2: p2)
+        if g.nes { resumeCountdown.input(p1: g.p1, p2: g.p2) } else { resumeCountdown.input(record: g.record) }
         // The paused picture stays (shown again every tick: the viewport draws the numeral over it).
         if let v = s.video { show(v, meta: FrameMeta(frame: s.frame)) }
         return true
@@ -1266,6 +1355,8 @@ final class EmulationController {
         if isPracticing && practiceLoop.inRewind { want = RNF_VTR_RETURN }
         else if rewinding { want = RNF_VTR_REWIND }
         else if fastForward && ff.active && !ffBlocked { want = RNF_VTR_FAST_FORWARD }
+        // The effect works on the NES picture (256x240); another core's picture is shown plain.
+        if want != RNF_VTR_NONE, let s = session, !s.pictureGeometry.isNESPicture { want = RNF_VTR_NONE }
         if want == RNF_VTR_NONE && !vtrOn && !vtr.active { return }
         let p = vtr.tick(now: HostClock.seconds(HostClock.now()), want: want)
         if p.strength > 0 {
@@ -1480,15 +1571,18 @@ final class EmulationController {
         let live = mode == RN_MODE_RECORD || mode == RN_MODE_PRACTICE || mode == RN_MODE_LIVE
         let tSample = HostClock.now()
         lastSample = tSample
-        var p1: UInt8 = 0, p2: UInt8 = 0
+        var g = GameInput(nes: nesLayout)
         if live {
             // Practice: rn_frame is frozen, so a separate monotonic clock drives tap latching / turbo.
             let clock = mode == RN_MODE_PRACTICE ? practiceSeq : s.frame
             if mode == RN_MODE_PRACTICE { practiceSeq &+= 1 }
-            rn_input_sample_game(input.handle, clock, &p1, &p2)
+            g = sampleGame(clock)
             // The first frame after the resume countdown: plus the buttons typed ahead during it (once).
-            if !frameStep { resumeCountdown.apply(p1: &p1, p2: &p2) }
+            if !frameStep {
+                if g.nes { resumeCountdown.apply(p1: &g.p1, p2: &g.p2) } else { resumeCountdown.apply(record: &g.record) }
+            }
         }
+        let p1 = g.p1, p2 = g.p2
         let eventTime = input.consumeEventTime()
         let ev = live ? pendingEvents : 0
         pendingEvents = 0
@@ -1497,8 +1591,15 @@ final class EmulationController {
         let info: rn_step_info
         do {
             // Live play goes through the retry tracker (undo window, burst collapse).
-            info = try mode == RN_MODE_LIVE ? s.step(p1: p1, p2: p2, events: ev) : frameStep ? s.transportStep(p1: p1, p2: p2, events: ev)
-                                 : retry.step(s, now: HostClock.seconds(tSample), p1: p1, p2: p2, events: ev)
+            if g.nes {
+                info = try mode == RN_MODE_LIVE ? s.step(p1: p1, p2: p2, events: ev) : frameStep ? s.transportStep(p1: p1, p2: p2, events: ev)
+                                     : retry.step(s, now: HostClock.seconds(tSample), p1: p1, p2: p2, events: ev)
+            } else {
+                var r = g.record
+                withUnsafeMutableBytes(of: &r.bytes) { $0[2] = ev }
+                info = try mode == RN_MODE_LIVE ? s.step(record: r) : frameStep ? s.transportStep(record: r)
+                                     : retry.step(s, now: HostClock.seconds(tSample), record: r)
+            }
         } catch {
             paused = true
             advanceRemaining = 0
@@ -1552,7 +1653,8 @@ final class EmulationController {
     /// The frame's sound to the output; with the CRT model on, the hiss of a power-on is mixed in
     /// (a copy: the session's sound, recordings and exports of the session are untouched).
     private func pushAudio(_ pcm: UnsafeBufferPointer<Int16>) {
-        if CRTSettingsModel.shared.snapshot.enabled && pcm.count > 0 {
+        // The CRT model (and its hiss) is the NES picture's: mono sound only.
+        if CRTSettingsModel.shared.snapshot.enabled && pcm.count > 0 && audio.channels == 1 {
             hissPCM.removeAll(keepingCapacity: true)
             hissPCM.append(contentsOf: pcm)
             if crtPower.mixHiss(&hissPCM, flashReduced: flashFilter.level != .off) {
@@ -1759,6 +1861,8 @@ final class EmulationController {
         if let s = session {
             st.hasSession = true
             st.frame = s.frame
+            st.geometry = s.pictureGeometry
+            st.fireButtons = fireButtons
             st.takeLength = s.takeLength
             st.live = s.mode == RN_MODE_LIVE
             st.recording = ff.showsRecording(s)

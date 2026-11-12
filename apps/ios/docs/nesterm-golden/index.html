@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<link rel="stylesheet" href="./web/styles.css"></head>
+<body><div id="app"><main class="bb-root">
+<header class="bb-topbar"><div class="bb-meta"><span class="bb-brand">nesterm</span></div><div class="bb-quick"></div></header>
+<div class="bb-screen-wrap" id="drop"><section class="bb-panel" id="panel"><canvas id="pixel-screen" width="256" height="240" style="display:block;width:100%;height:100%"></canvas></section></div>
+<div class="bb-subbar"><button class="bb-mode-switch" id="ways-switch" type="button">8-WAY</button><button class="bb-grid-caption" type="button">X</button><button class="bb-turbo-switch" id="turbo-switch" type="button">A/B repeat OFF</button></div>
+<div class="bb-gamepad" id="gamepad"></div>
+</main></div>
+<script type="module">
+import { TouchGamepad } from './web/brickboy/input.mjs';
+const root=document.querySelector('#app');
+const touch=new TouchGamepad(document.querySelector('#gamepad'),()=>{},()=>{});
+window.touch=touch;
+function sync(){
+  const w=innerWidth,h=innerHeight,s=document.documentElement.style;
+  s.setProperty('--bb-vh',h+'px');s.setProperty('--bb-vw',w+'px');s.setProperty('--bb-el-w',w+'px');s.setProperty('--bb-el-h',h+'px');
+  root.classList.toggle('bb-compact',w<=620);root.classList.toggle('bb-narrow',w<=390);root.classList.toggle('bb-side',w>h);
+  const wrap=document.querySelector('#drop'),panel=document.querySelector('#panel'),pad=document.querySelector('#gamepad');
+  const portrait=!root.classList.contains('bb-side');
+  wrap.style.flex=portrait?'1 1 0':'';pad.style.flex=portrait?'0 0 auto':'';
+  wrap.style.alignItems=portrait?'flex-start':'center';
+  const sc=Math.min(wrap.clientWidth/256,wrap.clientHeight/240);panel.style.width=256*sc+'px';panel.style.height=240*sc+'px';
+  if(portrait){wrap.style.flex=`0 0 ${240*sc}px`;pad.style.flex='';}
+  touch.relayout();
+}
+addEventListener('resize',sync);sync();
+window.measure=()=>{const o={vw:innerWidth,vh:innerHeight};for(const sel of ['#drop','.bb-subbar','#gamepad','.gp-dpad','.gp-face','.gp-a','.gp-b','.gp-system','.gp-key[data-btn="select"]','.gp-key[data-btn="start"]','#ways-switch','#turbo-switch','.bb-topbar']){const r=document.querySelector(sel).getBoundingClientRect();o[sel]=[r.left,r.top,r.width,r.height].map(v=>Math.round(v*100)/100);}
+o.btn=getComputedStyle(document.querySelector('.gp-face')).getPropertyValue('--gp-btn');o.padInline=getComputedStyle(document.querySelector('#gamepad')).paddingLeft;o.facePad=getComputedStyle(document.querySelector('.gp-face')).padding;return o;};
+</script></body></html>

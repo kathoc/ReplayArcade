@@ -1,0 +1,7 @@
+ReplayNES for iPhone (apps/ios)
+
+This product includes software derived from Brickboy (https://github.com/kathoc/brickboy) as
+vendored and modified by NESTERM: the on-screen touch controller (Sources/Play/Brickboy).
+Copyright 2026 Katsuya Hokamura. Licensed under the Apache License, Version 2.0; see
+ThirdParty/brickboy/LICENSE and ThirdParty/brickboy/PROVENANCE.md. Modified for ReplayNES
+(Swift / UIKit port), 2026.

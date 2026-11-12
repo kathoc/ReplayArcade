@@ -1,0 +1,1116 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "%lld already in the library": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 本は追加済み"
+          }
+        }
+      }
+    },
+    "%lld skipped (not an NES ROM or unreadable)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件をスキップ（NESのROMではないか読み込めません）"
+          }
+        }
+      }
+    },
+    "%lld skipped (not a ROM zip or unreadable)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件をスキップ（ROMのzipではないか読み込めません）"
+          }
+        }
+      }
+    },
+    "+1 frame": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+1コマ"
+          }
+        }
+      }
+    },
+    "4-way ignores diagonals (remembered per game)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "4方向では斜めを無視します（ゲームごとに記憶）"
+          }
+        }
+      }
+    },
+    "8:7 pixels, hide the edges, blurred sides, orientation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8:7・端を隠す・ぼかし背景・画面の向き"
+          }
+        }
+      }
+    },
+    "8:7 pixels, hide the edges, orientation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8:7・端を隠す・画面の向き"
+          }
+        }
+      }
+    },
+    "A backup copy of the project is kept in the Backups folder first.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先にプロジェクトのバックアップを Backups フォルダに作成します。"
+          }
+        }
+      }
+    },
+    "A short vibration when a button is pressed": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ボタンを押したときに短く振動します"
+          }
+        }
+      }
+    },
+    "Add Test Cartridge": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テストカートリッジを追加"
+          }
+        }
+      }
+    },
+    "Add to Favorites": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "お気に入りに追加"
+          }
+        }
+      }
+    },
+    "Added %lld ROM(s)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 本のROMを追加しました"
+          }
+        }
+      }
+    },
+    "Added %lld project(s) to the Projects folder": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件のプロジェクトを Projects フォルダに追加しました"
+          }
+        }
+      }
+    },
+    "Auto": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動"
+          }
+        }
+      }
+    },
+    "Auto follows the iPhone · Portrait / Landscape lock the screen": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動：iPhoneの向きに合わせる・縦／横：その向きに固定"
+          }
+        }
+      }
+    },
+    "Back to Game": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ゲームに戻る"
+          }
+        }
+      }
+    },
+    "Cancel Countdown": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "カウントダウンをやめる"
+          }
+        }
+      }
+    },
+    "CRT Display": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CRT表示"
+          }
+        }
+      }
+    },
+    "Codec": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コーデック"
+          }
+        }
+      }
+    },
+    "Continue": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "続きから"
+          }
+        }
+      }
+    },
+    "D-pad Directions": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーの方向数"
+          }
+        }
+      }
+    },
+    "D-pad Follow ↔︎": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追従 ↔︎"
+          }
+        }
+      }
+    },
+    "D-pad Follow ↕︎": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追従 ↕︎"
+          }
+        }
+      }
+    },
+    "D-pad Size": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キー"
+          }
+        }
+      }
+    },
+    "D-pad size and follow, opacity, turbo buttons and vibration of the on-screen controls": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面のコントローラーの十字キー（大きさ・追従）、不透明度、連射ボタン、振動"
+          }
+        }
+      }
+    },
+    "Details": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "詳細"
+          }
+        }
+      }
+    },
+    "Export": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "書き出す"
+          }
+        }
+      }
+    },
+    "Export a take as an MP4 video (H.264 / HEVC)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テイクをMP4動画（H.264 / HEVC）で書き出します"
+          }
+        }
+      }
+    },
+    "Make a video": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "動画にする"
+          }
+        }
+      }
+    },
+    "Exported to Files › %@ › Exports": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイル › %@ › Exports に書き出しました"
+          }
+        }
+      }
+    },
+    "Exporting MP4 videos needs the MP4 Export unlock.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MP4動画の書き出しには「MP4書き出し」のアンロックが必要です。"
+          }
+        }
+      }
+    },
+    "Features": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "機能"
+          }
+        }
+      }
+    },
+    "Forget Simulated Purchases": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "擬似購入を消去"
+          }
+        }
+      }
+    },
+    "Free: play, rewind, fast-forward, practice and replay the current session. Nothing is sold in this test build: “Unlock” only simulates a purchase on this device.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無料：プレイ、巻き戻し、早送り、練習、現在のセッションのリプレイ。このテストビルドでは何も販売していません。「アンロック」はこの端末で購入を擬似的に再現するだけです。"
+          }
+        }
+      }
+    },
+    "Hide With Controller": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コントローラ接続時に隠す"
+          }
+        }
+      }
+    },
+    "Hide the on-screen controls while a controller is connected": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コントローラが接続されている間は画面上のボタンを隠します"
+          }
+        }
+      }
+    },
+    "How fast the D-pad follows your thumb left and right": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーが親指の左右のずれに追従する速さ"
+          }
+        }
+      }
+    },
+    "How fast the D-pad follows your thumb up and down": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十字キーが親指の上下のずれに追従する速さ"
+          }
+        }
+      }
+    },
+    "How visible the on-screen controls are": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面上のボタンの見やすさ"
+          }
+        }
+      }
+    },
+    "Import ROMs": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMを読み込む"
+          }
+        }
+      }
+    },
+    "Imported %lld ROM(s)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMを%lld本読み込みました"
+          }
+        }
+      }
+    },
+    "Importing %lld files…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 個のファイルを読み込んでいます…"
+          }
+        }
+      }
+    },
+    "Integer: sharp pixels · FILL: as large as the screen allows": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "整数倍：くっきりしたドット・FILL：画面いっぱいに表示"
+          }
+        }
+      }
+    },
+    "Keep as Project": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトとして残す"
+          }
+        }
+      }
+    },
+    "Keep every recording as a project: saved per game, listed in the library, openable on the Mac": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべての記録をプロジェクトとして残せます：ゲームごとに保存、ライブラリに表示、Macでも開けます"
+          }
+        }
+      }
+    },
+    "Keep practicing": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "練習を続ける"
+          }
+        }
+      }
+    },
+    "Keep the previous session (ROM: %@) as a project in the Projects folder? If you don’t keep it, it is discarded.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回のセッション（ROM：%@）を Projects フォルダにプロジェクトとして残しますか？残さない場合は破棄されます。"
+          }
+        }
+      }
+    },
+    "Keep this recording as a project (it is also saved automatically)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この記録をプロジェクトとして残します（自動でも保存されます）"
+          }
+        }
+      }
+    },
+    "Keep watching the tape": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再生を続ける"
+          }
+        }
+      }
+    },
+    "Kept as a project": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトとして残しました"
+          }
+        }
+      }
+    },
+    "Landscape": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "横"
+          }
+        }
+      }
+    },
+    "License Text": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ライセンス全文"
+          }
+        }
+      }
+    },
+    "Locked": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ロック中"
+          }
+        }
+      }
+    },
+    "MP4 Export": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MP4書き出し"
+          }
+        }
+      }
+    },
+    "No ROMs added": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMは追加されませんでした"
+          }
+        }
+      }
+    },
+    "No games yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まだゲームがありません"
+          }
+        }
+      }
+    },
+    "Not an NES ROM (.nes)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "NESのROM（.nes）ではありません"
+          }
+        }
+      }
+    },
+    "Not a ROM zip (.zip)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMのzip（.zip）ではありません"
+          }
+        }
+      }
+    },
+    "Nothing here yet": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まだ何もありません"
+          }
+        }
+      }
+    },
+    "Opacity": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不透明度"
+          }
+        }
+      }
+    },
+    "Open it with the version of %@ it was recorded with. See docs/COMPATIBILITY.md for details.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "記録したときのバージョンの %@ で開いてください。詳しくは docs/COMPATIBILITY.md を参照してください。"
+          }
+        }
+      }
+    },
+    "Orientation": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の向き"
+          }
+        }
+      }
+    },
+    "Play": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プレイ"
+          }
+        }
+      }
+    },
+    "Play (New Recording)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プレイ（新しい記録）"
+          }
+        }
+      }
+    },
+    "Portrait": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "縦"
+          }
+        }
+      }
+    },
+    "Prototype switch: every paid feature works without a purchase": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "試作用スイッチ：購入しなくても有料機能がすべて使えます"
+          }
+        }
+      }
+    },
+    "Purchases aren’t available in this test build": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このテストビルドでは購入できません"
+          }
+        }
+      }
+    },
+    "Put the ROM “%1$@” into the ROM folder (Files › On My iPhone › %2$@ › ROM) and try again.\nSHA-256: %3$@": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROM「%1$@」をROMフォルダ（ファイル › このiPhone内 › %2$@ › ROM）に入れてから、もう一度試してください。\nSHA-256：%3$@"
+          }
+        }
+      }
+    },
+    "Put your .nes ROM files into Files › On My iPhone › %1$@ › ROM (from a Mac: Finder › your iPhone › Files › %2$@), or import them here.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ".nes のROMファイルを「ファイル › このiPhone内 › %1$@ › ROM」に入れるか（Macからは Finder › iPhone › ファイル › %2$@）、ここから読み込んでください。"
+          }
+        }
+      }
+    },
+    "Put your ROM zips (FinalBurn Neo set names) into Files › On My iPhone › %1$@ › ROM (from a Mac: Finder › your iPhone › Files › %2$@), or import them here.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ROMのzip（FinalBurn Neo のセット名）を「ファイル › このiPhone内 › %1$@ › ROM」に入れるか（Macからは Finder › iPhone › ファイル › %2$@）、ここから読み込んでください。"
+          }
+        }
+      }
+    },
+    "Recording": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "記録"
+          }
+        }
+      }
+    },
+    "Recording, MP4 export and CRT (test build: all unlocked)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "記録、MP4書き出し、CRT（テストビルド：すべてアンロック済み）"
+          }
+        }
+      }
+    },
+    "Recordings…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "記録一覧…"
+          }
+        }
+      }
+    },
+    "Remove from Favorites": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "お気に入りから外す"
+          }
+        }
+      }
+    },
+    "%@ didn’t close normally last time, so the recording up to the last autosave was restored.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回 %@ が正常に終了しなかったため、最後の自動保存までの記録を復元しました。"
+          }
+        }
+      }
+    },
+    "Search games": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ゲームを検索"
+          }
+        }
+      }
+    },
+    "Share…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共有…"
+          }
+        }
+      }
+    },
+    "Show": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "表示"
+          }
+        }
+      }
+    },
+    "Show AA / BB (Turbo A / Turbo B) up-left of A / B": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A / B の左斜め上に AA / BB（連射A / 連射B）を表示します"
+          }
+        }
+      }
+    },
+    "Size": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サイズ"
+          }
+        }
+      }
+    },
+    "Size of the on-screen D-pad": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の十字キーの大きさ"
+          }
+        }
+      }
+    },
+    "Some files couldn’t be imported": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "読み込めなかったファイルがあります"
+          }
+        }
+      }
+    },
+    "Sort": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "並べ替え"
+          }
+        }
+      }
+    },
+    "Timeline": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タイムライン"
+          }
+        }
+      }
+    },
+    "Tap a button on the picture to change what it does": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "図のボタンをタップすると割り当てを変更できます"
+          }
+        }
+      }
+    },
+    "Temporary session": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一時セッション"
+          }
+        }
+      }
+    },
+    "The CRT display model needs the CRT Display unlock.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CRT表示モデルには「CRT表示」のアンロックが必要です。"
+          }
+        }
+      }
+    },
+    "The physical CRT TV model: scanlines, afterglow, RF signal": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブラウン管テレビの物理モデル：走査線、残光、RF信号"
+          }
+        }
+      }
+    },
+    "The previous temporary session was replaced (unlock Recording to keep sessions)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回の一時セッションを置き換えました（セッションを残すには「記録」をアンロック）"
+          }
+        }
+      }
+    },
+    "The purchase is pending approval": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "購入は承認待ちです"
+          }
+        }
+      }
+    },
+    "The purchase was cancelled": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "購入はキャンセルされました"
+          }
+        }
+      }
+    },
+    "Touch Controller": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タッチコントローラー"
+          }
+        }
+      }
+    },
+    "Touch Controls": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タッチ操作"
+          }
+        }
+      }
+    },
+    "Turbo Buttons": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連射ボタン"
+          }
+        }
+      }
+    },
+    "Unlock": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アンロック"
+          }
+        }
+      }
+    },
+    "Unlock Everything (Test)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてアンロック（テスト）"
+          }
+        }
+      }
+    },
+    "Unlocked": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アンロック済み"
+          }
+        }
+      }
+    },
+    "Unlocks": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アンロック"
+          }
+        }
+      }
+    },
+    "Unlocks…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アンロック…"
+          }
+        }
+      }
+    },
+    "Vibration": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "振動"
+          }
+        }
+      }
+    },
+    "What each unlock adds (purchases are stubbed in this build)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "各アンロックで増える機能（このビルドの購入は仮実装）"
+          }
+        }
+      }
+    },
+    "Without Recording you can play, rewind and practice; the current session is kept until you start another game. Recording keeps your recordings as projects.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「記録」なしでもプレイ・巻き戻し・練習ができ、現在のセッションは別のゲームを始めるまで残ります。「記録」をアンロックすると記録をプロジェクトとして残せます。"
+          }
+        }
+      }
+    },
+    "−1 frame": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "−1コマ"
+          }
+        }
+      }
+    },
+    "Frame Back": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コマ戻し"
+          }
+        }
+      }
+    },
+    "Frame Forward": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コマ送り"
+          }
+        }
+      }
+    },
+    "Slow Motion": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スロー再生"
+          }
+        }
+      }
+    },
+    "Version and licenses": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バージョン・ライセンス"
+          }
+        }
+      }
+    },
+    "None": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "なし"
+          }
+        }
+      }
+    },
+    "3 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3秒"
+          }
+        }
+      }
+    },
+    "1 s": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1秒"
+          }
+        }
+      }
+    },
+    "Before play resumes after a pause or a rewind, and before each practice run (1 s: the ring alone, no numeral)": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一時停止や巻き戻しのあとで再開する前と、練習の各回の前（1秒は数字なしの輪だけ）"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

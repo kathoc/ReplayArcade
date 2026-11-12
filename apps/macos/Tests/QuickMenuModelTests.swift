@@ -175,6 +175,27 @@ final class MenuMigrationTests: XCTestCase {
         XCTAssertTrue(taken.bind.isEmpty)
     }
 
+    /// Layout 8 -> 9 (InputManager.migrateControllerLayout): the Undo of a retry moves from L3 alone to
+    /// L3+R3 together; a customised Undo stays.
+    func testLayout8FileGetsUndoOnL3R3() {
+        let defaults = InputCatalog.parse(InputCatalog.defaultConfigJSON())!
+        func config(_ b: [(input: String, action: String)]) -> InputCatalog.Config {
+            InputCatalog.Config(bindings: b, turboPeriod: defaults.turboPeriod, turboDuty: defaults.turboDuty,
+                                socd: defaults.socd, analogThreshold: defaults.analogThreshold)
+        }
+        let layout8 = defaults.bindings.filter { $0.action != "hk.undo_take" || !$0.input.hasPrefix("gc0:") }
+            + [(input: "gc0:leftThumb", action: "hk.undo_take")]
+        let plan = InputCatalog.undoChordMigration(config(layout8))
+        XCTAssertEqual(plan.unbind.map { "\($0.0)=\($0.1)" }, ["gc0:leftThumb=hk.undo_take"])
+        XCTAssertEqual(plan.bind.map { "\($0.0)=\($0.1)" }, ["gc0:leftThumb+gc0:rightThumb=hk.undo_take"])
+        XCTAssertTrue(InputCatalog.isCombo("gc0:leftThumb+gc0:rightThumb"))
+        // Undo moved by the user to another button: nothing changes.
+        let custom = defaults.bindings.filter { $0.action != "hk.undo_take" || !$0.input.hasPrefix("gc0:") }
+            + [(input: "gc0:face.north", action: "hk.undo_take")]
+        let none = InputCatalog.undoChordMigration(config(custom))
+        XCTAssertTrue(none.unbind.isEmpty && none.bind.isEmpty)
+    }
+
     /// Layout 7 -> 8: pad 1's L slow / R pause are dropped (L / R alone do nothing in play).
     func testLayout7FileDropsShoulderHotkeys() {
         let defaults = InputCatalog.parse(InputCatalog.defaultConfigJSON())!

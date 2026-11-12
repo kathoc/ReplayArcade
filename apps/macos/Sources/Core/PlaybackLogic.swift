@@ -204,12 +204,20 @@ struct ResumeCountdown: Equatable {
     /// sampled for it (rn_input_sample_game). The first sample is the baseline; buttons pressed after
     /// it are latched for the first frame.
     mutating func input(p1: UInt8, p2: UInt8) { rnf_resume_countdown_input(RNFHandle.unique(&box), p1, p2) }
+    mutating func input(record: rn_input_record) {
+        var r = record
+        rnf_resume_countdown_input_record(RNFHandle.unique(&box), &r)
+    }
 
     /// Every live frame, after sampling and before rn_step: the first one after the countdown gets the
     /// buttons pressed (and let go) during it, once.
     mutating func apply(p1: inout UInt8, p2: inout UInt8) {
         guard pending else { return }
         rnf_resume_countdown_apply(RNFHandle.unique(&box), &p1, &p2)
+    }
+    mutating func apply(record: inout rn_input_record) {
+        guard pending else { return }
+        rnf_resume_countdown_apply_record(RNFHandle.unique(&box), &record)
     }
 
     /// Latched buttons wait for the first frame.
@@ -273,11 +281,14 @@ final class VTREffect {
 enum AudioFade {
     /// A short decaying tail built from the last frame's samples, pushed once when practice
     /// reaches B: the sound dies away instead of being cut (no click), the picture stays.
-    static func tail(from last: UnsafeBufferPointer<Int16>, repeats: Int = 4) -> [Int16] {
-        guard let base = last.baseAddress, last.count > 0, repeats > 0 else { return [] }
-        let n = rnf_audio_fade_tail(base, last.count, Int32(clamping: repeats), nil, 0)
-        var out = [Int16](repeating: 0, count: n)
-        _ = out.withUnsafeMutableBufferPointer { rnf_audio_fade_tail(base, last.count, Int32(clamping: repeats), $0.baseAddress, n) }
+    /// `channels`: interleaved values per sample frame (the session's audio).
+    static func tail(from last: UnsafeBufferPointer<Int16>, channels: Int = 1, repeats: Int = 4) -> [Int16] {
+        let frames = last.count / max(1, channels)
+        guard let base = last.baseAddress, frames > 0, repeats > 0 else { return [] }
+        let ch = UInt32(max(1, channels))
+        let n = rnf_audio_fade_tail_with_channels(base, frames, Int32(clamping: repeats), ch, nil, 0)
+        var out = [Int16](repeating: 0, count: n * Int(ch))
+        _ = out.withUnsafeMutableBufferPointer { rnf_audio_fade_tail_with_channels(base, frames, Int32(clamping: repeats), ch, $0.baseAddress, n) }
         return out
     }
 }
@@ -352,6 +363,14 @@ final class RetryTracker {
     func step(_ s: EngineSession, now: Double, p1: UInt8, p2: UInt8, events: UInt8) throws -> rn_step_info {
         var info = rn_step_info()
         try rnCheck(rnf_retry_step(handle, s.handle, now, p1, p2, events, &info))
+        return info
+    }
+
+    /// step for another core's layout (the whole input record).
+    @discardableResult
+    func step(_ s: EngineSession, now: Double, record: rn_input_record) throws -> rn_step_info {
+        var r = record, info = rn_step_info()
+        try rnCheck(rnf_retry_step_record(handle, s.handle, now, &r, &info))
         return info
     }
 
