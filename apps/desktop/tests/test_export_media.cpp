@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "test_tmp.h"
 #include "export/export_frame.h"
 #include "export/mp4_export.h"
 #include "png_writer.h"
@@ -95,7 +96,7 @@ TEST_CASE("product overscan policy: export geometry and pixels match independent
     }
     CHECK_EQ(different, size_t(0)); CHECK_EQ(maxDifference, 0u);
     MESSAGE("overscan=" << RN_PRODUCT_OVERSCAN_CROP << ", requested=" << crop << ", differing pixels=" << different << ", maximum channel difference=" << maxDifference);
-    const std::string stem = std::string(RNL_TEST_TMP) + "/overscan-" + (RN_PRODUCT_OVERSCAN_CROP ? "on" : "off") + (crop ? "-requested" : "-full");
+    const std::string stem = rnl_test::tmpRoot() + "/overscan-" + (RN_PRODUCT_OVERSCAN_CROP ? "on" : "off") + (crop ? "-requested" : "-full");
     for (bool reference : {false, true}) {
       const auto& pixels = reference ? expected : actual;
       std::vector<uint8_t> rgba(pixels.size() * 4);

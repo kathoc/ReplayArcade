@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <vector>
 
+#include "test_tmp.h"
 #include "game_rect.h"
 #include "replaynes/product.h"
 #include "library_thumbs.h"
@@ -132,8 +133,8 @@ TEST_CASE("media thumbnails and filmstrip follow rotated aspect and padded strid
     rgba[4*i] = uint8_t(p[i] >> 16); rgba[4*i+1] = uint8_t(p[i] >> 8);
     rgba[4*i+2] = uint8_t(p[i]); rgba[4*i+3] = 255;
   }
-  CHECK(writePNG(std::string(RNL_TEST_TMP) + "/media-rotated-thumbnail.png", int(w), int(h), rgba.data()));
-  const std::string cache = std::string(RNL_TEST_TMP) + "/media-thumbnail-cache";
+  CHECK(writePNG(rnl_test::tmpRoot() + "/media-rotated-thumbnail.png", int(w), int(h), rgba.data()));
+  const std::string cache = rnl_test::tmpRoot() + "/media-thumbnail-cache";
   {
     LibraryThumbs library(cache);
     library.save("rotated-project", "", f, m);

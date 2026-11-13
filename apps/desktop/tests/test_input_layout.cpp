@@ -5,6 +5,7 @@
 #include <memory>
 #include <set>
 #include <sstream>
+#include "test_tmp.h"
 #include "emulation.h"
 #include "diagram_navigation.h"
 #include "replaynes/frontend.h"
@@ -128,7 +129,7 @@ std::string readFile(const std::filesystem::path& path) {
 TEST_CASE("S5b catalog and defaults follow the external session layout") {
   LayoutScope scope;
   s5b::registerCore();
-  const auto path = std::filesystem::path(RNL_TEST_TMP) / "s5b-catalog.bin";
+  const auto path = std::filesystem::path(rnl_test::tmpRoot()) / "s5b-catalog.bin";
   { std::ofstream out(path); out << "arcade content"; }
   rn_session_options options;
   rn_session_options_init(&options);
@@ -261,7 +262,7 @@ TEST_CASE("S5b NES catalog defaults and bindings filename survive layout switchi
 
 TEST_CASE("S5b per-layout binding files persist global and per-button Turbo page model") {
   LayoutScope scope;
-  const auto root = std::filesystem::path(RNL_TEST_TMP) / "s5b-binding-files";
+  const auto root = std::filesystem::path(rnl_test::tmpRoot()) / "s5b-binding-files";
   std::filesystem::create_directories(root);
   REQUIRE_EQ(rnf_input_set_layout_json(nullptr), RN_OK);
   const auto nesPath = root / take(rnf_input_bindings_filename());
@@ -309,7 +310,7 @@ TEST_CASE("S5b per-layout binding files persist global and per-button Turbo page
 TEST_CASE("S5b desktop stepping preserves service analog axes and layout direction ids") {
   LayoutScope scope;
   s5b::registerCore();
-  const auto path = std::filesystem::path(RNL_TEST_TMP) / "s5b-step.bin";
+  const auto path = std::filesystem::path(rnl_test::tmpRoot()) / "s5b-step.bin";
   { std::ofstream out(path); out << "arcade content"; }
   rn_session_options options;
   rn_session_options_init(&options); options.core = RN_CORE_EXTERNAL;
@@ -381,7 +382,7 @@ TEST_CASE("S5b countdown buffers layout buttons without latching analog axes or 
 TEST_CASE("S5b paused transport and retry preserve the complete generic record") {
   LayoutScope scope;
   s5b::registerCore();
-  const auto path = std::filesystem::path(RNL_TEST_TMP) / "s5b-transport.bin";
+  const auto path = std::filesystem::path(rnl_test::tmpRoot()) / "s5b-transport.bin";
   { std::ofstream out(path); out << "arcade content"; }
   rn_session_options options;
   rn_session_options_init(&options); options.core = RN_CORE_EXTERNAL;

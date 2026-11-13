@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "test_tmp.h"
 #include "support/rn_test.h"
 #include "core/ICore.h"
 #include "emulation.h"
@@ -55,7 +56,7 @@ void scheduling(bool shared) {
     uint32_t(rn::CapState | rn::CapRecording | (shared ? uint32_t(rn::CapSharesMachine) : 0u)),
     [] { return std::make_unique<ThumbnailCore>(); }});
   struct Registration { ~Registration() { rn::unregisterExternalCore(); } } registration;
-  auto path = std::filesystem::path(RNL_TEST_TMP) / "thumbnail-scheduling.bin";
+  auto path = std::filesystem::path(rnl_test::tmpRoot()) / "thumbnail-scheduling.bin";
   { std::ofstream out(path, std::ios::binary); out << "thumbnail core"; }
   rn_session_options options;
   rn_session_options_init(&options);
@@ -157,7 +158,7 @@ void scheduling(bool shared) {
     CHECK(bool(thumbs.imageAt(target)));
     auto image = thumbs.imageAt(target);
     if (image) {
-      std::ofstream out(std::filesystem::path(RNL_TEST_TMP) / "thumbs-preview.ppm", std::ios::binary);
+      std::ofstream out(std::filesystem::path(rnl_test::tmpRoot()) / "thumbs-preview.ppm", std::ios::binary);
       out << "P6\n" << image.get()->width << " " << image.get()->height << "\n255\n";
       for (uint32_t pixel : image.get()->px) {
         const char rgb[]{char(pixel >> 16), char(pixel >> 8), char(pixel)};
@@ -178,7 +179,7 @@ void idleScheduling(bool shared) {
     uint32_t(rn::CapState | rn::CapRecording | (shared ? uint32_t(rn::CapSharesMachine) : 0u)),
     [] { return std::make_unique<ThumbnailCore>(); }});
   struct Registration { ~Registration() { rn::unregisterExternalCore(); } } registration;
-  const auto root = std::filesystem::path(RNL_TEST_TMP) / (shared ? "idle-shared" : "idle-independent");
+  const auto root = std::filesystem::path(rnl_test::tmpRoot()) / (shared ? "idle-shared" : "idle-independent");
   std::filesystem::remove_all(root);
   std::filesystem::create_directories(root);
   const auto rom = root / "idle.bin", project = root / "project";

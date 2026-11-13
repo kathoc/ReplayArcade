@@ -25,6 +25,7 @@
 #include <sstream>
 #include <thread>
 
+#include "test_tmp.h"
 #include "app_model.h"
 #include "cadence.h"
 #include "display_scheduler.h"
@@ -71,8 +72,7 @@ int processId() {
 
 /// Scratch folder: $RN_TEST_TMP at run time (the Windows VM, CI), else the build tree's.
 std::string tmpDir(const std::string& name) {
-  const char* env = std::getenv("RN_TEST_TMP");
-  std::string root = env && *env ? std::string(env) : std::string(RNL_TEST_TMP);
+  std::string root = rnl_test::tmpRoot();
   std::string d = root + "/" + name + "-" + std::to_string(processId());
   std::error_code ec;
   fs::remove_all(d, ec);
@@ -3275,7 +3275,7 @@ TEST_CASE("product without flash: live and paused pictures stay raw even after r
     rgba[i * 4 + 3] = 255;
   }
   auto png = encodePNG(RN_VIDEO_WIDTH, RN_VIDEO_HEIGHT, rgba.data());
-  std::ofstream out(std::string(RNL_TEST_TMP) + "/noflash-picture.png", std::ios::binary);
+  std::ofstream out(rnl_test::tmpRoot() + "/noflash-picture.png", std::ios::binary);
   out.write(reinterpret_cast<const char*>(png.data()), std::streamsize(png.size()));
   REQUIRE(out.good());
   emu.closeSession();

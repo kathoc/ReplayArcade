@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "test_tmp.h"
 #include "input_router.h"
 #include "settings.h"
 #include "support/rn_test.h"
@@ -68,7 +69,7 @@ std::set<std::string> pairs(rn_input* input) {
   return result;
 }
 struct Files {
-  std::filesystem::path root = std::filesystem::path(RNL_TEST_TMP) / "device-profiles";
+  std::filesystem::path root = std::filesystem::path(rnl_test::tmpRoot()) / "device-profiles";
   Files() { std::filesystem::remove_all(root); std::filesystem::create_directories(root); }
   ~Files() { std::filesystem::remove_all(root); }
 };

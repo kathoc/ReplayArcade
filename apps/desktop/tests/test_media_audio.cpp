@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <cmath>
 
+#include "test_tmp.h"
 #include "audio_format.h"
 #include "audio_sink.h"
 #include "cadence.h"
@@ -117,7 +118,7 @@ TEST_CASE("desktop media emulation: padded changing pictures and stereo audio re
   rn::registerExternalCore({"desktop-media-audio", "desktop-media-audio/1", rn::CapAudio,
                            [] { return std::make_unique<DesktopMediaCore>(); }});
   struct Registration { ~Registration() { rn::unregisterExternalCore(); } } registration;
-  auto path = std::filesystem::path(RNL_TEST_TMP) / "desktop-media-audio.bin";
+  auto path = std::filesystem::path(rnl_test::tmpRoot()) / "desktop-media-audio.bin";
   { std::ofstream out(path, std::ios::binary); out << "external test content"; }
   rn_session_options options;
   rn_session_options_init(&options);
