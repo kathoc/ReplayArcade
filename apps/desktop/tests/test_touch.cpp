@@ -12,6 +12,7 @@
 #include <string>
 
 #include "../../../engine/src/util/Json.h"
+#include "support/SourcePath.h"
 #include "support/rn_test.h"
 #include "touch/touch_gamepad.h"
 
@@ -21,7 +22,7 @@ using rnl::touch::TouchGamepad;
 namespace {
 
 rn::Json loadGolden(const char* name) {
-  std::ifstream in(std::string(RNL_TOUCH_FIXTURES) + "/" + name);
+  std::ifstream in(rntest::sourcePath(std::string("apps/desktop/tests/fixtures/touch/") + name));
   std::stringstream text;
   text << in.rdbuf();
   rn::Json j;

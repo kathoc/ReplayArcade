@@ -106,7 +106,7 @@ if(RNL_DESKTOP_TESTS)
   target_include_directories(test_desktop_frontend PRIVATE ${RNL_REPO_ROOT}/tests)
   target_link_libraries(test_desktop_frontend PRIVATE rnl_logic)
   target_compile_definitions(test_desktop_frontend PRIVATE RNL_TEST_TMP="${RNL_TEST_TMP}"
-    RNL_TOUCH_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/touch")
+    RN_SOURCE_ROOT="${RNL_REPO_ROOT}")
   target_compile_options(test_desktop_frontend PRIVATE ${RNL_WARNINGS})
   rnl_windows_manifest(test_desktop_frontend)
   # Next to the engine tests (scripts/windows-vm/run-tests.sh and CI run build/tests/test_*.exe).

@@ -118,6 +118,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45  # WARP CRT conformance + export self-test: ~30 min on main (2026-10)
     steps:
+      # The tests were built on macOS: the source tree they read (fixtures, baselines) is checked out
+      # here and named by RN_TEST_SOURCE (tests/support/SourcePath.h). No submodules are read.
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: mingw-x86_64
@@ -125,6 +128,7 @@ jobs:
       - name: Run tests
         shell: pwsh
         run: |
+          $env:RN_TEST_SOURCE = $env:GITHUB_WORKSPACE
           $env:RN_TEST_TMP = Join-Path $env:RUNNER_TEMP 'rn-tests'
           New-Item -ItemType Directory -Force $env:RN_TEST_TMP | Out-Null
           $failed = @()

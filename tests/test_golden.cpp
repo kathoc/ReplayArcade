@@ -16,6 +16,7 @@
 
 #include "replaynes/product.h"
 #include "replaynes/replaynes.h"
+#include "support/SourcePath.h"
 #include "support/TestUtil.h"
 #include "support/rn_test.h"
 
@@ -83,7 +84,7 @@ std::vector<FrameHash> replayAll(rn_session* s, Digest& d) {
   return hashes;
 }
 
-std::string goldenPath() { return std::string(RN_GOLDEN_DIR) + "/nestopia_testcart.txt"; }
+std::string goldenPath() { return rntest::sourcePath("tests/fixtures/golden/nestopia_testcart.txt"); }
 
 }  // namespace
 
@@ -145,7 +146,7 @@ TEST_CASE("golden: Nestopia + Test Cartridge record, branch, replay, save and re
 
   // D: a project saved by an earlier build (tests/fixtures/golden/project-v2.nesrec, file format 2, input
   // format 1) still opens and replays the same frames: newer builds must keep reading old projects.
-  std::string fixture = std::string(RN_GOLDEN_DIR) + "/project-v2.nesrec";
+  std::string fixture = rntest::sourcePath("tests/fixtures/golden/project-v2.nesrec");
   const char* update = std::getenv("RN_GOLDEN_UPDATE");
   bool updating = update && *update == '1';
   if (updating && !rn::fs::exists(fixture)) {

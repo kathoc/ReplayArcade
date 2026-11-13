@@ -44,18 +44,21 @@ def check_windows(build, version, feed, key, app_version, app_feed, app_key):
 def check_profiles(source, cmake):
     root_version = re.search(r"project\(ReplayNES VERSION ([0-9.]+)",
                              (source / "CMakeLists.txt").read_text()).group(1)
+    # Written into CMake code below: CMake reads a backslash in a quoted argument as an escape
+    # ("D:\a\..." is a syntax error), so the Windows path goes in with forward slashes.
+    cmake_source = source.as_posix()
     with tempfile.TemporaryDirectory(prefix="replaynes-product-test-") as tmp:
         tmp = pathlib.Path(tmp)
         profile = tmp / "product.cmake"
-        profile.write_text(f'include("{source}/cmake/products/replaynes.cmake")\n'
+        profile.write_text(f'include("{cmake_source}/cmake/products/replaynes.cmake")\n'
                            'set(RN_PRODUCT_VERSION "0.1.0")\n'
                            f'set(RN_PRODUCT_WINDOWS_APPCAST_URL "{CUSTOM_FEED}")\n'
                            f'set(RN_PRODUCT_UPDATE_PUBLIC_KEY "{CUSTOM_KEY}")\n')
         # A different enclosing project catches accidental use of PROJECT_VERSION.
         (tmp / "CMakeLists.txt").write_text(
             'cmake_minimum_required(VERSION 3.16)\nproject(Outer VERSION 9.8.7 LANGUAGES NONE)\n'
-            f'include("{source}/cmake/Product.cmake")\n'
-            f'configure_file("{source}/engine/include/replaynes/product.h.in" '
+            f'include("{cmake_source}/cmake/Product.cmake")\n'
+            f'configure_file("{cmake_source}/engine/include/replaynes/product.h.in" '
             '"${CMAKE_BINARY_DIR}/product.h" @ONLY)\n')
         for custom in (False, True):
             build = tmp / ("custom" if custom else "default")

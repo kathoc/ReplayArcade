@@ -47,7 +47,7 @@ rn_add_test(test_golden)
 rn_add_test(test_media)
 # Input layouts of other cores: pipeline (turbo on any button, axes), records, projects.
 rn_add_test(test_input_layout)
-target_compile_definitions(test_golden PRIVATE RN_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/golden")
+target_compile_definitions(test_golden PRIVATE RN_SOURCE_ROOT="${PROJECT_SOURCE_DIR}")
 # Practice mode + A/B repeat slots (engine + persistence + C API).
 rn_add_test(test_practice)
 # A/B slots defined from take frames (timeline selection: rn_practice_set_range).
@@ -84,7 +84,7 @@ if(TARGET replaynes_frontend)
   rn_add_frontend_test(test_frontend_tape)
   rn_add_frontend_test(test_frontend_export)
   rn_add_frontend_test(test_frontend_menu)
-  target_compile_definitions(test_frontend_menu PRIVATE RN_MENU_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/menu-desktop-before-noflash.txt")
+  target_compile_definitions(test_frontend_menu PRIVATE RN_SOURCE_ROOT="${PROJECT_SOURCE_DIR}")
   rn_add_frontend_test(test_frontend_seekbar)
   rn_add_frontend_test(test_frontend_crt)
   # Game database + library catalog; also identifies the developer's own ROMs in <repo>/roms.

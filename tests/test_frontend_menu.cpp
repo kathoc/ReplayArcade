@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "support/FrontendTestUtil.h"
+#include "support/SourcePath.h"
 #include "support/rn_test.h"
 
 using namespace rnft;
@@ -483,17 +484,21 @@ TEST_CASE("menu: the Quick Menu is six tiles in one row, Resume first") {
   CHECK(rnf_menu_page_find(m, "takes") < 0);  // docs/design/VTR_UX.md: takes are never shown
   CHECK((itemIds(m, "share") == std::vector<std::string>{"share.export"}));
   CHECK((itemIds(m, "game") == std::vector<std::string>{"game.library", "game.save", "game.save_as", "game.open", "game.reset"}));
-  CHECK((itemIds(m, "settings.display") == std::vector<std::string>{"display.size", "system.fullscreen", "display.shape",
-                                                                   "display.crt_detail",
+  // The product-dependent lists are built outside CHECK: a preprocessor directive inside a macro's
+  // arguments is undefined behaviour ([cpp.replace]), and MSVC rejects it.
+  const std::vector<std::string> displayItems = {"display.size", "system.fullscreen", "display.shape",
+                                                 "display.crt_detail",
 #if RN_PRODUCT_FLASH_FILTER
-                                                                   "display.flash",
+                                                 "display.flash",
 #endif
-                                                                   "system.ui_scale"}));
-  CHECK((itemIds(m, "display.shape") == std::vector<std::string>{"display.par87",
+                                                 "system.ui_scale"};
+  const std::vector<std::string> shapeItems = {"display.par87",
 #if RN_PRODUCT_OVERSCAN_CROP
-                                                                 "display.overscan",
+                                               "display.overscan",
 #endif
-                                                                 "display.backdrop"}));
+                                               "display.backdrop"};
+  CHECK((itemIds(m, "settings.display") == displayItems));
+  CHECK((itemIds(m, "display.shape") == shapeItems));
   CHECK((itemIds(m, "settings.sound") == std::vector<std::string>{"sound.volume"}));
   rnf_menu_free(m);
   // Features: no CRT -> no CRT row / details page; no export and no stream -> no Share tile.
@@ -502,12 +507,12 @@ TEST_CASE("menu: the Quick Menu is six tiles in one row, Resume first") {
   CHECK((itemIds(m, "quick") == std::vector<std::string>{"resume", "retry", "practice", "settings", "game"}));
   CHECK(rnf_menu_page_find(m, "display.crt") < 0);
   CHECK(rnf_menu_page_find(m, "system.detail") < 0);
-  CHECK((itemIds(m, "settings.display") ==
-        std::vector<std::string>{"display.size", "display.shape",
+  const std::vector<std::string> bareDisplayItems = {"display.size", "display.shape",
 #if RN_PRODUCT_FLASH_FILTER
-                                 "display.flash",
+                                                     "display.flash",
 #endif
-                                 }));
+  };
+  CHECK((itemIds(m, "settings.display") == bareDisplayItems));
   CHECK((itemIds(m, "settings.system") ==
          std::vector<std::string>{"system.language", "system.screensaver", "system.about", "about.folders"}));
   CHECK((itemIds(m, "system.about") == std::vector<std::string>{"about.version"}));
@@ -712,7 +717,7 @@ TEST_CASE("menu: toggles flip with A, info rows do nothing, literal choices") {
 }
 
 TEST_CASE("product flags: complete desktop menu matches the pre-change enumeration") {
-  std::ifstream file(RN_MENU_BASELINE);
+  std::ifstream file(rntest::sourcePath("tests/fixtures/menu-desktop-before-noflash.txt"));
   REQUIRE(file.good());
   std::ostringstream expected;
   expected << file.rdbuf();

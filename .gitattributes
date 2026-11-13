@@ -1,0 +1,5 @@
+# Test fixtures are compared byte for byte (tests/test_golden.cpp reads its golden file in binary
+# mode): their line endings must stay as committed. Without this, a Windows checkout with
+# core.autocrlf=true (the GitHub windows runners' default) turns LF into CRLF and the golden test fails.
+tests/fixtures/** -text
+apps/desktop/tests/fixtures/** -text
