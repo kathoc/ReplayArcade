@@ -182,8 +182,11 @@ flatpak_local() {  # <arch> <repository dir>: this machine's architecture
   rm -rf "$SRC" "$R" && mkdir -p "$SRC"
   # The monorepo's root (the manifest builds from it). Not copied: build output (also ReplayNES's download
   # cache in build/, and the Android build's CMake / Gradle trees: .cxx/ holds a copy of FBNeo with its Windows
-  # SDK archive) and FBNeo's Windows SDK archive (src/dep/mingw), which the Flatpak does not use.
+  # SDK archive) and FBNeo's Windows SDK archive (src/dep/mingw), which the Flatpak does not use; nor ReplayNES's
+  # Nestopia (third_party/nestopia: only a NES product builds it, CMakeLists.txt RN_PRODUCT_NES; its sources carry
+  # test .nes files and a zip that no_game_data rightly refuses, 2026-11-14 0.3.17).
   rsync -a --exclude='.git' --exclude='/.claude/' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' \
+    --exclude='/third_party/nestopia/' \
     --exclude='/.flatpak-builder/' --exclude='/products/ReplayArcade/build/' --exclude='/products/ReplayArcade/build-*' \
     --exclude='/products/ReplayArcade/dist/' --exclude='/products/ReplayArcade/third_party/fbneo/src/dep/mingw/' \
     --exclude='.cxx/' --exclude='.gradle/' --exclude='/apps/android/app/build/' \

@@ -40,6 +40,7 @@ jobs:
           W="$RUNNER_TEMP/flatpak"
           mkdir -p "$W/src"
           rsync -a --exclude='.git' --exclude='/build/' --exclude='/build-*' --exclude='/dist/' --exclude='/.flatpak-builder/' \
+            --exclude='/third_party/nestopia/' \
             --exclude='/products/ReplayArcade/build/' --exclude='/products/ReplayArcade/third_party/fbneo/src/dep/mingw/' \
             --exclude='*.o' --exclude='*.a' --exclude='*.d' ./ "$W/src/"
           dbus-run-session -- flatpak run org.flatpak.Builder --user --force-clean --disable-updates --state-dir="$W/state" \
