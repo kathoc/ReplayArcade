@@ -46,8 +46,11 @@ if(REPLAYNES_BUILD_TESTS)
   add_custom_command(TARGET test_crt_d3d11 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RNW_ROOT}/tests/fixtures/crt/reference.json $<TARGET_FILE_DIR:test_crt_d3d11>/crt_reference.json)
   add_test(NAME crt_conformance_d3d11 COMMAND test_crt_d3d11)
-  # WARP (software D3D11) on the CI runners: 450-890 s, more on arm64 with the display recovery cases.
-  set_tests_properties(crt_conformance_d3d11 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800)
+  # WARP (software D3D11) on the CI runners. The limit follows the amount of work, not a hang: 1800 s
+  # (bbed74e, 2026-10-11) was set when arm64 took 900-1000 s; the no-signal snow / power-on / reset
+  # cases (4932898, 2026-10-15) added about 60%, and the runs since take 1230-1720 s on x64 and
+  # 1630-1720 s on arm64, past 1800 s from 2026-10-21 on. 3600 s keeps about twice the measured time.
+  set_tests_properties(crt_conformance_d3d11 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 3600)
 endif()
 
 if(NOT EXISTS ${RNW_ROOT}/third_party/SDL/CMakeLists.txt)
