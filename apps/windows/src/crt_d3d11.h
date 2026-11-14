@@ -90,7 +90,8 @@ class CrtRendererD3D11 {
   /// showprog into the render target bound by the caller (targetWidth x targetHeight): dst =
   /// destination rectangle in target pixels (origin top-left), cropFraction = tube rows hidden at
   /// the top and bottom. Bilinear in linear light when the tube is not at the destination size.
-  void drawShow(int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction);
+  /// activeWidth: the face width shown (crtShownRect; 1 = the whole face, as the conformance checks).
+  void drawShow(int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction, double activeWidth = 1);
   /// showprog into a BGRA8 canvas of tw x th pixels (offline export); outside dst is black. Waits.
   bool showToBGRA(int tw, int th, const CrtRect& dst, double cropFraction, uint8_t* canvas, size_t stride);
 

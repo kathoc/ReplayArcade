@@ -92,7 +92,9 @@ class CrtRenderer {
   /// showprog inside the caller's render pass (`showPass` given to init): dst = destination
   /// rectangle in target pixels (origin top-left), cropFraction = tube rows hidden at the top and
   /// bottom (overscan). Bilinear in linear light when the tube is not at the destination size.
-  void encodeShow(VkCommandBuffer cmd, int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction);
+  /// activeWidth: the face width shown (crtShownRect; 1 = the whole face, as the conformance checks).
+  void encodeShow(VkCommandBuffer cmd, int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction,
+                  double activeWidth = 1);
   /// showprog into a BGRA8 buffer of tw x th pixels (offline export / tests); outside dst is black.
   void encodeShowToBuffer(VkCommandBuffer cmd, VkBuffer target, int tw, int th, const CrtRect& dst, double cropFraction);
 

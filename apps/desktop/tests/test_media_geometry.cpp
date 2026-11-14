@@ -19,6 +19,35 @@
 
 using namespace rnl;
 
+TEST_CASE("crt shown rect: the face's drive columns, where the plain 8:7 picture is (no black bands)") {
+  // User decision 2026-11-14: the CRT display shows only the columns the 256 dots span, so the blurred
+  // backdrop meets the picture as with the plain display. In a window whose height sets the size, the
+  // shown part of the face is the plain 8:7 picture's rectangle, to the pixel.
+  for (bool integer : {false, true}) {
+    for (auto [w, h] : {std::pair{1280, 720}, {1452, 768}, {1920, 1080}, {2560, 1440}, {1231, 655}}) {
+      GameRect r = computeGameRect(w, h, integer, true, false);
+      CrtRect s = crtShownRect(r.crt, RNF_CRT_ACTIVE_WIDTH);
+      CHECK(std::fabs(s.x - r.x) <= 1.0f);
+      CHECK(std::fabs((s.x + s.w) - (r.x + r.w)) <= 1.0f);
+      CHECK(std::fabs(s.h - r.h) <= 0.5f);
+      CHECK(s.w < r.crt.w);  // the bands are cut off
+    }
+  }
+  // Hide Overscan crops 8 dots left and right of the plain picture, the CRT only its rows: wider there.
+  GameRect o = computeGameRect(1280, 720, false, true, true);
+  if (o.crop > 0) CHECK(crtShownRect(o.crt, RNF_CRT_ACTIVE_WIDTH).w > o.w);
+  // A window narrower than 4:3 (the face fitted to its width): centred, inside the face.
+  GameRect n = computeGameRect(800, 1000, false, true, false);
+  CrtRect ns = crtShownRect(n.crt, RNF_CRT_ACTIVE_WIDTH);
+  CHECK(std::fabs((ns.x + ns.w / 2) - (n.crt.x + n.crt.w / 2)) <= 0.5f);
+  CHECK(ns.x >= n.crt.x);
+  CHECK(ns.x + ns.w <= n.crt.x + n.crt.w);
+  // activeWidth 1 (nesterm's mapping, the conformance checks): the whole face.
+  CrtRect whole = crtShownRect(n.crt, 1.0);
+  CHECK(whole.x == n.crt.x);
+  CHECK(whole.w == n.crt.w);
+}
+
 TEST_CASE("media game rectangle follows rotation and pixel aspect") {
   rn_media_info m{320, 224, 5963, 100, 2, 4, 3, 0};
   rn_video_frame_info f{nullptr, 320, 224, 336};

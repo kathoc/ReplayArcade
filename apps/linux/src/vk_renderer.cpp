@@ -821,8 +821,9 @@ uint64_t VkRenderer::drawFrame(const uint32_t* newPicture, const GameRect& rect,
   const bool crtShows = crtOn && rect.visible && crt_.canShow() && !plain;
   if (post_.backdrop > 0 && rect.visible && hasPicture_ && backdrop_.ready()) {
     // Under the picture, where it leaves the screen empty (render/backdrop.h).
-    const float px = crtShows ? rect.crt.x : rect.x, py = crtShows ? rect.crt.y : rect.y;
-    const float pw = crtShows ? rect.crt.w : rect.w, ph = crtShows ? rect.crt.h : rect.h;
+    const CrtRect shown = crtShownRect(rect.crt, post_.crtSettings.activeWidth);  // the face's part on screen
+    const float px = crtShows ? shown.x : rect.x, py = crtShows ? shown.y : rect.y;
+    const float pw = crtShows ? shown.w : rect.w, ph = crtShows ? shown.h : rect.h;
     BackdropPlan plan = planBackdrop(px, py, pw, ph, int(extent_.width), int(extent_.height), backdrop_.width(),
                                      backdrop_.height(), post_.backdrop);
     float uv[8] = {float(rect.crop) / frame_.width, float(rect.crop) / frame_.height,
@@ -832,7 +833,7 @@ uint64_t VkRenderer::drawFrame(const uint32_t* newPicture, const GameRect& rect,
     backdrop_.draw(cmd, plan, extent_, uv);
   }
   if (crtShows) {
-    crt_.show(cmd, int(extent_.width), int(extent_.height), rect.crt, rect.crtCrop);
+    crt_.show(cmd, int(extent_.width), int(extent_.height), rect.crt, rect.crtCrop, post_.crtSettings.activeWidth);
     status_.crtShown = true;
   } else if (rect.visible && hasPicture_) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);

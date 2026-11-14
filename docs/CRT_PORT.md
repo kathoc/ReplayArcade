@@ -87,7 +87,8 @@ CRT Display itself is off by default (the conventional crisp display).
 4. **Display layout and picture geometry**: the tube face is always 4:3 (the same face as nesterm's). nesterm maps
    the 256 active dots across the whole face width (a dot 1.25 times as wide as a line is high); ReplayNES maps them
    to the 32/35 of the width the NTSC raster gives them, so a dot is 8:7 like the plain display's "8:7 Pixels" and
-   the black bands beside the picture are the line's border and blanking (section "Picture geometry"). The
+   the bands beside the picture are the line's border and blanking (section "Picture geometry"; the live display
+   does not show them since 2026-11-14, "Shown part of the face"). The
    "8:7 Pixels" setting itself is not used with CRT Display (the tube has that shape already).
    "Hide overscan" crops 8/240 from the top and bottom of the tube face. 1x/FILL fit 4:3 to the same height as the normal display.
 5. **Internal resolution cap of 1600x1200**: the same as nesterm's OUTPUT-RESOLUTION-SPEC (256x192 to 1600x1200, the work cap for the detector).
@@ -130,6 +131,18 @@ Derivation (NTSC):
 - The bands are the rest of the line (the NES's 26 border dots and the blanking; about 280 dot widths
   fit a 4:3 line): the model's composite signal is at blanking level there (`rfInitAt`: 0.312 V
   outside samples 36..2084), so the beam draws black, and the face shows only its ambient light.
+
+### Shown part of the face (user decision 2026-11-14)
+
+The live display shows only the columns the drive spans: `crtShownRect(face, activeWidth)` (crt_settings.h;
+macOS `CRTRenderer.shownRect`), the face's full height. The user saw the bands as black bars between the picture
+and the blurred backdrop (Windows, 2026-11-14); a TV's overscan hides that part of the line too. The tube is
+unchanged (face, glow, scatter, geometry, the conformance checks): only the show pass is clipped (its scissor),
+and the blurred backdrop is planned around the shown part, so in a window whose height sets the size the CRT
+picture sits exactly where the plain 8:7 picture does (`apps/desktop/tests/test_media_geometry.cpp` "crt shown
+rect"). Not changed: Syphon and the MP4 export with the CRT effect still show the whole face (`activeWidth`
+argument 1). Considered and not taken: drawing the border dots in the backdrop colour as a real NES does (the
+bands would remain, in another colour).
 
 nesterm's mapping put the 512 drive samples across the whole 280 mm (1.25:1, 9.4 % too wide): the
 cause of the CRT picture looking wider than "8:7 Pixels". The change is in the shared tube plan, so

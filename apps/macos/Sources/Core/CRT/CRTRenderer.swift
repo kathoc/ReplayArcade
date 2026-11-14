@@ -989,7 +989,18 @@ final class CRTRenderer {
 
     /// showprog into a render pass: `dst` = destination rectangle in target pixels (origin top-left),
     /// `cropRows` = tube rows hidden at the top and bottom (overscan).
-    func encodeShow(_ enc: MTLRenderCommandEncoder, targetSize: CGSize, dst: CGRect, cropFraction: Double) {
+    /// The part of the 4:3 face shown on screen: the columns the drive spans (`activeWidth` of the face
+    /// width, centred), the face's full height. Beside the drive the beam draws black (border and blanking);
+    /// a TV's overscan hides that, and so does the live display (user decision 2026-11-14: no black bands
+    /// between the picture and the blurred backdrop). The same formula as crtShownRect (crt_settings.h).
+    static func shownRect(_ face: CGRect, activeWidth: Double) -> CGRect {
+        let a = activeWidth > 0 && activeWidth < 1 ? activeWidth : 1
+        let w = face.width * a
+        return CGRect(x: face.minX + (face.width - w) / 2, y: face.minY, width: w, height: face.height)
+    }
+
+    /// activeWidth: the face width shown (shownRect; 1 = the whole face: Syphon, the export, the tests).
+    func encodeShow(_ enc: MTLRenderCommandEncoder, targetSize: CGSize, dst: CGRect, cropFraction: Double, activeWidth: Double = 1) {
         guard let show, let t = tube, hasOutput else { return }
         var sp = showParams(t, dst: dst, cropFraction: cropFraction)
         var ndc = SIMD4<Float>(Float(dst.minX / targetSize.width * 2 - 1), Float(1 - dst.maxY / targetSize.height * 2),
@@ -998,7 +1009,14 @@ final class CRTRenderer {
         enc.setVertexBytes(&ndc, length: 16, index: 0)
         enc.setFragmentBuffer(t.fast ? t.outH : t.scatterX, offset: 0, index: 0)
         enc.setFragmentBytes(&sp, length: MemoryLayout<ShowParams>.stride, index: 1)
+        let full = MTLScissorRect(x: 0, y: 0, width: Int(targetSize.width), height: Int(targetSize.height))
+        let shown = Self.shownRect(dst, activeWidth: activeWidth)
+        let x0 = max(0, min(full.width, Int(shown.minX.rounded()))), x1 = max(x0, min(full.width, Int(shown.maxX.rounded())))
+        let y0 = max(0, min(full.height, Int(dst.minY.rounded(.down)))), y1 = max(y0, min(full.height, Int(dst.maxY.rounded(.up))))
+        guard x1 > x0, y1 > y0 else { return }
+        enc.setScissorRect(MTLScissorRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0))
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        enc.setScissorRect(full)  // the countdown and the pill drawn after it use the whole target
     }
 
     /// showprog into a writable texture via compute (export / Syphon / tests); outside `dst` is black.

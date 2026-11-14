@@ -46,7 +46,7 @@ class CrtDisplay {
   std::string state() const;
   /// A tube plan is being built / waits to be adopted by the next build.
   bool planPending() { return renderer_ && renderer_->planPending(); }
-  void show(VkCommandBuffer cmd, int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction);
+  void show(VkCommandBuffer cmd, int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction, double activeWidth = 1);
 
   /// Once per frame: GPU times of finished builds -> build-ahead / adaptive resolution.
   /// `budget` = seconds the GPU has between the commit and the target vblank at the maximum lead.

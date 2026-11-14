@@ -29,4 +29,16 @@ struct CrtSettings {
 
 struct CrtRect { float x = 0, y = 0, w = 0, h = 0; };
 
+/// The part of the 4:3 tube face shown on screen: the columns the drive spans (`activeWidth` of the
+/// face width, centred), the face's full height. Beside the drive the beam draws black (the line's
+/// border and blanking); a TV's overscan hides that, and so does the live display (user decision
+/// 2026-11-14: no black bands between the picture and the blurred backdrop). The tube itself keeps
+/// the whole face (its glow, scatter and geometry are unchanged); only the show pass is clipped.
+/// docs/CRT_PORT.md "Picture geometry". macOS: CRTRenderer.shownRect (the same formula).
+inline CrtRect crtShownRect(const CrtRect& face, double activeWidth) {
+  const double a = activeWidth > 0 && activeWidth < 1 ? activeWidth : 1;
+  const float w = float(double(face.w) * a);
+  return CrtRect{face.x + (face.w - w) / 2, face.y, w, face.h};
+}
+
 }  // namespace rnl

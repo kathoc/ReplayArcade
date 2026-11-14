@@ -534,7 +534,7 @@ void D3D11Renderer::updateBackdrop(const uint32_t* picture) {
 }
 
 void D3D11Renderer::drawBackdrop(const GameRect& rect, bool crt) {
-  const CrtRect pic = crt ? rect.crt : CrtRect{rect.x, rect.y, rect.w, rect.h};
+  const CrtRect pic = crt ? crtShownRect(rect.crt, post_.crtSettings.activeWidth) : CrtRect{rect.x, rect.y, rect.w, rect.h};
   BackdropPlan plan = planBackdrop(pic.x, pic.y, pic.w, pic.h, width_, height_, int(backdropW_), int(backdropH_), post_.backdrop);
   float uv[4] = {float(rect.crop) / backdropW_, float(rect.crop) / backdropH_, float(backdropW_ - rect.crop) / backdropW_,
                  float(backdropH_ - rect.crop) / backdropH_};
@@ -756,7 +756,7 @@ uint64_t D3D11Renderer::drawAndPresent(const uint32_t* newPicture, const GameRec
   const bool crtShows = crtOn && rect.visible && crt_->hasOutput() && !plain;
   if (post_.backdrop > 0 && rect.visible && hasPicture_ && backdropSrv_) drawBackdrop(rect, crtShows);
   if (crtShows) {
-    crt_->drawShow(width_, height_, rect.crt, rect.crtCrop);
+    crt_->drawShow(width_, height_, rect.crt, rect.crtCrop, post_.crtSettings.activeWidth);
     status_.crtShown = true;
   } else if (rect.visible && hasPicture_) {
     D3D11_MAPPED_SUBRESOURCE m{};

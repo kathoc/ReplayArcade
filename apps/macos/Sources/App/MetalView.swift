@@ -463,8 +463,12 @@ final class GameRenderer {
                 bcb.commit()
             }
             if crt.hasOutput, let enc = cb.makeRenderCommandEncoder(descriptor: rpd) {
-                if options.backdrop > 0 { drawBackdrop(enc, size: size, picture: dst, crop: 0, geometry: textureGeometry, level: options.backdrop) }
-                crt.encodeShow(enc, targetSize: size, dst: dst, cropFraction: cropFraction)
+                let active = crtState.settings.activeWidth
+                if options.backdrop > 0 {
+                    drawBackdrop(enc, size: size, picture: CRTRenderer.shownRect(dst, activeWidth: active), crop: 0,
+                                 geometry: textureGeometry, level: options.backdrop)
+                }
+                crt.encodeShow(enc, targetSize: size, dst: dst, cropFraction: cropFraction, activeWidth: active)
                 drawCountdown(enc, size: size, picture: Self.pictureRect(size: size, options: options, crtOn: true))
                 drawPill(enc, size: size, pill)
                 enc.endEncoding()

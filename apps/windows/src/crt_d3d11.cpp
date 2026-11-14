@@ -1145,7 +1145,7 @@ std::vector<std::pair<std::string, double>> CrtRendererD3D11::profileTimes() {
 }
 
 // ------------------------------------------------------------------ presentation
-void CrtRendererD3D11::drawShow(int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction) {
+void CrtRendererD3D11::drawShow(int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction, double activeWidth) {
   if (!showVs_ || !tube_ || !hasOutput_ || targetWidth <= 0 || targetHeight <= 0) return;
   ShowParams sp = showParams(tube_->ow, tube_->oh, targetWidth, targetHeight, dst, cropFraction);
   D3D11_MAPPED_SUBRESOURCE m{};
@@ -1154,8 +1154,10 @@ void CrtRendererD3D11::drawShow(int targetWidth, int targetHeight, const CrtRect
   ctx_->Unmap(params_, 0);
   D3D11_VIEWPORT v{0, 0, float(targetWidth), float(targetHeight), 0.f, 1.f};
   ctx_->RSSetViewports(1, &v);
-  int x0 = std::max(0, int(std::floor(dst.x))), y0 = std::max(0, int(std::floor(dst.y)));
-  int x1 = std::min(targetWidth, int(std::ceil(dst.x + dst.w))), y1 = std::min(targetHeight, int(std::ceil(dst.y + dst.h)));
+  // Clipped to the columns the drive spans (crtShownRect: no black bands beside the picture); rows: the face.
+  const CrtRect shown = crtShownRect(dst, activeWidth);
+  int x0 = std::max(0, int(std::lround(shown.x))), y0 = std::max(0, int(std::floor(dst.y)));
+  int x1 = std::min(targetWidth, int(std::lround(shown.x + shown.w))), y1 = std::min(targetHeight, int(std::ceil(dst.y + dst.h)));
   D3D11_RECT sc{x0, y0, std::max(x0, x1), std::max(y0, y1)};
   ctx_->RSSetScissorRects(1, &sc);
   ctx_->RSSetState(showRaster_);

@@ -37,8 +37,8 @@ bool CrtDisplay::build(VkCommandBuffer cmd) {
   return renderer_->encode(cmd, policy_.input(renderer_->settings().antennaDbuv), policy_.ordinal());
 }
 
-void CrtDisplay::show(VkCommandBuffer cmd, int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction) {
-  if (renderer_) renderer_->encodeShow(cmd, targetWidth, targetHeight, dst, cropFraction);
+void CrtDisplay::show(VkCommandBuffer cmd, int targetWidth, int targetHeight, const CrtRect& dst, double cropFraction, double activeWidth) {
+  if (renderer_) renderer_->encodeShow(cmd, targetWidth, targetHeight, dst, cropFraction, activeWidth);
 }
 
 void CrtDisplay::update(double budget, bool allowBuildAhead, bool adaptive) {
