@@ -5,6 +5,10 @@
 //   -resumeAfter <s>          resume after s seconds (through the resume countdown when it is on)
 //   -continueLast YES         press the library's Continue card at 1 s (resume check)
 //   -openMenu <page>          open the Quick Menu at a page (top, retry, practice, display, ...) after 2 s
+//   -controllerKind automatic|pad|stick, -controllerFamily automatic|nintendo|xbox|playStation: pad 1's, after 4 s
+//   -assumeCoverPad YES       treat the pads as a FlipPad (the upper-half layout in portrait); -testDialog YES: a dialog
+//   -assign <id>=<action>     after 6 s, assign as the action picker does (gc0:face.east=p1.b3.turbo)
+//   -openAssign <id>          open the action picker of a controller button (gc0:face.east) after 2.5 s
 //   -debugUnlockAll NO        free mode (the prototype switch off)
 //   -pacingProbe <s>          after s seconds of play write Library/Caches/pacing.json (PacingProbe)
 //   -holdTouch <button>       press an on-screen button at 2 s for 0.3 s (e.g. l2 = rewind) to check touch input;
@@ -88,6 +92,29 @@ enum TestHooks {
         if resume > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + resume) { m.setPaused(false) } }
         if let page = d.string(forKey: "openMenu"), let p = QMPage(rawValue: page) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { m.quickMenu.open(at: p) }
+        }
+        if let k = d.string(forKey: "controllerKind").flatMap(InputManager.KindChoice.init(rawValue:)) {   // pad 1's kind
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { m.input.setKindChoice(k, slot: 0); NSLog("ReplayNES test hook: kind %@", k.rawValue) }
+        }
+        if let f = d.string(forKey: "controllerFamily") {   // pad 1's button layout (automatic = from its name)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { m.input.setFamilyChoice(ControllerFamily(rawValue: f), slot: 0); NSLog("ReplayNES test hook: family %@", f) }
+        }
+        if let spec = d.string(forKey: "assign"), let eq = spec.firstIndex(of: "=") {   // "gc0:face.east=p1.b3.turbo"
+            let id = String(spec[..<eq]), action = String(spec[spec.index(after: eq)...])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                m.input.setAssignment(id, action: action)
+                NSLog("ReplayNES test hook: assigned %@ = %@", id, action)
+            }
+        }
+        if d.bool(forKey: "testDialog") {   // a two-button dialog after 4 s (TopDialog with -assumeCoverPad YES)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                m.alert = AppAlert(title: "Reset this project?", message: "Test dialog", actions: [
+                    AppAlert.Action(title: String(localized: "Cancel"), role: .cancel),
+                    AppAlert.Action(title: "Reset", role: .destructive)])
+            }
+        }
+        if let id = d.string(forKey: "openAssign") {   // the action picker of a controller button ("gc0:face.east")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { m.quickMenu.open(at: .controller); m.quickMenu.openAssign(id) }
         }
         let probe = d.double(forKey: "pacingProbe")
         if probe > 0 { PacingProbe.shared.start(after: probe) }

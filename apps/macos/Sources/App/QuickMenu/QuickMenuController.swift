@@ -14,6 +14,10 @@ final class QuickMenuController: ObservableObject {
     @Published private(set) var revision = 0
     /// The physical id ("gc0:face.east") whose action the .assign page picks.
     @Published private(set) var assignElement: String?
+    /// Columns a page's grid is drawn with when they differ from QMPage.columns (the iPhone: 3 tiles a row in
+    /// portrait, the Mac's 6 in landscape). The D-pad moves on the drawn grid: with the Mac's six the second
+    /// row of the iPhone's top level had no row above it (2026-11-21, up from Share did nothing).
+    var drawnColumns: [QMPage: Int] = [:]
     /// +1 / -1: direction of the last page change (transition), 0 = none.
     private(set) var lastMove = 0
 
@@ -58,6 +62,7 @@ final class QuickMenuController: ObservableObject {
         guard isOpen, let m = model else { return }
         withAnimation(.easeOut(duration: 0.12)) { isOpen = false }
         if m.input.captureHandler != nil { m.input.captureHandler = nil; m.capturingAction = nil }
+        m.input.editingSlot = -1   // edits follow player 1's pad again (the Controller page set its slot)
         if m.status.hasSession && (resume ?? resumeOnClose) { m.setPaused(false) }
         resumeOnClose = false
         m.updateUIMode()
@@ -143,7 +148,7 @@ final class QuickMenuController: ObservableObject {
                 touch()
                 return
             }
-            if let j = QuickMenuNav.move(i, count: items.count, columns: p.columns, d) {
+            if let j = QuickMenuNav.move(i, count: items.count, columns: drawnColumns[p] ?? p.columns, d) {
                 setFocus(j, on: p)
             } else if p.paged, d == .left || d == .right {
                 flipPage(p, content: content, by: d == .left ? -1 : 1)
@@ -182,10 +187,17 @@ final class QuickMenuController: ObservableObject {
         let p = QMPage.controller
         let content = QuickMenuPages.content(p, model: m, menu: self)
         let els = diagramElements(m)
-        let i = min(max(0, focusIndex(p)), max(0, els.count - 1))
+        // Focus 0..<els.count: the diagram's elements; then the rows under it (QuickMenuPages.controllerRows).
+        let rows = QuickMenuPages.controllerRows(m, slot: listPageIndex(p))
+        let i = min(max(0, focusIndex(p)), max(0, els.count + rows.count - 1))
         switch n {
         case .menu, .escape: close()
         case .back: back()
+        case .up, .down, .left, .right where i >= els.count:
+            // On a row: up / down between the rows, up from the first back to the diagram's lowest element.
+            if n == .down, i + 1 < els.count + rows.count { setFocus(i + 1, on: p) }
+            else if n == .up, i > els.count { setFocus(i - 1, on: p) }
+            else if n == .up, let low = els.indices.max(by: { els[$0].center.y < els[$1].center.y }) { setFocus(low, on: p) }
         case .up, .down, .left, .right:
             guard els.indices.contains(i) else { return }
             let dx: CGFloat = n == .left ? -1 : n == .right ? 1 : 0, dy: CGFloat = n == .up ? -1 : n == .down ? 1 : 0
@@ -198,9 +210,10 @@ final class QuickMenuController: ObservableObject {
                 let score = along + across * 2.2
                 if score < bestScore { bestScore = score; best = j }
             }
-            if let b = best { setFocus(b, on: p) }
+            if let b = best { setFocus(b, on: p) } else if n == .down, !rows.isEmpty { setFocus(els.count, on: p) }
         case .confirm:
             if els.indices.contains(i) { openAssign("gc\(listPageIndex(p)):\(els[i].element)") }
+            else if rows.indices.contains(i - els.count) { rows[i - els.count].confirm?(); touch() }
         case .x: content.x?.run(); touch()
         case .y: content.y?.run(); touch()
         case .pagePrev, .pageNext: flipPage(p, content: content, by: n == .pagePrev ? -1 : 1)
@@ -219,7 +232,7 @@ final class QuickMenuController: ObservableObject {
         assignElement = physicalID
         let current = ControllerAssignments.actions(element: element, slot: slot, config: m.inputConfig).first ?? ""
         let k = QuickMenuPages.assignChoices(slot: slot).firstIndex(of: current) ?? 0
-        let per = QMPage.assign.capacity
+        let per = QMPage.assign.scrolls ? Int.max : QMPage.assign.capacity
         listPage[.assign] = k / per
         focus[.assign] = k % per
         if page != .assign { push(.assign) }

@@ -541,7 +541,10 @@ std::string displayName(rnf_keyboard_scheme scheme, const std::string& id) {
 rnf_controller_family familyFrom(const std::string& category, const std::string& vendor) {
   std::string s = lower(category + " " + vendor);
   auto has = [&](const char* w) { return s.find(w) != std::string::npos; };
-  if (has("switch") || has("joy-con") || has("nintendo") || has("pro controller")) return RNF_FAMILY_NINTENDO;
+  // The 8BitDo FlipPad has the Nintendo diamond (A right, B bottom, X top, Y left); iOS names it "8BitDo FlipPad"
+  // with category "HID" (2026-11-19, the controller log), and reports its buttons by their printed letters.
+  if (has("switch") || has("joy-con") || has("nintendo") || has("pro controller") || has("flippad"))
+    return RNF_FAMILY_NINTENDO;
   if (has("dualsense") || has("dualshock") || has("playstation")) return RNF_FAMILY_PLAYSTATION;
   if (has("xbox")) return RNF_FAMILY_XBOX;
   if (has("steam deck")) return RNF_FAMILY_STEAM_DECK;
@@ -1195,12 +1198,29 @@ void rnf_gc_face_positions(const char* product_category, const char* vendor_name
                            int out[4]) {
   if (!out) return;
   std::string cat = lower(product_category ? product_category : "");
-  auto set = [&](int a, int b, int x, int y) { out[0] = a; out[1] = b; out[2] = x; out[3] = y; };
   // A single Joy-Con held sideways (SDL_mfijoystick.m: A = south, B = west, X = east, Y = north).
   if (cat.find("joy-con") != std::string::npos && (hasSuffix(cat, "(l)") || hasSuffix(cat, "(r)"))) {
-    return set(RNF_FACE_SOUTH, RNF_FACE_WEST, RNF_FACE_EAST, RNF_FACE_NORTH);
+    out[0] = RNF_FACE_SOUTH; out[1] = RNF_FACE_WEST; out[2] = RNF_FACE_EAST; out[3] = RNF_FACE_NORTH;
+    return;
   }
-  if (familyFrom(product_category ? product_category : "", vendor_name ? vendor_name : "") == RNF_FAMILY_NINTENDO) {
+  rnf_gc_face_positions_for_family(familyFrom(product_category ? product_category : "", vendor_name ? vendor_name : ""),
+                                   symbols, out);
+}
+
+int rnf_controller_kind_from_name(const char* name) {
+  const std::string s = lower(name ? name : "");
+  if (s.find("steam deck") != std::string::npos) return 0;
+  for (const char* match : {"arcade", "fight stick", "fightstick", "fighting stick", "fighting commander",
+       "hori rap", "real arcade", "qanba", "victrix", "panthera", "mayflash f", "8bitdo arcade",
+       "astro city", "egret", "hitbox", "hit box", "snack box", "brook", "neogeo arcade"})
+    if (s.find(match) != std::string::npos) return 1;
+  return 0;
+}
+
+void rnf_gc_face_positions_for_family(rnf_controller_family family, const char* const symbols[4], int out[4]) {
+  if (!out) return;
+  auto set = [&](int a, int b, int x, int y) { out[0] = a; out[1] = b; out[2] = x; out[3] = y; };
+  if (family == RNF_FAMILY_NINTENDO) {
     // The printed glyph fixes the position on a Nintendo layout (A east, B south, X north, Y west).
     int glyph[4];
     std::set<int> seen;

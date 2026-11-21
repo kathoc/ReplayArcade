@@ -543,6 +543,38 @@ TEST_CASE("Nintendo positions follow reported glyphs") {
   CHECK_EQ(partial["buttonA"], RNF_FACE_EAST);
 }
 
+TEST_CASE("the 8BitDo FlipPad on iOS: the Nintendo diamond from its printed letters") {
+  // iOS 26 (2026-11-19, the controller log on an iPhone): vendor "8BitDo FlipPad", category "HID", glyphs
+  // a/b/x/y.circle for buttonA..Y; Gamepad Tester on the same phone: A (0) right, B (1) bottom, X (2) top, Y (3) left.
+  auto flip = gcPositions("HID", "8BitDo FlipPad", {"a.circle", "b.circle", "x.circle", "y.circle"});
+  CHECK_EQ(flip["buttonA"], RNF_FACE_EAST);
+  CHECK_EQ(flip["buttonB"], RNF_FACE_SOUTH);
+  CHECK_EQ(flip["buttonX"], RNF_FACE_NORTH);
+  CHECK_EQ(flip["buttonY"], RNF_FACE_WEST);
+  CHECK_EQ(rnf_controller_family_from("HID", "8BitDo FlipPad"), RNF_FAMILY_NINTENDO);
+  // Another HID controller keeps Apple's diamond (A bottom).
+  auto other = gcPositions("HID", "Some Gamepad", {"a.circle", "b.circle", "x.circle", "y.circle"});
+  CHECK_EQ(other["buttonA"], RNF_FACE_SOUTH);
+}
+
+TEST_CASE("controller kind from the name, face positions for a chosen family") {
+  CHECK_EQ(rnf_controller_kind_from_name("8BitDo FlipPad"), 0);
+  CHECK_EQ(rnf_controller_kind_from_name("8BitDo Arcade Stick"), 1);
+  CHECK_EQ(rnf_controller_kind_from_name("HORI Real Arcade Pro"), 1);
+  CHECK_EQ(rnf_controller_kind_from_name("Steam Deck Arcade"), 0);
+  CHECK_EQ(rnf_controller_kind_from_name(nullptr), 0);
+  const char* glyphs[4] = {"a.circle", "b.circle", "x.circle", "y.circle"};
+  int pos[4];
+  rnf_gc_face_positions_for_family(RNF_FAMILY_NINTENDO, glyphs, pos);
+  CHECK_EQ(pos[0], RNF_FACE_EAST);
+  CHECK_EQ(pos[1], RNF_FACE_SOUTH);
+  rnf_gc_face_positions_for_family(RNF_FAMILY_XBOX, glyphs, pos);
+  CHECK_EQ(pos[0], RNF_FACE_SOUTH);
+  CHECK_EQ(pos[3], RNF_FACE_NORTH);
+  rnf_gc_face_positions_for_family(RNF_FAMILY_PLAYSTATION, nullptr, pos);
+  CHECK_EQ(pos[0], RNF_FACE_SOUTH);
+}
+
 TEST_CASE("printed buttons reach the right NES buttons") {
   auto nesBits = [](const char* category, int button) {
     rn_input* h = rn_input_new();

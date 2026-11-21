@@ -409,6 +409,9 @@ enum QuickMenuPages {
     }
 
     /// "" (None) + the pad's own player's actions, the other player's, the hotkeys (shared core).
+    /// Rows under the controller diagram (the iPhone's kind / button layout); none on the Mac yet.
+    static func controllerRows(_ m: AppModel, slot: Int) -> [QMItem] { [] }
+
     static func assignChoices(slot: Int) -> [String] {
         let n = rnf_input_assign_choices(Int32(slot), nil, 0)
         var buf = [UnsafePointer<CChar>?](repeating: nil, count: n)
@@ -422,15 +425,10 @@ enum QuickMenuPages {
         let element = String(id[id.index(after: colon)...])
         let slot = Int(id.dropFirst(2).prefix { $0.isNumber }) ?? 0
         let current = ControllerAssignments.actions(element: element, slot: slot, config: m.inputConfig)
+        let catalog = Dictionary(InputCatalog.allActions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let all = assignChoices(slot: slot).map { a -> QMItem in
-            let action = InputCatalog.allActions.first { $0.id == a }
-            let title: String
-            switch action?.group {
-            case nil: title = String(localized: "None")
-            case .player1?: title = "1P " + (action?.label ?? a)
-            case .player2?: title = "2P " + (action?.label ?? a)
-            case .hotkey?: title = action?.label ?? a
-            }
+            let action = catalog[a]
+            let title = action.map { $0.group.playerPrefix + $0.label } ?? String(localized: "None")
             let on = a.isEmpty ? current.isEmpty : current.contains(a)
             return QMItem(id: "assign:" + a, icon: a.isEmpty ? "xmark" : action?.group == .hotkey ? "bolt" : "gamecontroller",
                           title: title, detail: action?.group == .hotkey ? String(localized: "Hotkeys (not recorded)") : "",
@@ -512,12 +510,12 @@ enum QuickMenuPages {
         let langs = ["auto", "ja", "en"]
         let current = langs.firstIndex(of: UILanguage.preference) ?? 0
         // Only a build with a second core offers the choice; a stale non-default setting stays visible so it can be fixed.
-        let offerCore = rn_core_available(RN_CORE_REPLAYNESCORE) != 0 || m.selectedCore != "nestopia"
+        let offerCore = RNProduct.isNES && (rn_core_available(RN_CORE_REPLAYNESCORE) != 0 || m.selectedCore != "nestopia")
         let core = offerCore ? [choice("core", "cpu", String(localized: "Core"),
                    String(localized: "Next new game") + " · " + m.coreAvailability,
                    [cores.contains(m.selectedCore) ? "Nestopia" : m.selectedCore, "ReplayNEScore"], cores.firstIndex(of: m.selectedCore) ?? 0) { m.selectedCore = cores[$0] }] : []
         return core + [
-            choice("language", "globe", String(localized: "Language"), String(localized: "Applies the next time ReplayNES starts"),
+            choice("language", "globe", String(localized: "Language"), RNProduct.isNES ? String(localized: "Applies the next time ReplayNES starts") : String(localized: "Applies the next time the app starts"),
                    [String(localized: "Auto"), UILanguage.nativeName("ja"), UILanguage.nativeName("en")], current) {
                 UILanguage.preference = langs[$0]
             },
@@ -525,7 +523,7 @@ enum QuickMenuPages {
                    String(localized: "Show input and display latency over the game"), m.showLatency) { m.showLatency = $0 },
             toggle("flashBadge", "bolt.badge.checkmark", String(localized: "Flash Notice"),
                    String(localized: "Show a badge while flashing is being reduced"), m.showFlashIndicator) { m.showFlashIndicator = $0 },
-            link("about", "info.circle", String(localized: "ReplayNES Version"),
+            link("about", "info.circle", RNProduct.isNES ? String(localized: "ReplayNES Version") : "\(RNProduct.name) Version",
                  String(localized: "Version, updates and licenses"), .about),
         ]
     }
@@ -534,6 +532,11 @@ enum QuickMenuPages {
     /// settings (Sparkle), the core and the licenses.
     private static func about() -> [QMItem] {
         let info = Bundle.main.infoDictionary ?? [:]
+        if !RNProduct.isNES {
+            let version = "\(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
+            return [QMItem(id: "version", icon: "info.circle", title: String(localized: "Version"), detail: "", value: .text(version)),
+                    QMItem(id: "core", icon: "cpu", title: String(localized: "Emulation Core"), detail: "", value: .text(Engine.coreCompatID))]
+        }
         let version = "\(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
         let site = "https://github.com/kathoc/ReplayNES"
         let u = UpdaterModel.shared

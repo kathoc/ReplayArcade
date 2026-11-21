@@ -34,12 +34,26 @@ struct TouchQuickMenu: View {
         return VStack(alignment: .leading, spacing: 12) {
             header(p, content)
             if QMPage.settingsTabs.contains(p) { settingsTabs(p) }
-            ScrollView(.vertical, showsIndicators: false) {
-                pageBody(p, content, focus: focus, width: width - 28, landscape: landscape)
-                    .padding(.bottom, 4)
+            // The upper half (a FlipPad over the lower half) is short: the panel may take more of it.
+            let maxBody = geo.size.height * (model.upperHalfLayout ? 0.74 : landscape ? 0.62 : 0.66)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: p.scrolls) {
+                    pageBody(p, content, focus: focus, width: width - 28, landscape: landscape)
+                        .padding(.bottom, 4)
+                }
+                .frame(maxHeight: p.scrolls ? Self.peekHeight(rows: content.items.count, max: maxBody) : maxBody)
+                .fixedSize(horizontal: false, vertical: true)
+                // The D-pad focus is scrolled into view on every page (a scrolling list, and any page taller
+                // than the panel: the upper half with a FlipPad); a scrolling list opens at it.
+                .onChange(of: focus) { _, f in
+                    guard let id = focusID(p, content, f) else { return }
+                    withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id) }
+                }
+                .onAppear {
+                    guard p.scrolls, content.items.indices.contains(focus) else { return }
+                    proxy.scrollTo(content.items[focus].id, anchor: .center)
+                }
             }
-            .frame(maxHeight: geo.size.height * (landscape ? 0.62 : 0.66))
-            .fixedSize(horizontal: false, vertical: true)
             footer(content, focus: focus)
         }
         .padding(14)
@@ -50,6 +64,28 @@ struct TouchQuickMenu: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("quickMenu")
         .position(x: geo.size.width / 2, y: geo.size.height / 2)
+    }
+
+    /// The view id of the focused item (rows, grid cells, the controller page's rows; the diagram).
+    private func focusID(_ p: QMPage, _ content: QMContent, _ f: Int) -> String? {
+        if p == .controller {
+            let n = menu.diagramElements(model).count
+            let rows = QuickMenuPages.controllerRows(model, slot: menu.listPageIndex(.controller))
+            return f >= n && rows.indices.contains(f - n) ? rows[f - n].id : "controllerDiagram"
+        }
+        return content.items.indices.contains(f) ? content.items[f].id : nil
+    }
+
+    /// Row pitch of the rows layout (row(): minHeight 48, VStack spacing 6).
+    static let rowPitch: CGFloat = 54
+
+    /// A scrolling list's height: whole rows plus half of the next one (it shows the list goes on),
+    /// within `max`; all rows when they fit.
+    static func peekHeight(rows: Int, max: CGFloat) -> CGFloat {
+        let all = CGFloat(rows) * rowPitch - 6 + 4
+        if all <= max { return all }
+        let whole = Swift.max(1, Int((max - rowPitch / 2) / rowPitch))
+        return CGFloat(whole) * rowPitch + rowPitch / 2 - 6
     }
 
     // MARK: header / footer
@@ -141,6 +177,7 @@ struct TouchQuickMenu: View {
                         .onTapGesture { menu.setFocus(i, on: p); tapRow(item, p) }
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("qm.\(item.id)")
+                        .id(item.id)
                 }
             }
         case .custom:
@@ -160,8 +197,12 @@ struct TouchQuickMenu: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityAddTraits(.isButton)
                     .accessibilityIdentifier("qm.\(item.id)")
+                    .id(item.id)
             }
         }
+        // The D-pad moves on this grid (QuickMenuController.drawnColumns), not the Mac's columns.
+        .onAppear { menu.drawnColumns[p] = columns }
+        .onChange(of: columns) { _, c in menu.drawnColumns[p] = c }
     }
 
     private func activate(_ item: QMItem, _ p: QMPage) {
@@ -335,16 +376,32 @@ struct TouchQuickMenu: View {
         let family = QuickMenuPages.diagramFamily(model, slot: slot)
         let info = monitor.controllers.first { $0.slot == slot }
         let els = menu.diagramElements(model)
-        let focus = min(max(0, menu.focusIndex(.controller)), max(0, els.count - 1))
+        let focus = max(0, menu.focusIndex(.controller))
         return VStack(spacing: 8) {
+            // The diagram is drawn on its fixed canvas (RNF_DIAGRAM_CANVAS_*, 560 x 262) and scaled to the width,
+            // as on the Mac: framed without scaling, its sides and top were cut off (2026-11-21).
+            let canvas = ControllerDiagramLayout.canvas
+            let scale = min(width, 480) / canvas.width
             ControllerDiagramView(family: family, slot: slot, config: model.inputConfig, labels: info?.labels ?? [:],
                                   pressed: monitor.pressed, focused: hasPad && els.indices.contains(focus) ? els[focus].element : nil,
                                   onSelect: { element in menu.openAssign("gc\(slot):\(element)") })
-                .frame(width: min(width, 480), height: min(width, 480) * 0.62)
+                .scaleEffect(scale)
+                .frame(width: canvas.width * scale, height: canvas.height * scale)
+                .id("controllerDiagram")
             Text(L("Tap a button on the picture to change what it does")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+            // The kind and the button layout remembered for this controller (D-pad: below the diagram).
+            ForEach(Array(QuickMenuPages.controllerRows(model, slot: slot).enumerated()), id: \.element.id) { k, item in
+                row(item, focused: hasPad && focus == els.count + k)
+                    .contentShape(Rectangle())
+                    .onTapGesture { menu.setFocus(els.count + k, on: .controller); item.confirm?(); menu.touch() }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("qm.\(item.id)")
+                    .id(item.id)
+            }
         }
         .frame(maxWidth: .infinity)
-        .onAppear { monitor.setLive(true) }
+        .onAppear { monitor.setLive(true); model.input.editingSlot = slot }
+        .onChange(of: slot) { _, s in model.input.editingSlot = s }
         .onDisappear { monitor.setLive(false) }
     }
 
