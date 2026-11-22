@@ -47,6 +47,14 @@ enum ThumbnailStore {
     static let romPictureFrame = Int(RN_PRODUCT_LIBRARY_PICTURE_FRAME)
     private static var asked = Set<String>()  // main thread
     private static let pictureQueue = DispatchQueue(label: "replaynes.rom-picture", qos: .utility)
+    /// The ROMs whose picture could not be made (rnf_picture_ledger; pictureQueue only): a ROM that ended the
+    /// app twice while its picture was being made, or failed, is not run again (the app cannot start another
+    /// process to make it on iPhone: docs/plans/2026-11-22-library-pictures-robust.md).
+    private static var ledger: OpaquePointer?
+    private static func pictureLedger() -> OpaquePointer? {
+        if ledger == nil, let d = dir { ledger = rnf_picture_ledger_open(d.path) }
+        return ledger
+    }
     static func requestRomPicture(path: String, sha: String?, done: @escaping () -> Void) {
         guard dir != nil, let sha, !sha.isEmpty, image(romSHA: sha) == nil, asked.insert(sha).inserted else { return }
         pictureQueue.async {
@@ -54,14 +62,27 @@ enum ThumbnailStore {
             // playing (ForegroundPlay), one ROM at a time (this serial queue).
             let shares = ForegroundPlay.sharesMachine(ForegroundPlay.defaultCore)
             if shares { ForegroundPlay.waitUntilIdle() }
+            let ledger = pictureLedger()
+            if rnf_picture_ledger_skipped(ledger, path) != 0 { return }  // its card keeps the name tile
+            rnf_picture_ledger_begin(ledger, path)
             var s: OpaquePointer?
-            guard rn_session_new(path, nil, nil, &s) == RN_OK, let s else { return }
+            guard rn_session_new(path, nil, nil, &s) == RN_OK, let s else {
+                rnf_picture_ledger_end(ledger, path, 0, "the engine cannot open it")
+                return
+            }
             defer { rn_session_close(s) }
             for _ in 0..<romPictureFrame {
                 if shares { ForegroundPlay.waitUntilIdle() }
-                if rn_step(s, 0, 0, 0, nil) != RN_OK { return }
+                if rn_step(s, 0, 0, 0, nil) != RN_OK {
+                    rnf_picture_ledger_end(ledger, path, 0, "a frame failed")
+                    return
+                }
             }
-            guard let picture = VideoPicture(session: s) else { return }
+            guard let picture = VideoPicture(session: s) else {
+                rnf_picture_ledger_end(ledger, path, 0, "no picture")
+                return
+            }
+            rnf_picture_ledger_end(ledger, path, 1, nil)
             save(picture, project: nil, romSHA: sha, on: pictureQueue, done: done)
         }
     }

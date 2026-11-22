@@ -81,5 +81,10 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+        <!-- The library's picture process (PictureService): a core crash on an unknown ROM ends it, not the app. -->
+        <service
+            android:name=".PictureService"
+            android:exported="false"
+            android:process=":pictures" />
     </application>
 </manifest>

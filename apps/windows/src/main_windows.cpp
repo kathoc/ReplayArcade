@@ -24,6 +24,7 @@
 #include "replaynes/product.h"
 #include "app.h"
 #include "d3d11_renderer.h"
+#include "picture_process.h"
 #include "update_service.h"
 #if RNW_HAVE_UPDATES
 #include "update_winsparkle.h"
@@ -83,6 +84,7 @@ int main(int argc, char** argv) {
 #ifdef RN_PRODUCT_HAS_STARTUP
   rn_product_startup();
 #endif
+  if (int code = 0; runPictureProcessArgs(argc, argv, &code)) return code;  // the library's picture process
   PlatformHooks platform;
   platform.version = RNL_APP_VERSION;
   platform.executable = RN_PRODUCT_EXECUTABLE ".exe";
@@ -93,6 +95,7 @@ int main(int argc, char** argv) {
     if (!AvSetMmThreadCharacteristicsW(L"Games", &task)) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
   };
   platform.sessionMode = [] { return std::string("windows"); };
+  platform.romPictureProcess = selfPictureProcess();
   AppOptions opt;
   if (!parseAppArgs(argc, argv, platform, &opt)) return 2;
 #if RNW_HAVE_UPDATES

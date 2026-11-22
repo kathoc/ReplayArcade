@@ -36,6 +36,7 @@ add_library(rnl_logic STATIC
   src/ui_logic.cpp
   src/ui_layout.cpp
   src/library_thumbs.cpp
+  src/picture_process.cpp
   src/osk.cpp
   src/face_layout.cpp
   src/touch/touch_gamepad.cpp

@@ -12,7 +12,10 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdio>
+#include <cstring>
+#include <functional>
 #include <ctime>
 #include <memory>
 #include <string>
@@ -108,6 +111,81 @@ extern "C" JNIEXPORT void JNICALL Java_io_github_replaynes_android_MainActivity_
   rnl::androidSurfaceBack();
 }
 
+// The library's picture process (PictureService, android:process=":pictures"; docs/plans/2026-11-22-library-pictures-robust.md):
+// the same native code makes one ROM's picture there, so a core crash ends that process, not the app.
+extern "C" JNIEXPORT jboolean JNICALL Java_io_github_replaynes_android_PictureService_nativeMakeRomPicture(JNIEnv* env, jclass,
+                                                                                                     jstring jrom, jstring jout) {
+  static bool started = false;
+  if (!started) {
+#ifdef RN_PRODUCT_HAS_STARTUP
+    rn_product_startup();
+#endif
+    started = true;
+  }
+  const char* r = env->GetStringUTFChars(jrom, nullptr);
+  const char* o = env->GetStringUTFChars(jout, nullptr);
+  std::string rom = r, out = o, reason;
+  env->ReleaseStringUTFChars(jrom, r);
+  env->ReleaseStringUTFChars(jout, o);
+  const bool made = rnl::LibraryThumbs::makeRomPictureFile(rom, out, &reason);
+  if (!made) __android_log_print(ANDROID_LOG_INFO, "ReplayNES", "pictures: %s: %s", rom.c_str(), reason.c_str());
+  return made ? JNI_TRUE : JNI_FALSE;
+}
+
+namespace {
+// MainActivity's picture-process methods (PictureClient), from the picture worker thread.
+int activityPictureCall(const char* method, const char* sig, const std::string& a = "", const std::string& b = "") {
+  auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+  auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+  if (!env || !activity) return -1;
+  int result = -1;
+  jclass cls = env->GetObjectClass(activity);
+  jmethodID m = env->GetMethodID(cls, method, sig);
+  if (m) {
+    if (std::strcmp(sig, "(Ljava/lang/String;Ljava/lang/String;)Z") == 0) {
+      jstring ja = env->NewStringUTF(a.c_str()), jb = env->NewStringUTF(b.c_str());
+      result = env->CallBooleanMethod(activity, m, ja, jb) ? 1 : 0;
+      env->DeleteLocalRef(ja);
+      env->DeleteLocalRef(jb);
+    } else if (std::strcmp(sig, "()I") == 0) {
+      result = env->CallIntMethod(activity, m);
+    } else {
+      env->CallVoidMethod(activity, m);
+      result = 0;
+    }
+  }
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+    result = -1;
+  }
+  env->DeleteLocalRef(cls);
+  env->DeleteLocalRef(activity);
+  return result;
+}
+
+rnl::LibraryThumbs::PictureProcessRunner androidPictureProcess() {
+  return [](const std::string& rom, const std::string& out, const std::function<bool()>& cancelled, std::string* reason) {
+    using P = rnl::LibraryThumbs::PictureProcess;
+    if (activityPictureCall("startRomPicture", "(Ljava/lang/String;Ljava/lang/String;)Z", rom, out) != 1) return P::unavailable;
+    const auto start = std::chrono::steady_clock::now();
+    for (;;) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      const int st = activityPictureCall("romPictureState", "()I");  // PictureClient: 0 running 1 made 2 failed 3 crashed
+      if (st == 1) return P::made;
+      if (st == 2) { *reason = "no picture"; return P::failed; }
+      if (st == 3) { *reason = "the picture process ended"; return P::crashed; }
+      if (st < 0) { *reason = "the picture process cannot be reached"; return P::crashed; }
+      if (cancelled()) { activityPictureCall("cancelRomPicture", "()V"); return P::cancelled; }
+      if (std::chrono::steady_clock::now() - start > std::chrono::minutes(2)) {
+        activityPictureCall("cancelRomPicture", "()V");
+        *reason = "the picture process ran longer than 2 minutes";
+        return P::crashed;
+      }
+    }
+  };
+}
+}  // namespace
+
 int main(int argc, char** argv) {
   using namespace rnl;
   logToLogcat();
@@ -122,6 +200,7 @@ int main(int argc, char** argv) {
   platform.sessionMode = [] { return std::string("android"); };
   platform.touchControls = true;  // docs/design/TOUCH_ANDROID.md
   platform.haptic = androidHaptic;
+  platform.romPictureProcess = androidPictureProcess();
   AppOptions opt;
   if (!parseAppArgs(argc, argv, platform, &opt)) return 2;
   return runApp(opt, platform);

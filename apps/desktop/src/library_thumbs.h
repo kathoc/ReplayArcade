@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -47,6 +48,17 @@ class LibraryThumbs {
   /// Almost one colour: under 5 % of the pixels differ clearly from the commonest colour.
   static bool blankPicture(const ThumbImage& img);
   void requestRomPicture(const std::string& romPath);
+
+  /// Making a ROM's picture in another process (docs/plans/2026-11-22-library-pictures-robust.md): a core that
+  /// crashes or hangs on an unknown ROM ends that process, not the app. The runner makes `out` (a thumbnail
+  /// file, makeRomPictureFile) and polls `cancelled` (a game opened, the app closing).
+  enum class PictureProcess { made, failed, crashed, cancelled, unavailable };
+  using PictureProcessRunner = std::function<PictureProcess(const std::string& rom, const std::string& out,
+                                                            const std::function<bool()>& cancelled, std::string* reason)>;
+  /// Set before the first request; none (or `unavailable` from it): the picture is made in this process.
+  void setPictureProcess(PictureProcessRunner runner) { pictureProcess_ = std::move(runner); }
+  /// The picture process's work: `rom` from power-on, its picture written to `out`. False: none (`reason`).
+  static bool makeRomPictureFile(const std::string& rom, const std::string& out, std::string* reason);
   /// The same for a ROM not on screen, after every shown card's picture: skipped when its file
   /// already exists, run at a low thread priority and at most half of one core's time, and kept
   /// on disk only (the card reads it when it is shown). A later requestRomPicture moves it ahead.
@@ -80,6 +92,15 @@ class LibraryThumbs {
   std::deque<std::string> picLater_;  // then the rest
   std::vector<std::pair<std::string, ThumbImage*>> picDone_;
   bool picStop_ = false;
+  /// The ROMs whose picture could not be made (rnf_picture_ledger; worker thread only): a ROM that ended the
+  /// app twice or failed is not run again (docs/plans/2026-11-22-library-pictures-robust.md).
+  rnf_picture_ledger* ledger_ = nullptr;
+  PictureProcessRunner pictureProcess_;
+  /// Power-on, no input, kRomPictureFrame frames (more while blank). `afterFrame(seconds the frame took)`
+  /// false: stop (`*cancelled`). The picture, or nullptr (`reason`).
+  static ThumbImage* renderRomPicture(const std::string& rom, std::string* reason, bool* cancelled,
+                                      const std::function<bool(double)>& afterFrame);
+  static ThumbImage* readThumbFile(const std::string& path);
   bool picPaused_ = false;
   std::thread picThread_;
 };

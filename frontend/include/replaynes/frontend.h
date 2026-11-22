@@ -1890,6 +1890,26 @@ float rnf_crt_hiss_level(const rnf_crt_hiss* h); /* level reached by the last ca
 size_t rnf_product_core_count(void);
 const char* rnf_product_core_id(size_t index);
 
+/* ---------------------------------------------------------------- library pictures: the ledger
+ * The ROMs whose card picture could not be made (docs/plans/2026-11-22-library-pictures-robust.md), so an
+ * unknown ROM that crashes or fails is not run again at every start-up. Files in `dir` (the thumbnails'):
+ * pictures-in-progress (the ROM being run) and pictures-failed.json. ROMs are keyed by file name and size
+ * (a replaced file is tried again). Not thread-safe: one worker uses it. */
+typedef struct rnf_picture_ledger rnf_picture_ledger;
+/* Opens (reads) the ledger; a leftover in-progress record counts as a crash of that ROM. */
+rnf_picture_ledger* rnf_picture_ledger_open(const char* dir);
+void rnf_picture_ledger_close(rnf_picture_ledger* l);
+/* Nonzero: no picture is to be made for `rom_path` (it crashed twice, or failed for a reason seen). */
+int rnf_picture_ledger_skipped(const rnf_picture_ledger* l, const char* rom_path);
+/* Before running `rom_path`: written to disk (a crash leaves it). */
+void rnf_picture_ledger_begin(rnf_picture_ledger* l, const char* rom_path);
+/* After the run: `ok` 0 records a failure (`reason`; skipped from now on); nonzero clears the ROM's record. */
+void rnf_picture_ledger_end(rnf_picture_ledger* l, const char* rom_path, int ok, const char* reason);
+/* The run was put back (a game opened, the app paused): no failure counted. */
+void rnf_picture_ledger_abandon(rnf_picture_ledger* l);
+/* A crash found at open (or by the caller, e.g. a picture process that died): counts toward the two that skip. */
+void rnf_picture_ledger_crashed(rnf_picture_ledger* l, const char* rom_path, const char* reason);
+
 #ifdef __cplusplus
 }
 #endif

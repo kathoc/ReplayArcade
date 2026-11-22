@@ -465,7 +465,10 @@ int App::run(const AppOptions& opt) {
   emu_ = std::make_unique<EmulationController>(input_->input(), audioOK_ ? &audio_ : nullptr);
   thumbs_ = std::make_unique<ThumbnailManager>();
   if (!perfMode) thumbs_->storeDir = paths_.sessionRoot + "/Filmstrips";  // the seek bar's pictures, kept
-  if (!perfMode) libraryThumbs_ = std::make_unique<LibraryThumbs>(paths_.sessionRoot + "/LibraryThumbs");
+  if (!perfMode) {
+    libraryThumbs_ = std::make_unique<LibraryThumbs>(paths_.sessionRoot + "/LibraryThumbs");
+    if (platform_.romPictureProcess) libraryThumbs_->setPictureProcess(platform_.romPictureProcess);
+  }
   library_ = std::make_unique<LibraryModel>(paths_.libraryRoot);
   // Favourites / history / order: the settings folder (a scratch --session-root keeps its own).
   library_->setPrefsFile((opt.sessionRoot.empty() ? paths_.configDir : paths_.sessionRoot) + "/" + RNF_LIBRARY_PREFS_FILE);
