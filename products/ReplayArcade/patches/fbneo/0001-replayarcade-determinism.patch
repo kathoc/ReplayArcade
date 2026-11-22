@@ -1209,6 +1209,24 @@ index 8d95c2880..294b1ba76 100644
  		SCAN_VAR(screen_flag);
  		SCAN_VAR(sprite_active);
  
+diff --git a/src/burn/drv/pre90s/d_momoko.cpp b/src/burn/drv/pre90s/d_momoko.cpp
+index 3334d36b7..3bafbd697 100644
+--- a/src/burn/drv/pre90s/d_momoko.cpp
++++ b/src/burn/drv/pre90s/d_momoko.cpp
+@@ -570,7 +570,12 @@ static void draw_txt_layer()
+ 			color = DrvColPROM[(sy >> 3) + 0x100] & 0x0f;
+ 		}
+ 
+-		INT32 code = DrvVidRAM[((sy >> 3) << 5) + (sx >> 3)] * 8 + (sy & 7);
++		// ReplayArcade: the text scroll (tx_mode) takes a row up to 494, past the 32 rows of video RAM (0x400):
++		// they are not drawn, as in MAME's momoko.cpp ("ramoffset < 0x400"); FBNeo read past the RAM (and past
++		// AllMem at the end of the frame's allocation: a crash on Android, 2026-11-22).
++		INT32 ramoffset = ((sy >> 3) << 5) + (sx >> 3);
++		if (ramoffset >= 0x400) continue;
++		INT32 code = DrvVidRAM[ramoffset] * 8 + (sy & 7);
+ 
+ 		if (DrvTransTab[0][code] || (sy-16) >= nScreenHeight || (sx-8) >= nScreenWidth) continue;
+ 
 diff --git a/src/burn/drv/pre90s/d_mystston.cpp b/src/burn/drv/pre90s/d_mystston.cpp
 index 80e83aa09..40be55b05 100644
 --- a/src/burn/drv/pre90s/d_mystston.cpp

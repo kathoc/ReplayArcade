@@ -17,6 +17,7 @@
 #include "steam_inhibit.h"
 #include "platform/platform.h"
 #include "steam_shortcut.h"
+#include "picture_process.h"
 #include "update_service_flatpak.h"
 #include "vk_renderer.h"
 
@@ -34,12 +35,14 @@ int main(int argc, char** argv) {
 #ifdef RN_PRODUCT_HAS_STARTUP
   rn_product_startup();
 #endif
+  if (int code = 0; runPictureProcessArgs(argc, argv, &code)) return code;  // the library's picture process
   if (size_t n = steam::refreshArtwork()) std::fprintf(stderr, "steam: %zu artwork files brought up to date\n", n);
   PlatformHooks platform;
   platform.version = RNL_APP_VERSION;
   platform.executable = RN_PRODUCT_EXECUTABLE;
   platform.windowFlags = SDL_WINDOW_VULKAN;
   platform.makeRenderer = [](const AppOptions&) { return std::unique_ptr<Renderer>(new VkRenderer()); };
+  platform.romPictureProcess = selfPictureProcess();
   platform.makeUpdates = [] { return std::unique_ptr<UpdateService>(new FlatpakUpdateService()); };
   platform.setupFrameThread = [] { prctl(PR_SET_TIMERSLACK, 1UL, 0, 0, 0); };
   platform.sessionMode = []() -> std::string {

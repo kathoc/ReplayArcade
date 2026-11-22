@@ -81,6 +81,7 @@ LibraryThumbs::~LibraryThumbs() {
   }
   picCv_.notify_all();
   if (picThread_.joinable()) picThread_.join();
+  rnf_picture_ledger_close(ledger_);
   if (writer_.joinable()) writer_.join();
   for (auto& [rom, img] : picDone_) if (img) img->release();
   for (auto& [k, img] : cache_)
@@ -99,11 +100,9 @@ void LibraryThumbs::put(const std::string& key, ThumbImage* img) {
   cache_[key] = img;
 }
 
-ThumbRef LibraryThumbs::get(const std::string& key) {
-  auto it = cache_.find(key);
-  if (it == cache_.end()) {
+ThumbImage* LibraryThumbs::readThumbFile(const std::string& path) {
     ThumbImage* img = nullptr;
-    std::ifstream f(std::filesystem::path(fileFor(key)), std::ios::binary);
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
     char magic[8] = {};
     if (f && f.read(magic, sizeof magic) && std::memcmp(magic, kMagic, 7) == 0 &&
         (magic[7] == '1' || magic[7] == '2')) {
@@ -123,8 +122,12 @@ ThumbRef LibraryThumbs::get(const std::string& key) {
           img = ThumbImage::fromThumb(px.data(), width, height);
       }
     }
-    it = cache_.emplace(key, img).first;
-  }
+    return img;
+}
+
+ThumbRef LibraryThumbs::get(const std::string& key) {
+  auto it = cache_.find(key);
+  if (it == cache_.end()) it = cache_.emplace(key, readThumbFile(fileFor(key))).first;
   if (!it->second) return {};
   it->second->retain();
   return ThumbRef(it->second);
@@ -241,6 +244,7 @@ bool LibraryThumbs::pollRomPictures() {
 
 void LibraryThumbs::pictureWorker() {
   lowerThreadPriority();
+  if (!ledger_) ledger_ = rnf_picture_ledger_open(dir_.c_str());
   for (;;) {
     std::string rom;
     bool later = false;
@@ -255,53 +259,124 @@ void LibraryThumbs::pictureWorker() {
     }
     std::error_code ec;
     if (later && std::filesystem::exists(std::filesystem::path(fileFor("r:" + rom)), ec)) continue;
-    // Power-on, no input, kRomPictureFrame frames (more while blank): in memory only (no project directory).
-    rn_session* s = nullptr;
-    // The product's default core (an external core reads files the NES cores cannot).
-    rn_session_options opt;
-    rn_session_options_init(&opt);
-    const bool external = std::strcmp(RN_PRODUCT_DEFAULT_CORE, "external") == 0;
-    if (external) opt.core = RN_CORE_EXTERNAL;
-    if (rn_session_new(rom.c_str(), nullptr, external ? &opt : nullptr, &s) != RN_OK || !s) continue;
-    bool ok = true;
-    ThumbImage* img = nullptr;
-    for (int f = 0; ok && f < kRomPictureMaxFrame; ++f) {
-      const auto t0 = std::chrono::steady_clock::now();
-      ok = rn_step(s, 0, 0, 0, nullptr) == RN_OK;
-      std::unique_lock<std::mutex> lk(picMutex_);
-      if (picStop_) {
-        ok = false;
-      } else if (picPaused_) {  // a game opened: again from power-on once it closes
-        ok = false;
-        (later ? picLater_ : picQueue_).push_front(rom);
-      } else if (later && ok) {
-        // As long a rest as the frame took: half of one core at most. Woken by a pause or stop.
-        picCv_.wait_for(lk, std::chrono::steady_clock::now() - t0, [this] { return picStop_ || picPaused_; });
+    if (rnf_picture_ledger_skipped(ledger_, rom.c_str())) continue;  // its card keeps the name tile
+    rnf_picture_ledger_begin(ledger_, rom.c_str());
+    const std::string out = fileFor("r:" + rom);
+    std::string reason;
+    if (pictureProcess_) {
+      // Another process makes it: a crash or a hang there leaves the app running.
+      std::filesystem::create_directories(std::filesystem::path(dir_), ec);
+      const auto result = pictureProcess_(rom, out, [this] {
+        std::lock_guard<std::mutex> lk(picMutex_);
+        return picStop_ || picPaused_;
+      }, &reason);
+      if (result != PictureProcess::unavailable) {
+        if (result == PictureProcess::made) {
+          if (ThumbImage* img = readThumbFile(out)) {
+            rnf_picture_ledger_end(ledger_, rom.c_str(), 1, nullptr);
+            std::lock_guard<std::mutex> lk(picMutex_);
+            picDone_.emplace_back(rom, img);
+          } else {
+            rnf_picture_ledger_end(ledger_, rom.c_str(), 0, "the picture process wrote no picture");
+          }
+        } else if (result == PictureProcess::failed) {
+          rnf_picture_ledger_end(ledger_, rom.c_str(), 0, reason.c_str());
+        } else if (result == PictureProcess::crashed) {
+          std::fprintf(stderr, "library pictures: %s ended the picture process (%s)\n", rom.c_str(), reason.c_str());
+          rnf_picture_ledger_crashed(ledger_, rom.c_str(), reason.c_str());
+        } else {  // cancelled: a game opened (again from power-on once it closes) or the app is closing
+          rnf_picture_ledger_abandon(ledger_);
+          std::lock_guard<std::mutex> lk(picMutex_);
+          if (!picStop_) (later ? picLater_ : picQueue_).push_front(rom);
+        }
+        continue;
       }
-      lk.unlock();
-      if (!ok || (f + 1) % kRomPictureFrame != 0) continue;
-      // Frame 300, 600, ...: the picture, unless it is still blank and there is time left.
-      rn_video_frame_info frame{};
-      rn_media_info media{};
-      if (rn_session_video_frame(s, &frame) != RN_OK || rn_session_media_info(s, &media) != RN_OK) { ok = false; break; }
-      if (img) img->release();
-      img = ThumbImage::make(frame, media, rn_session_core_kind(s) != RN_CORE_EXTERNAL);
-      if (!img || !blankPicture(*img)) break;
     }
-    if (!ok && img) {
-      img->release();
-      img = nullptr;
+    // In this process (no picture process on this platform): a crash here ends the app, the ledger keeps the
+    // next start-ups from running that ROM again (twice at most).
+    bool cancelled = false;
+    ThumbImage* img = renderRomPicture(rom, &reason, &cancelled, [this, later](double seconds) {
+      std::unique_lock<std::mutex> lk(picMutex_);
+      if (picStop_ || picPaused_) return false;
+      // As long a rest as the frame took: half of one core at most. Woken by a pause or stop.
+      if (later) picCv_.wait_for(lk, std::chrono::duration<double>(seconds), [this] { return picStop_ || picPaused_; });
+      return !(picStop_ || picPaused_);
+    });
+    if (cancelled) {
+      rnf_picture_ledger_abandon(ledger_);  // not a failure: run again later
+      std::lock_guard<std::mutex> lk(picMutex_);
+      if (!picStop_) (later ? picLater_ : picQueue_).push_front(rom);  // a game opened: again once it closes
+      continue;
     }
+    rnf_picture_ledger_end(ledger_, rom.c_str(), img != nullptr, reason.c_str());
     if (img) {
       // Written before it is announced, so a card never looks for a file still to come.
       std::filesystem::create_directories(std::filesystem::path(dir_), ec);
-      const std::string path = fileFor("r:" + rom);
-      if (!writeFile(path, img->px, img->width, img->height)) std::fprintf(stderr, "cannot write %s\n", path.c_str());
+      if (!writeFile(out, img->px, img->width, img->height)) std::fprintf(stderr, "cannot write %s\n", out.c_str());
       std::lock_guard<std::mutex> lk(picMutex_);
       picDone_.emplace_back(rom, img);
     }
-    rn_session_close(s);
   }
+}
+
+ThumbImage* LibraryThumbs::renderRomPicture(const std::string& rom, std::string* reason, bool* cancelled,
+                                            const std::function<bool(double)>& afterFrame) {
+  *cancelled = false;
+  // Power-on, no input: in memory only (no project directory). The product's default core (an external core
+  // reads files the NES cores cannot).
+  rn_session* s = nullptr;
+  rn_session_options opt;
+  rn_session_options_init(&opt);
+  const bool external = std::strcmp(RN_PRODUCT_DEFAULT_CORE, "external") == 0;
+  if (external) opt.core = RN_CORE_EXTERNAL;
+  if (rn_session_new(rom.c_str(), nullptr, external ? &opt : nullptr, &s) != RN_OK || !s) {
+    *reason = "the engine cannot open it";
+    return nullptr;
+  }
+  ThumbImage* img = nullptr;
+  bool ok = true;
+  for (int f = 0; ok && f < kRomPictureMaxFrame; ++f) {
+    const auto t0 = std::chrono::steady_clock::now();
+    ok = rn_step(s, 0, 0, 0, nullptr) == RN_OK;
+    if (!ok) { *reason = "a frame failed"; break; }
+    if (!afterFrame(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count())) {
+      *cancelled = true;
+      ok = false;
+      break;
+    }
+    if ((f + 1) % kRomPictureFrame != 0) continue;
+    // Frame kRomPictureFrame, 2x, ...: the picture, unless it is still blank and there is time left (the last kept).
+    rn_video_frame_info frame{};
+    rn_media_info media{};
+    if (rn_session_video_frame(s, &frame) != RN_OK || rn_session_media_info(s, &media) != RN_OK) {
+      *reason = "no picture";
+      ok = false;
+      break;
+    }
+    if (img) img->release();
+    img = ThumbImage::make(frame, media, rn_session_core_kind(s) != RN_CORE_EXTERNAL);
+    if (!img || !blankPicture(*img)) break;
+  }
+  if (!ok && img) {
+    img->release();
+    img = nullptr;
+  }
+  if (ok && !img) *reason = "no picture";
+  rn_session_close(s);
+  return img;
+}
+
+bool LibraryThumbs::makeRomPictureFile(const std::string& rom, const std::string& out, std::string* reason) {
+  // Test hook: a ROM file named rn-picture-crash-test* ends the picture process as a core crash would
+  // (docs/plans/2026-11-22-library-pictures-robust.md, "Done when").
+  if (std::filesystem::path(rom).filename().string().rfind("rn-picture-crash-test", 0) == 0) std::abort();
+  bool cancelled = false;
+  ThumbImage* img = renderRomPicture(rom, reason, &cancelled, [](double) { return true; });
+  if (!img) return false;
+  const bool written = writeFile(out, img->px, img->width, img->height);
+  img->release();
+  if (!written) *reason = "cannot write " + out;
+  return written;
 }
 
 }  // namespace rnl

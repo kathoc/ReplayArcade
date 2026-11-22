@@ -5,6 +5,7 @@
 #pragma once
 
 #include "replaynes/product.h"
+#include "library_thumbs.h"
 #include <SDL3/SDL.h>
 
 #include <functional>
@@ -59,6 +60,9 @@ struct PlatformHooks {
   bool touchControls = false;
   /// A short vibration for a touch control's press (Settings: Vibration). Empty: none.
   std::function<void()> haptic;
+  /// Makes a library card picture in another process (picture_process.h; Android: a service process): a core
+  /// crash on an unknown ROM ends that process, not the app. None: in the app's process.
+  LibraryThumbs::PictureProcessRunner romPictureProcess;
 };
 
 /// Parses the shared command line (unknown options: usage + false).

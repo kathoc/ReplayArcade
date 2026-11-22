@@ -59,6 +59,20 @@ public class MainActivity extends SDLActivity {
         receive(getIntent());
     }
 
+    // The library's picture process (PictureService / PictureClient), from the picture worker thread (JNI).
+    private PictureClient pictures;
+
+    private synchronized PictureClient pictures() {
+        if (pictures == null) pictures = new PictureClient(this);
+        return pictures;
+    }
+
+    public boolean startRomPicture(String rom, String out) { return pictures().start(rom, out); }
+
+    public int romPictureState() { return pictures().state(); }
+
+    public void cancelRomPicture() { pictures().cancel(); }
+
     // Settings > App > Screen Orientation (docs/design/ANDROID.md "Screen orientation"). Automatic follows the
     // device and its rotation lock, as ReplayNES does; Landscape and Portrait keep that one (either way up).
     private static final String PREFS = "replaynes.screen";
